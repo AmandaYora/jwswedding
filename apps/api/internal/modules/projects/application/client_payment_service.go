@@ -2,6 +2,8 @@ package application
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"jwswedding/internal/modules/projects/domain"
@@ -14,6 +16,10 @@ type ClientPaymentRepository interface {
 	Create(ctx context.Context, p *domain.ClientPayment) error
 	Update(ctx context.Context, projectID, id int64, p domain.ClientPayment) error
 	Delete(ctx context.Context, projectID, id int64) error
+	// NextReceiptSequence/SetReceiptNumber back EnsureReceiptNumber's lazy
+	// Kwitansi numbering (PLAN.md invoice-kwitansi-client §1.5/§1.8).
+	NextReceiptSequence(ctx context.Context, tenantID int64, period string) (int, error)
+	SetReceiptNumber(ctx context.Context, projectID, id int64, number, period string, seq int) error
 }
 
 type ClientPaymentService struct {
@@ -96,4 +102,54 @@ func (s *ClientPaymentService) Delete(ctx context.Context, projectID, id int64, 
 	s.activity.Record(ctx, &projectID, domain.ActivityPaymentDeleted, actorStaffID, "client_payment", formatID(p.ID), string(p.Type),
 		"Pembayaran client dihapus")
 	return nil
+}
+
+// EnsureReceiptNumber lazily assigns a permanent Kwitansi number the first
+// time anyone (WO staff or the Client Portal) prints this payment's receipt
+// — idempotent (a payment that already has a number is returned unchanged),
+// and rejects Refund outright since "Telah terima dari <client>" would be
+// semantically backwards for money going the other way (PLAN.md
+// invoice-kwitansi-client §1.11). Period comes from PaymentDate, not the
+// print date, so a payment made in August but printed in September is still
+// numbered KWT/202608/... (§4.3/§4.4).
+func (s *ClientPaymentService) EnsureReceiptNumber(ctx context.Context, tenantID, projectID, id int64) (*domain.ClientPayment, error) {
+	p, err := s.repo.FindByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, apperror.NotFound("Pembayaran tidak ditemukan")
+	}
+	if p.Type == domain.PaymentRefund {
+		return nil, apperror.Validation("Kwitansi tidak tersedia untuk pembayaran jenis Refund", nil)
+	}
+	if p.ReceiptNumber != "" {
+		return p, nil
+	}
+
+	period := p.PaymentDate.Format("200601")
+	seq, err := s.repo.NextReceiptSequence(ctx, tenantID, period)
+	if err != nil {
+		return nil, err
+	}
+	number := fmt.Sprintf("KWT/%s/%04d", period, seq)
+	if err := s.repo.SetReceiptNumber(ctx, projectID, id, number, period, seq); err != nil {
+		if !errors.Is(err, domain.ErrDuplicateReceiptNumber) {
+			return nil, err
+		}
+		// Two concurrent prints raced on the same seq -- re-read: whoever won
+		// already stamped a number, so the caller still gets a valid PDF
+		// instead of a bare error.
+		reread, rereadErr := s.repo.FindByID(ctx, projectID, id)
+		if rereadErr != nil {
+			return nil, rereadErr
+		}
+		if reread != nil && reread.ReceiptNumber != "" {
+			return reread, nil
+		}
+		return nil, apperror.Validation("Nomor kwitansi sedang bentrok, silakan coba lagi", nil)
+	}
+
+	p.ReceiptNumber, p.ReceiptPeriod, p.ReceiptSeq = number, period, seq
+	return p, nil
 }

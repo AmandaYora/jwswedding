@@ -39,6 +39,15 @@ type Tenant struct {
 	Email                 string
 	Phone                 string
 	City                  string
+	// Address/BankName/BankAccountNumber/BankAccountHolderName back the
+	// Invoice/Kwitansi PDF kop surat and bank-transfer info (PLAN.md
+	// invoice-kwitansi-client, §1.7) -- editable only via the self-service
+	// "Profil Usaha" page (PATCH /tenants/me, Owner-only), since Platform
+	// Console's admin tenant CRUD no longer exists.
+	Address                 string
+	BankName                string
+	BankAccountNumber       string
+	BankAccountHolderName   string
 	JoinedAt              time.Time
 	PlanID                *int64
 	SubscriptionStatus    SubscriptionStatus

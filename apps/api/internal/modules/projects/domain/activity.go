@@ -21,6 +21,14 @@ const (
 	ActivityEvidenceUploaded ActivityType = "evidence_uploaded"
 	ActivityIssueCreated     ActivityType = "issue_created"
 	ActivityIssueUpdated     ActivityType = "issue_updated"
+	// ClientInvoice is a distinct entity, not one of the three payment types
+	// ActivityPaymentUpdated/Deleted are shared across (see comment above),
+	// so it gets its own constants — see PLAN.md invoice-kwitansi-client.
+	ActivityInvoiceCreated      ActivityType = "invoice_created"
+	ActivityInvoiceUpdated      ActivityType = "invoice_updated"
+	ActivityInvoiceMarkedPaid   ActivityType = "invoice_marked_paid"
+	ActivityInvoiceUnmarkedPaid ActivityType = "invoice_unmarked_paid"
+	ActivityInvoiceDeleted      ActivityType = "invoice_deleted"
 )
 
 // ActivityLogEntry is append-only — see ADR-0007. Every mutating use case in

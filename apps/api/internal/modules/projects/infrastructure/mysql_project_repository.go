@@ -318,7 +318,22 @@ func (r *MySQLProjectRepository) DeleteCascade(ctx context.Context, tenantID, id
 	if _, err := tx.ExecContext(ctx, `DELETE FROM vendor_payments WHERE project_id = ?`, id); err != nil {
 		return err
 	}
+	// client_invoices has fk_client_invoices_project (PLAN.md
+	// invoice-kwitansi-client) -- must go before client_payments below, and
+	// before the final projects delete, or DELETE FROM projects fails FK 1451
+	// for any project with at least one invoice.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM client_invoices WHERE project_id = ?`, id); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM client_payments WHERE project_id = ?`, id); err != nil {
+		return err
+	}
+	// venue_payments has fk_venue_payments_project
+	// (000030_create_venue_payments_table.up.sql:21) but was never registered
+	// here -- pre-existing bug (PLAN.md invoice-kwitansi-client §1.12), fixed
+	// alongside this cascade while touching this exact function for the
+	// Invoice feature above.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM venue_payments WHERE project_id = ?`, id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM vendor_issues WHERE project_id = ?`, id); err != nil {

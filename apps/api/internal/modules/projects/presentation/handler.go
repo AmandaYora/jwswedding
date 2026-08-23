@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 
+	platformcontracts "jwswedding/internal/modules/platform/contracts"
 	"jwswedding/internal/modules/projects/application"
 	"jwswedding/internal/shared/apperror"
 	"jwswedding/internal/shared/httpx"
@@ -33,12 +34,19 @@ type Handler struct {
 	vendors        *application.VendorEngagementService
 	payments       *application.PaymentService
 	clientPayments *application.ClientPaymentService
+	clientInvoices *application.ClientInvoiceService
 	venuePayments  *application.VenuePaymentService
 	issues         *application.IssueService
 	evidence       *application.EvidenceService
 	activity       *application.ActivityService
 	dashboard      *application.DashboardService
-	clientAccess   ClientAccessResolver
+	// platform is a direct constructor parameter, not a Set<X> two-phase
+	// wire — `platform` module is built before `projects` in main.go and has
+	// no dependency back on `projects`, so there's no construction cycle to
+	// break here (unlike ClientAccessResolver/VenueResolver above). See
+	// PLAN.md invoice-kwitansi-client §4.6.
+	platform     platformcontracts.Contracts
+	clientAccess ClientAccessResolver
 }
 
 func NewHandler(
@@ -46,15 +54,18 @@ func NewHandler(
 	vendors *application.VendorEngagementService,
 	payments *application.PaymentService,
 	clientPayments *application.ClientPaymentService,
+	clientInvoices *application.ClientInvoiceService,
 	venuePayments *application.VenuePaymentService,
 	issues *application.IssueService,
 	evidence *application.EvidenceService,
 	activity *application.ActivityService,
 	dashboard *application.DashboardService,
+	platform platformcontracts.Contracts,
 ) *Handler {
 	return &Handler{
-		projects: projects, vendors: vendors, payments: payments, clientPayments: clientPayments, venuePayments: venuePayments,
-		issues: issues, evidence: evidence, activity: activity, dashboard: dashboard,
+		projects: projects, vendors: vendors, payments: payments, clientPayments: clientPayments,
+		clientInvoices: clientInvoices, venuePayments: venuePayments,
+		issues: issues, evidence: evidence, activity: activity, dashboard: dashboard, platform: platform,
 	}
 }
 
@@ -162,6 +173,22 @@ func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 		h.updateClientPayment(w, r, claims, projectID, rest[1])
 	case len(rest) == 2 && rest[0] == "client-payments" && r.Method == http.MethodDelete:
 		h.deleteClientPayment(w, r, claims, projectID, rest[1])
+	case len(rest) == 3 && rest[0] == "client-payments" && rest[2] == "receipt-pdf" && r.Method == http.MethodGet:
+		h.downloadClientPaymentReceiptPDF(w, r, claims, projectID, rest[1])
+	case len(rest) == 1 && rest[0] == "client-invoices" && r.Method == http.MethodGet:
+		h.listClientInvoices(w, r, projectID)
+	case len(rest) == 1 && rest[0] == "client-invoices" && r.Method == http.MethodPost:
+		h.createClientInvoice(w, r, claims, projectID)
+	case len(rest) == 2 && rest[0] == "client-invoices" && r.Method == http.MethodPatch:
+		h.updateClientInvoice(w, r, claims, projectID, rest[1])
+	case len(rest) == 2 && rest[0] == "client-invoices" && r.Method == http.MethodDelete:
+		h.deleteClientInvoice(w, r, claims, projectID, rest[1])
+	case len(rest) == 3 && rest[0] == "client-invoices" && rest[2] == "mark-paid" && r.Method == http.MethodPost:
+		h.markClientInvoicePaid(w, r, claims, projectID, rest[1])
+	case len(rest) == 3 && rest[0] == "client-invoices" && rest[2] == "unmark-paid" && r.Method == http.MethodPost:
+		h.unmarkClientInvoicePaid(w, r, claims, projectID, rest[1])
+	case len(rest) == 3 && rest[0] == "client-invoices" && rest[2] == "pdf" && r.Method == http.MethodGet:
+		h.downloadClientInvoicePDF(w, r, claims, projectID, rest[1])
 	case len(rest) == 1 && rest[0] == "venue-payments" && r.Method == http.MethodGet:
 		h.listVenuePayments(w, r, projectID)
 	case len(rest) == 1 && rest[0] == "venue-payments" && r.Method == http.MethodPost:

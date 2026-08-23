@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
-import { Wallet, FileText } from "lucide-react";
+import { Wallet, FileText, Receipt } from "lucide-react";
 import { EvidenceViewerModal } from "@/shared/components/ui/EvidenceViewerModal";
 import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
 import type { Evidence } from "@/modules/projects/types";
 import { formatCurrency, formatDate } from "@/shared/lib/formatters";
+import { getApiErrorMessage } from "@/shared/lib/api-error";
 import type { ClientPortalContext } from "@/modules/client-portal/layouts/ClientPortalLayout";
 
 // Repurposed (PLAN.md "Uang Masuk dari Client", §3.8) — shows the client's
@@ -22,7 +23,19 @@ export default function PembayaranTabPage() {
   const evidence = useProjectStore((s) => s.evidence);
   const fetchClientPayments = useProjectStore((s) => s.fetchClientPayments);
   const fetchEvidence = useProjectStore((s) => s.fetchEvidence);
+  const downloadClientPaymentReceipt = useProjectStore((s) => s.downloadClientPaymentReceipt);
   const [viewingEvidence, setViewingEvidence] = useState<Evidence | null>(null);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+
+  async function handleDownloadReceipt(paymentId: string) {
+    setReceiptError(null);
+    try {
+      const blob = await downloadClientPaymentReceipt(projectId, paymentId);
+      window.open(URL.createObjectURL(blob), "_blank");
+    } catch (err) {
+      setReceiptError(getApiErrorMessage(err, "Gagal membuka Kwitansi"));
+    }
+  }
 
   useEffect(() => {
     void fetchClientPayments(projectId);
@@ -67,6 +80,9 @@ export default function PembayaranTabPage() {
 
       <section>
         <h3 className="mb-3 text-[14px] font-bold text-text-primary sm:mb-4 sm:text-[15px]">Riwayat Pembayaran</h3>
+        {receiptError && (
+          <p className="mb-4 rounded-md border border-danger/30 bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger">{receiptError}</p>
+        )}
         {sortedPayments.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border bg-surface p-4 text-center text-[13px] text-text-secondary sm:p-6 sm:text-[13.5px]">
             Pembayaran akan muncul di sini seiring proses persiapan berjalan.
@@ -99,6 +115,14 @@ export default function PembayaranTabPage() {
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-soft px-2.5 py-1 text-[11px] font-bold text-warning-strong ring-1 ring-warning/30">
                           BUKTI BELUM ADA
                         </span>
+                      )}
+                      {payment.type !== "Refund" && (
+                        <button
+                          onClick={() => void handleDownloadReceipt(payment.id)}
+                          className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-navy-900 hover:bg-navy-50 hover:border-navy-200 transition-colors shadow-sm"
+                        >
+                          <Receipt className="h-3.5 w-3.5" /> Unduh Kwitansi
+                        </button>
                       )}
                     </div>
                   </div>

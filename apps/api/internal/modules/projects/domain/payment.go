@@ -91,6 +91,14 @@ type ClientPayment struct {
 	Method          string
 	ReferenceNumber string
 	Notes           string
+	// ReceiptNumber/ReceiptPeriod/ReceiptSeq back the Kwitansi PDF's official
+	// number (PLAN.md invoice-kwitansi-client §1.5/§1.8) — lazily assigned by
+	// ClientPaymentService.EnsureReceiptNumber the first time anyone prints
+	// this payment's Kwitansi (WO or Client Portal), then permanent. Empty/0
+	// for every payment never printed, including all pre-existing rows.
+	ReceiptNumber string
+	ReceiptPeriod string
+	ReceiptSeq    int
 }
 
 // VenuePayment tracks money going OUT to the project's venue -- same

@@ -45,6 +45,28 @@ func (f *fakeTenantRepo) FindByDomain(ctx context.Context, host string) (*domain
 	return nil, nil
 }
 
+func (f *fakeTenantRepo) Update(ctx context.Context, tenant *domain.Tenant) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.tenants[tenant.ID]; !ok {
+		return apperror.NotFound("tenant tidak ditemukan")
+	}
+	copy := *tenant
+	f.tenants[tenant.ID] = &copy
+	return nil
+}
+
+func (f *fakeTenantRepo) UpdateLogo(ctx context.Context, id int64, logoStoragePath *string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.tenants[id]
+	if !ok {
+		return apperror.NotFound("tenant tidak ditemukan")
+	}
+	t.LogoStoragePath = logoStoragePath
+	return nil
+}
+
 func (f *fakeTenantRepo) UpdateSubscription(ctx context.Context, id int64, planID int64, status domain.SubscriptionStatus, expiresAt time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

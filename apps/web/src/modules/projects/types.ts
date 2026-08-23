@@ -198,6 +198,29 @@ export interface ClientPayment {
   referenceNumber: string;
   notes: string;
   evidenceComplete: boolean;
+  // "" until a Kwitansi has been printed at least once (lazy numbering,
+  // PLAN.md invoice-kwitansi-client §1.8).
+  receiptNumber: string;
+}
+
+export type InvoiceStatus = "Draft" | "Terkirim" | "Lunas" | "Dibatalkan";
+
+// ClientInvoice is a Tagihan the WO issues to a client -- distinct from
+// ClientPayment (the money actually received). Marking one "Lunas" (via the
+// mark-paid action) auto-creates a linked ClientPayment server-side; see
+// PLAN.md invoice-kwitansi-client.
+export interface ClientInvoice {
+  id: string;
+  invoiceNumber: string;
+  type: PaymentType;
+  description: string;
+  amount: number;
+  dueDate: string;
+  status: InvoiceStatus;
+  // "0" means "belum tertaut" -- same sentinel convention as picStaffId.
+  clientPaymentId: string;
+  createdByStaffId: string;
+  createdAt: string;
 }
 
 // Money going OUT to the project's venue -- same accounting direction and
@@ -261,7 +284,12 @@ export type ActivityType =
   | "payment_deleted"
   | "evidence_uploaded"
   | "issue_created"
-  | "issue_updated";
+  | "issue_updated"
+  | "invoice_created"
+  | "invoice_updated"
+  | "invoice_marked_paid"
+  | "invoice_unmarked_paid"
+  | "invoice_deleted";
 
 export interface ActivityLogEntry {
   id: string;

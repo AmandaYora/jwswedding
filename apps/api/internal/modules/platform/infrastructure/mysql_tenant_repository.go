@@ -23,18 +23,20 @@ func NewMySQLTenantRepository(db *sql.DB) *MySQLTenantRepository {
 
 const tenantColumns = `id, business_name, owner_name, username, email, phone, city, joined_at, plan_id,
 	subscription_status, subscription_expires_at, is_suspended, last_credential_reset_at,
-	brand_color_preset, logo_storage_path, custom_domain, created_at, updated_at`
+	brand_color_preset, logo_storage_path, custom_domain, address, bank_name, bank_account_number,
+	bank_account_holder_name, created_at, updated_at`
 
 func scanTenant(scan func(dest ...interface{}) error) (*domain.Tenant, error) {
 	var t domain.Tenant
 	var planID sql.NullInt64
 	var status string
 	var expiresAt, lastReset sql.NullTime
-	var logoStoragePath, customDomain sql.NullString
+	var logoStoragePath, customDomain, address, bankName, bankAccountNumber, bankAccountHolderName sql.NullString
 
 	err := scan(
 		&t.ID, &t.BusinessName, &t.OwnerName, &t.Username, &t.Email, &t.Phone, &t.City, &t.JoinedAt, &planID,
 		&status, &expiresAt, &t.IsSuspended, &lastReset, &t.BrandColorPreset, &logoStoragePath, &customDomain,
+		&address, &bankName, &bankAccountNumber, &bankAccountHolderName,
 		&t.CreatedAt, &t.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -60,6 +62,10 @@ func scanTenant(scan func(dest ...interface{}) error) (*domain.Tenant, error) {
 	if customDomain.Valid {
 		t.CustomDomain = &customDomain.String
 	}
+	t.Address = address.String
+	t.BankName = bankName.String
+	t.BankAccountNumber = bankAccountNumber.String
+	t.BankAccountHolderName = bankAccountHolderName.String
 	return &t, nil
 }
 
@@ -159,9 +165,11 @@ func (r *MySQLTenantRepository) Create(ctx context.Context, tenant *domain.Tenan
 
 func (r *MySQLTenantRepository) Update(ctx context.Context, tenant *domain.Tenant) error {
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE tenants SET business_name = ?, owner_name = ?, email = ?, phone = ?, city = ?, brand_color_preset = ?, custom_domain = ? WHERE id = ?`,
+		`UPDATE tenants SET business_name = ?, owner_name = ?, email = ?, phone = ?, city = ?, brand_color_preset = ?,
+		 custom_domain = ?, address = ?, bank_name = ?, bank_account_number = ?, bank_account_holder_name = ? WHERE id = ?`,
 		tenant.BusinessName, tenant.OwnerName, tenant.Email, tenant.Phone, tenant.City, tenant.BrandColorPreset,
-		tenant.CustomDomain, tenant.ID,
+		tenant.CustomDomain, tenant.Address, tenant.BankName, tenant.BankAccountNumber, tenant.BankAccountHolderName,
+		tenant.ID,
 	)
 	var mysqlErr *mysql.MySQLError
 	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {

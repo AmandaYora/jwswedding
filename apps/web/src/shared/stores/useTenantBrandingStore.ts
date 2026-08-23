@@ -19,17 +19,19 @@ interface TenantBrandingState {
   colorPreset: BrandColorPresetKey;
   logoUrl: string | null;
   /** The tenant's own business name — used as the text fallback in place of
-   * "ElProof" wherever no logo is configured yet (Sidebar, ClientPortalLayout),
-   * so an unbranded tenant still sees its own name, never the platform's. */
+   * the app's default brand text wherever no logo is configured yet
+   * (Sidebar, ClientPortalLayout), so an unbranded tenant still sees its own
+   * name, never the static default. */
   businessName: string | null;
   /** False from the moment a fresh session mounts (AppLayout/ClientPortalLayout)
    * until `hydrate()` settles (match, 404, or failure) at least once. Every
    * `bg-navy-*`/`text-navy-*` class in the app reads live off the
    * `--brand-navy-*` CSS vars `hydrate()` overwrites — painting the chrome
-   * before that resolves shows ElProof's own navy default first, then a
-   * visible color swap once the tenant's real preset lands. Layouts hold off
-   * rendering their branded chrome while this is false (see AppLayout,
-   * ClientPortalLayout) so only the final color is ever painted. */
+   * before that resolves shows the app's own static navy default first,
+   * then a visible color swap once the tenant's real preset lands. Layouts
+   * hold off rendering their branded chrome while this is false (see
+   * AppLayout, ClientPortalLayout) so only the final color is ever
+   * painted. */
   hydrated: boolean;
   /** Fetches the caller's own tenant's branding (GET /tenants/me/branding,
    * self-service — open to any staff role or client, unlike GET /tenants/me

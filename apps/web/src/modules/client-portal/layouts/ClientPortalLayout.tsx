@@ -69,8 +69,8 @@ export default function ClientPortalLayout() {
     // Also waits on brandingHydrated, not just fetchMyProject -- the header
     // below reads logoUrl/brandName and `text-navy-950` (a live
     // --brand-navy-* CSS var) straight off useTenantBrandingStore; painting
-    // it before hydrate() resolves would show ElProof's own generic
-    // Heart-icon/navy look first, then swap to the tenant's real one.
+    // it before hydrate() resolves would show the app's own generic
+    // Heart-icon/navy default first, then swap to the tenant's real one.
     return (
       <div className="flex min-h-screen items-center justify-center bg-white">
         <Loader2 className="h-6 w-6 animate-spin text-text-secondary" />

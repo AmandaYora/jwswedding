@@ -25,6 +25,7 @@ const VendorListPage = lazy(() => import("@/modules/vendors/pages/VendorListPage
 const VenueListPage = lazy(() => import("@/modules/venues/pages/VenueListPage"));
 const UserListPage = lazy(() => import("@/modules/users/pages/UserListPage"));
 const SubscriptionPage = lazy(() => import("@/modules/subscription/pages/SubscriptionPage"));
+const CompanyProfilePage = lazy(() => import("@/modules/company-profile/pages/CompanyProfilePage"));
 
 export const protectedRoutes: RouteObject = {
   element: <RequireAuth allow={["staff"]} />,
@@ -74,6 +75,7 @@ export const protectedRoutes: RouteObject = {
             { path: ROUTE_PATHS.vendorCategories, element: <VendorCategoryListPage /> },
             { path: ROUTE_PATHS.milestoneTemplates, element: <MilestoneTemplateListPage /> },
             { path: ROUTE_PATHS.users, element: <UserListPage /> },
+            { path: ROUTE_PATHS.companyProfile, element: <CompanyProfilePage /> },
             { path: ROUTE_PATHS.subscription, element: <SubscriptionPage /> },
           ],
         },

@@ -231,12 +231,16 @@ type clientPaymentResponse struct {
 	ReferenceNumber  string `json:"referenceNumber"`
 	Notes            string `json:"notes"`
 	EvidenceComplete bool   `json:"evidenceComplete"`
+	// ReceiptNumber is "" until EnsureReceiptNumber has been called at least
+	// once (lazy Kwitansi numbering, PLAN.md invoice-kwitansi-client §1.8).
+	ReceiptNumber string `json:"receiptNumber"`
 }
 
 func toClientPaymentResponse(p domain.ClientPayment, evidenceComplete bool) clientPaymentResponse {
 	return clientPaymentResponse{
 		ID: p.ID, Type: string(p.Type), Amount: p.Amount, PaymentDate: p.PaymentDate.Format(dateLayout),
 		Method: p.Method, ReferenceNumber: p.ReferenceNumber, Notes: p.Notes, EvidenceComplete: evidenceComplete,
+		ReceiptNumber: p.ReceiptNumber,
 	}
 }
 

@@ -1,9 +1,11 @@
 // Package elproofpay is jwswedding's HTTP client for ElProof's external
 // payment API — jwswedding is registered there as a `kind=external` App and
-// consumes it to pay for its own subscription (docs/plan/standalone-jwswedding/PLAN.md
-// §5, docs/PAYMENT_INTEGRATION_GUIDE.md). One instance is shared by `platform`
-// (charges) and `billing` (plan catalog), per D12 — the token cache MUST be
-// shared: ElProof rate-limits POST /auth/app/token to 10 attempts/minute/IP.
+// consumes it to pay for its own subscription (see
+// knowledge/decisions/ADR-0021-standalone-jws-payment-via-elproof-api.md and
+// docs/integrations/PAYMENT_INTEGRATION_GUIDE.md). One instance is shared by
+// `platform` (charges) and `billing` (plan catalog), per D12 — the token
+// cache MUST be shared: ElProof rate-limits POST /auth/app/token to 10
+// attempts/minute/IP.
 package elproofpay
 
 import (

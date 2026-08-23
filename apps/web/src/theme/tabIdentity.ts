@@ -1,6 +1,7 @@
-// Browser tab title + favicon are the last "ElProof" touchpoints inside an
-// authenticated session (Sidebar/Client Portal headers already show the
-// tenant's own logo/name — see brandPresets.ts) — this makes those two match.
+// Browser tab title + favicon are the last static-default-branding
+// touchpoints inside an authenticated session (Sidebar/Client Portal headers
+// already show the tenant's own logo/name — see brandPresets.ts) — this
+// makes those two match.
 // Captured once at module load, before any tenant ever overrides it, so
 // resetTabIdentity() has the real default to revert to without hardcoding a
 // second copy of index.html's <title> text.

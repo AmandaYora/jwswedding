@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"net/http"
 
+	platformcontracts "jwswedding/internal/modules/platform/contracts"
 	"jwswedding/internal/modules/projects/application"
 	"jwswedding/internal/modules/projects/contracts"
 	"jwswedding/internal/modules/projects/infrastructure"
@@ -21,7 +22,7 @@ type Module struct {
 	projectService           *application.ProjectService
 }
 
-func NewModule(db *sql.DB, storageClient *storage.Client, staff application.StaffNameResolver) *Module {
+func NewModule(db *sql.DB, storageClient *storage.Client, staff application.StaffNameResolver, platform platformcontracts.Contracts) *Module {
 	projectRepo := infrastructure.NewMySQLProjectRepository(db)
 	milestoneRepo := infrastructure.NewMySQLMilestoneRepository(db)
 	milestoneTemplateRepo := infrastructure.NewMySQLMilestoneTemplateRepository(db)
@@ -29,6 +30,7 @@ func NewModule(db *sql.DB, storageClient *storage.Client, staff application.Staf
 	vendorMilestoneRepo := infrastructure.NewMySQLVendorMilestoneRepository(db)
 	paymentRepo := infrastructure.NewMySQLPaymentRepository(db)
 	clientPaymentRepo := infrastructure.NewMySQLClientPaymentRepository(db)
+	clientInvoiceRepo := infrastructure.NewMySQLClientInvoiceRepository(db)
 	venuePaymentRepo := infrastructure.NewMySQLVenuePaymentRepository(db)
 	issueRepo := infrastructure.NewMySQLIssueRepository(db)
 	evidenceRepo := infrastructure.NewMySQLEvidenceRepository(db)
@@ -42,11 +44,12 @@ func NewModule(db *sql.DB, storageClient *storage.Client, staff application.Staf
 	vendorEngagementService := application.NewVendorEngagementService(vendorEngagementRepo, vendorMilestoneRepo, activityService)
 	paymentService := application.NewPaymentService(paymentRepo, evidenceService, activityService)
 	clientPaymentService := application.NewClientPaymentService(clientPaymentRepo, evidenceService, activityService)
+	clientInvoiceService := application.NewClientInvoiceService(clientInvoiceRepo, clientPaymentService, activityService)
 	venuePaymentService := application.NewVenuePaymentService(venuePaymentRepo, evidenceService, activityService)
 	issueService := application.NewIssueService(issueRepo, vendorMilestoneRepo, activityService)
 	dashboardService := application.NewDashboardService(projectService, dashboardRepo, evidenceService)
 
-	handler := presentation.NewHandler(projectService, vendorEngagementService, paymentService, clientPaymentService, venuePaymentService, issueService, evidenceService, activityService, dashboardService)
+	handler := presentation.NewHandler(projectService, vendorEngagementService, paymentService, clientPaymentService, clientInvoiceService, venuePaymentService, issueService, evidenceService, activityService, dashboardService, platform)
 
 	return &Module{
 		handler:                  handler,

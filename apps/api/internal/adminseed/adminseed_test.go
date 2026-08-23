@@ -104,6 +104,53 @@ func TestAdminSeed_CustomDomainKosongTetapNull(t *testing.T) {
 	}
 }
 
+func seededPlanID(t *testing.T, db *sql.DB) sql.NullInt64 {
+	t.Helper()
+	var planID sql.NullInt64
+	if err := db.QueryRow("SELECT plan_id FROM tenants LIMIT 1").Scan(&planID); err != nil {
+		t.Fatalf("query plan_id: %v", err)
+	}
+	return planID
+}
+
+// TestAdminSeed_MengisiPlanID locks §6.1 A4 of
+// docs/plan/konsolidasi-plan-pasca-standalone/PLAN.md: a freshly seeded
+// tenant's plan_id used to stay NULL (no code path ever set it), so
+// SubscriptionPage never showed "Paket Aktif Anda" in a fresh dev
+// environment even though the tenant's subscription itself is active.
+func TestAdminSeed_MengisiPlanID(t *testing.T) {
+	db := setupTestDB(t)
+	if err := os.Unsetenv("SEED_TENANT_PLAN_ID"); err != nil {
+		t.Fatalf("unsetenv: %v", err)
+	}
+
+	if err := Run(context.Background(), db); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	planID := seededPlanID(t, db)
+	if !planID.Valid || planID.Int64 != 2 {
+		t.Errorf("expected plan_id = 2 (default), got %+v", planID)
+	}
+}
+
+func TestAdminSeed_PlanIDKosongTetapNull(t *testing.T) {
+	db := setupTestDB(t)
+	if err := os.Setenv("SEED_TENANT_PLAN_ID", ""); err != nil {
+		t.Fatalf("setenv: %v", err)
+	}
+	defer os.Unsetenv("SEED_TENANT_PLAN_ID")
+
+	if err := Run(context.Background(), db); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	planID := seededPlanID(t, db)
+	if planID.Valid {
+		t.Errorf("expected plan_id NULL when SEED_TENANT_PLAN_ID is explicitly empty, got %+v", planID.Int64)
+	}
+}
+
 // TestAdminSeed_TruncateMembersihkanSemuaTabel locks T8/D8 from
 // docs/plan/migrasi-data-jws/PLAN.md: truncateAll's table list previously
 // missed venues/client_payments/venue_payments/project_milestone_templates
@@ -161,12 +208,22 @@ func TestAdminSeed_TruncateMembersihkanSemuaTabel(t *testing.T) {
 	); err != nil {
 		t.Fatalf("insert dummy venue_payment: %v", err)
 	}
+	// client_invoices missed truncateAll a second time (§3.6 of
+	// docs/plan/konsolidasi-plan-pasca-standalone/PLAN.md) when it was added
+	// after this test was written — dummy row proves the fix, not just the
+	// completeness check below.
+	if _, err := db.Exec(
+		`INSERT INTO client_invoices (project_id, invoice_number, number_period, number_seq, type, amount, due_date, created_by_staff_id)
+		 VALUES (?, 'INV-TEST-202608-0001', '202608', 1, 'DP', 100, CURDATE(), 1)`, projectID,
+	); err != nil {
+		t.Fatalf("insert dummy client_invoice: %v", err)
+	}
 
 	if err := Run(context.Background(), db); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
-	for _, table := range []string{"venues", "client_payments", "venue_payments", "project_milestone_templates"} {
+	for _, table := range []string{"venues", "client_payments", "venue_payments", "project_milestone_templates", "client_invoices"} {
 		var count int
 		if err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
 			t.Fatalf("count %s: %v", table, err)
@@ -174,5 +231,56 @@ func TestAdminSeed_TruncateMembersihkanSemuaTabel(t *testing.T) {
 		if count != 0 {
 			t.Errorf("expected %s to be empty after Run, got %d row(s) — T8/D8 regression", table, count)
 		}
+	}
+}
+
+// TestAdminSeed_TruncateTablesLengkap adalah gerbang kelengkapan struktural
+// yang mencegah kelas bug T8/D8 kambuh untuk ketiga kalinya (lihat komentar
+// di atas truncateTables di adminseed.go, dan
+// docs/plan/konsolidasi-plan-pasca-standalone/PLAN.md §3.6/§6.1 A2) —
+// truncateTables dibandingkan langsung terhadap information_schema.TABLES,
+// bukan terhadap daftar nama hardcoded lain, supaya migrasi baru yang lupa
+// didaftarkan gagal di sini tanpa perlu menulis test baru setiap kali.
+func TestAdminSeed_TruncateTablesLengkap(t *testing.T) {
+	db := setupTestDB(t)
+
+	rows, err := db.Query(
+		`SELECT TABLE_NAME FROM information_schema.TABLES
+		 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'`,
+	)
+	if err != nil {
+		t.Fatalf("query information_schema.TABLES: %v", err)
+	}
+	defer rows.Close()
+
+	truncated := make(map[string]bool, len(truncateTables))
+	for _, table := range truncateTables {
+		truncated[table] = true
+	}
+
+	var missing []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan table name: %v", err)
+		}
+		// schema_migrations belongs to golang-migrate, not app data —
+		// truncating it would corrupt migration state, not clean it.
+		if name == "schema_migrations" {
+			continue
+		}
+		if !truncated[name] {
+			missing = append(missing, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate information_schema.TABLES: %v", err)
+	}
+
+	if len(missing) > 0 {
+		t.Errorf(
+			"truncateTables (adminseed.go) tertinggal %d tabel yang ada di skema tapi tidak pernah di-truncate: %v — tambahkan ke truncateTables",
+			len(missing), missing,
+		)
 	}
 }

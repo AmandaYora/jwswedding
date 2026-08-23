@@ -29,5 +29,6 @@ export const ROUTE_PATHS = {
   users: "/pengguna",
   subscription: "/langganan",
   milestoneTemplates: "/timeline-default",
+  companyProfile: "/profil-usaha",
   portal: (tab: ClientPortalTab = "vendor") => `/portal/${tab}`,
 } as const;

@@ -28,7 +28,8 @@ type Config struct {
 
 	// ElProofPaymentBaseURL is the base URL of the ElProof external API that
 	// jwswedding consumes as a `kind=external` App to pay for its own
-	// subscription — see docs/plan/standalone-jwswedding/PLAN.md §5.
+	// subscription — see knowledge/MODULE_SUBSCRIPTION.md and
+	// knowledge/decisions/ADR-0021-standalone-jws-payment-via-elproof-api.md.
 	ElProofPaymentBaseURL string
 	ElProofAppID          string
 	ElProofAppSecret      string

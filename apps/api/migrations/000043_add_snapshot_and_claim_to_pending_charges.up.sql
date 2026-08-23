@@ -1,4 +1,4 @@
--- Standalone JWS Wedding (docs/plan/standalone-jwswedding/PLAN.md D8/D11): snapshot
+-- Standalone JWS Wedding (see knowledge/decisions/ADR-0021-standalone-jws-payment-via-elproof-api.md D8/D11): snapshot
 -- the plan's name/price/duration at charge-creation time (jwswedding never calls
 -- ElProof again on the activation path), plus an atomic claim column so a webhook
 -- and the reconciler racing on the same order_ref can never double-activate.

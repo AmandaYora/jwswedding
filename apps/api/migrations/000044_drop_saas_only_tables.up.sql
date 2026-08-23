@@ -1,9 +1,10 @@
--- Standalone JWS Wedding (docs/plan/standalone-jwswedding/PLAN.md D2/D6/D7):
+-- Standalone JWS Wedding (see knowledge/decisions/ADR-0021-standalone-jws-payment-via-elproof-api.md D2/D6/D7):
 -- the Platform Console (platform_admins), the payment gateway operator role
 -- (payment_*, entirely replaced by internal/shared/elproofpay calling
 -- ElProof's external API), and the local plan catalog (subscription_plans/
 -- plan_features, now sourced live from ElProof) are all gone. Written after
--- Fase 5 and 7.1-7.7 so nothing still queries these tables at boot.
+-- the code that used to query these tables was already deleted, so nothing
+-- still queries them at boot.
 DROP TABLE payment_webhook_events;
 DROP TABLE payment_charge_dispatch;
 DROP TABLE payment_apps;

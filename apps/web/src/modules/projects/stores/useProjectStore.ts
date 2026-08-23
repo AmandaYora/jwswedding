@@ -8,12 +8,14 @@ import type { ProjectVendorFormValues } from "@/modules/projects/schemas/project
 import type { VendorMilestoneFormValues } from "@/modules/projects/schemas/vendor-milestone.schema";
 import type { PaymentFormValues, PaymentUpdateFormValues } from "@/modules/projects/schemas/payment.schema";
 import type { ClientPaymentFormValues, ClientPaymentUpdateFormValues } from "@/modules/projects/schemas/client-payment.schema";
+import type { ClientInvoiceFormValues, MarkInvoicePaidFormValues } from "@/modules/projects/schemas/client-invoice.schema";
 import type { VenuePaymentFormValues, VenuePaymentUpdateFormValues } from "@/modules/projects/schemas/venue-payment.schema";
 import type { IssueFormValues } from "@/modules/projects/schemas/issue.schema";
 import type { CompressedFilePayload } from "@/shared/lib/image-compression";
 import { compressFileForUpload } from "@/shared/lib/image-compression";
 import type {
   ActivityLogEntry,
+  ClientInvoice,
   ClientPayment,
   Evidence,
   EvidenceRelatedKind,
@@ -319,6 +321,7 @@ interface RawClientPayment {
   referenceNumber: string;
   notes: string;
   evidenceComplete: boolean;
+  receiptNumber: string;
 }
 
 function toClientPayment(raw: RawClientPayment): ClientPayment {
@@ -331,6 +334,35 @@ function toClientPayment(raw: RawClientPayment): ClientPayment {
     referenceNumber: raw.referenceNumber,
     notes: raw.notes,
     evidenceComplete: raw.evidenceComplete,
+    receiptNumber: raw.receiptNumber,
+  };
+}
+
+interface RawClientInvoice {
+  id: number;
+  invoiceNumber: string;
+  type: ClientInvoice["type"];
+  description: string;
+  amount: number;
+  dueDate: string;
+  status: ClientInvoice["status"];
+  clientPaymentId: number;
+  createdByStaffId: number;
+  createdAt: string;
+}
+
+function toClientInvoice(raw: RawClientInvoice): ClientInvoice {
+  return {
+    id: String(raw.id),
+    invoiceNumber: raw.invoiceNumber,
+    type: raw.type,
+    description: raw.description,
+    amount: raw.amount,
+    dueDate: raw.dueDate,
+    status: raw.status,
+    clientPaymentId: String(raw.clientPaymentId),
+    createdByStaffId: String(raw.createdByStaffId),
+    createdAt: raw.createdAt,
   };
 }
 
@@ -485,6 +517,7 @@ interface ProjectState {
   vendorMilestones: VendorMilestone[];
   payments: VendorPayment[];
   clientPayments: ClientPayment[];
+  clientInvoices: ClientInvoice[];
   venuePayments: VenuePayment[];
   issues: VendorIssue[];
   evidence: Evidence[];
@@ -578,6 +611,25 @@ interface ProjectState {
   createClientPayment: (projectId: string, values: ClientPaymentFormValues) => Promise<void>;
   updateClientPayment: (projectId: string, paymentId: string, values: ClientPaymentUpdateFormValues) => Promise<void>;
   deleteClientPayment: (projectId: string, paymentId: string) => Promise<void>;
+  // Returns the rendered PDF blob directly (not cached in state) -- same
+  // "return, don't stash" convention as fetchProjectVenueSummary above; the
+  // caller opens it immediately (window.open(URL.createObjectURL(blob))).
+  downloadClientPaymentReceipt: (projectId: string, paymentId: string) => Promise<Blob>;
+
+  fetchClientInvoices: (projectId: string) => Promise<void>;
+  createClientInvoice: (projectId: string, values: ClientInvoiceFormValues) => Promise<void>;
+  updateClientInvoice: (projectId: string, invoiceId: string, values: ClientInvoiceFormValues) => Promise<void>;
+  deleteClientInvoice: (projectId: string, invoiceId: string) => Promise<void>;
+  // Orchestrates POST .../mark-paid then, only if values.proofFile is set,
+  // compress+POST .../evidence against the ClientPayment the mark-paid call
+  // just created (relatedId comes from the response's clientPaymentId --
+  // that's the whole reason MarkPaid returns it) -- same 3-step shape as
+  // createClientPayment above, plus a mandatory refetch of BOTH
+  // clientInvoices and clientPayments since a new payment row now exists
+  // alongside the now-Lunas invoice.
+  markClientInvoicePaid: (projectId: string, invoiceId: string, values: MarkInvoicePaidFormValues) => Promise<void>;
+  unmarkClientInvoicePaid: (projectId: string, invoiceId: string) => Promise<void>;
+  downloadClientInvoicePDF: (projectId: string, invoiceId: string) => Promise<Blob>;
 
   fetchVenuePayments: (projectId: string) => Promise<void>;
   // Same two-slot evidence orchestration as createPayment (vendor's own),
@@ -610,6 +662,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   vendorMilestones: [],
   payments: [],
   clientPayments: [],
+  clientInvoices: [],
   venuePayments: [],
   issues: [],
   evidence: [],
@@ -986,6 +1039,88 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   deleteClientPayment: async (projectId, paymentId) => {
     await httpClient.delete(API.projects.clientPayment(projectId, paymentId));
     await get().fetchClientPayments(projectId);
+  },
+
+  downloadClientPaymentReceipt: async (projectId, paymentId) => {
+    const res = await httpClient.get(API.projects.clientPaymentReceiptPdf(projectId, paymentId), { responseType: "blob" });
+    // The number is lazily assigned server-side on first print -- refetch so
+    // the payment row's receiptNumber (initially "") shows up without a
+    // manual page reload.
+    await get().fetchClientPayments(projectId);
+    return res.data as Blob;
+  },
+
+  fetchClientInvoices: async (projectId) => {
+    const res = await httpClient.get(API.projects.clientInvoices(projectId));
+    set({ clientInvoices: (res.data.data as RawClientInvoice[]).map(toClientInvoice) });
+  },
+
+  createClientInvoice: async (projectId, values) => {
+    await httpClient.post(API.projects.clientInvoices(projectId), {
+      type: values.type, description: values.description, amount: values.amount, dueDate: values.dueDate,
+    });
+    await get().fetchClientInvoices(projectId);
+  },
+
+  updateClientInvoice: async (projectId, invoiceId, values) => {
+    const current = get().clientInvoices.find((inv) => inv.id === invoiceId);
+    await httpClient.patch(API.projects.clientInvoice(projectId, invoiceId), {
+      type: values.type, description: values.description, amount: values.amount, dueDate: values.dueDate,
+      // status is never edited through this form -- Update rejects "Lunas"
+      // server-side regardless (that transition only ever happens via
+      // markClientInvoicePaid below), so this just echoes the invoice's
+      // current status back unchanged.
+      status: current?.status ?? "Draft",
+    });
+    await get().fetchClientInvoices(projectId);
+  },
+
+  deleteClientInvoice: async (projectId, invoiceId) => {
+    await httpClient.delete(API.projects.clientInvoice(projectId, invoiceId));
+    await get().fetchClientInvoices(projectId);
+  },
+
+  markClientInvoicePaid: async (projectId, invoiceId, values) => {
+    const res = await httpClient.post(API.projects.clientInvoiceMarkPaid(projectId, invoiceId), {
+      paymentDate: values.paymentDate, method: values.method, referenceNumber: values.referenceNumber, notes: values.notes,
+    });
+    const updated = toClientInvoice(res.data.data as RawClientInvoice);
+    // The Invoice is already Lunas at this point -- if the proof upload
+    // fails, that must NOT look like the whole action failed (it would
+    // invite a retry, which MarkPaid would reject with "already Lunas").
+    // Same partial-failure shape as createClientPayment above.
+    if (values.proofFile) {
+      try {
+        const compressed = await compressFileForUpload(values.proofFile);
+        await httpClient.post(API.projects.evidence(projectId), {
+          name: values.referenceNumber ? `Bukti Transfer - ${values.referenceNumber}` : "Bukti Transfer",
+          type: "Transfer Proof",
+          fileName: compressed.fileName,
+          mimeType: compressed.mimeType,
+          base64Data: compressed.base64Data,
+          documentDate: values.paymentDate,
+          description: "",
+          relatedKind: "clientPayment",
+          relatedId: Number(updated.clientPaymentId),
+        });
+      } catch {
+        await Promise.all([get().fetchClientInvoices(projectId), get().fetchClientPayments(projectId)]);
+        throw new ClientPaymentEvidenceError(
+          "Tagihan sudah ditandai Lunas, tapi bukti transfer gagal diunggah. Anda bisa melampirkan buktinya nanti melalui tab Dokumen."
+        );
+      }
+    }
+    await Promise.all([get().fetchClientInvoices(projectId), get().fetchClientPayments(projectId)]);
+  },
+
+  unmarkClientInvoicePaid: async (projectId, invoiceId) => {
+    await httpClient.post(API.projects.clientInvoiceUnmarkPaid(projectId, invoiceId));
+    await Promise.all([get().fetchClientInvoices(projectId), get().fetchClientPayments(projectId)]);
+  },
+
+  downloadClientInvoicePDF: async (projectId, invoiceId) => {
+    const res = await httpClient.get(API.projects.clientInvoicePdf(projectId, invoiceId), { responseType: "blob" });
+    return res.data as Blob;
   },
 
   fetchVenuePayments: async (projectId) => {

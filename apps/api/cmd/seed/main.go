@@ -1,7 +1,8 @@
-// Command seed resets elproof_db to a minimal clean-slate state: one
-// Platform Console super admin account and one subscription plan — nothing
-// else. Safe to re-run. See internal/adminseed for the actual logic, which
-// is shared with `cmd/server`'s `seed` subcommand (the image the VPS
+// Command seed resets jwswedding_db to a minimal clean-slate state: one
+// tenant and one staff Owner account — nothing else (no local plan catalog,
+// no Platform Console; both were cut when this app went standalone, see
+// ADR-0021). Safe to re-run. See internal/adminseed for the actual logic,
+// which is shared with `cmd/server`'s `seed` subcommand (the image the VPS
 // deploys never has this separate binary, only cmd/server — see
 // docs/DEPLOYMENT.md).
 package main

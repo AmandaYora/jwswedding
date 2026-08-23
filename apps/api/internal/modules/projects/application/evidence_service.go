@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"io"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +13,7 @@ import (
 	"jwswedding/internal/modules/projects/domain"
 	"jwswedding/internal/shared/apperror"
 	"jwswedding/internal/shared/compress"
+	"jwswedding/internal/shared/filename"
 	"jwswedding/internal/shared/logger"
 )
 
@@ -180,7 +180,7 @@ func (s *EvidenceService) Upload(ctx context.Context, tenantID, projectID int64,
 		strconv.FormatInt(tenantID, 10),
 		strconv.FormatInt(projectID, 10),
 		strings.ToLower(string(input.RelatedKind)),
-		uuid.NewString()+"-"+sanitizeFileName(input.FileName),
+		uuid.NewString()+"-"+filename.Sanitize(input.FileName),
 	)
 	if _, err := s.storage.Save(ctx, key, compressed, input.MimeType); err != nil {
 		return nil, apperror.Internal("Gagal mengunggah file ke object storage")
@@ -222,14 +222,4 @@ func (s *EvidenceService) Download(ctx context.Context, projectID, id int64) (*d
 		return nil, nil, apperror.Internal("Gagal mengambil file dari object storage")
 	}
 	return e, reader, nil
-}
-
-var unsafeFileNameChars = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
-
-func sanitizeFileName(name string) string {
-	cleaned := unsafeFileNameChars.ReplaceAllString(name, "-")
-	if cleaned == "" {
-		return "file"
-	}
-	return cleaned
 }

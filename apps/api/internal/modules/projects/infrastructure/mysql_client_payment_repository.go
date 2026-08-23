@@ -3,6 +3,9 @@ package infrastructure
 import (
 	"context"
 	"database/sql"
+	"errors"
+
+	"github.com/go-sql-driver/mysql"
 
 	"jwswedding/internal/modules/projects/domain"
 )
@@ -15,13 +18,18 @@ func NewMySQLClientPaymentRepository(db *sql.DB) *MySQLClientPaymentRepository {
 	return &MySQLClientPaymentRepository{db: db}
 }
 
-const clientPaymentColumns = `id, project_id, type, amount, payment_date, method, reference_number, notes`
+const clientPaymentColumns = `id, project_id, type, amount, payment_date, method, reference_number, notes,
+	receipt_number, receipt_period, receipt_seq`
 
 func scanClientPayment(scan func(dest ...interface{}) error) (*domain.ClientPayment, error) {
 	var p domain.ClientPayment
 	var paymentType string
-	var notes sql.NullString
-	err := scan(&p.ID, &p.ProjectID, &paymentType, &p.Amount, &p.PaymentDate, &p.Method, &p.ReferenceNumber, &notes)
+	var notes, receiptNumber, receiptPeriod sql.NullString
+	var receiptSeq sql.NullInt64
+	err := scan(
+		&p.ID, &p.ProjectID, &paymentType, &p.Amount, &p.PaymentDate, &p.Method, &p.ReferenceNumber, &notes,
+		&receiptNumber, &receiptPeriod, &receiptSeq,
+	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -30,6 +38,9 @@ func scanClientPayment(scan func(dest ...interface{}) error) (*domain.ClientPaym
 	}
 	p.Type = domain.PaymentType(paymentType)
 	p.Notes = notes.String
+	p.ReceiptNumber = receiptNumber.String
+	p.ReceiptPeriod = receiptPeriod.String
+	p.ReceiptSeq = int(receiptSeq.Int64)
 	return &p, nil
 }
 
@@ -84,5 +95,37 @@ func (r *MySQLClientPaymentRepository) Update(ctx context.Context, projectID, id
 
 func (r *MySQLClientPaymentRepository) Delete(ctx context.Context, projectID, id int64) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM client_payments WHERE project_id = ? AND id = ?`, projectID, id)
+	return err
+}
+
+// NextReceiptSequence returns MAX(receipt_seq)+1 for (tenant, period) — same
+// MAX-based idiom as MySQLMilestoneRepository.NextSortOrder, tenant-scoped
+// via the same-module join to projects (not a cross-module join —
+// client_payments and projects both belong to `projects`).
+func (r *MySQLClientPaymentRepository) NextReceiptSequence(ctx context.Context, tenantID int64, period string) (int, error) {
+	var maxSeq sql.NullInt64
+	row := r.db.QueryRowContext(ctx,
+		`SELECT MAX(cp.receipt_seq) FROM client_payments cp
+		 JOIN projects p ON p.id = cp.project_id
+		 WHERE p.tenant_id = ? AND cp.receipt_period = ?`, tenantID, period)
+	if err := row.Scan(&maxSeq); err != nil {
+		return 0, err
+	}
+	return int(maxSeq.Int64) + 1, nil
+}
+
+// SetReceiptNumber writes the lazily-assigned Kwitansi number — translates a
+// MySQL 1062 (two concurrent prints computing the same seq) into
+// domain.ErrDuplicateReceiptNumber, same pattern as
+// MySQLTenantRepository.Update's ErrDuplicateCustomDomain translation.
+func (r *MySQLClientPaymentRepository) SetReceiptNumber(ctx context.Context, projectID, id int64, number, period string, seq int) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE client_payments SET receipt_number = ?, receipt_period = ?, receipt_seq = ? WHERE project_id = ? AND id = ?`,
+		number, period, seq, projectID, id,
+	)
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		return domain.ErrDuplicateReceiptNumber
+	}
 	return err
 }

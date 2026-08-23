@@ -223,7 +223,7 @@ func serve(cfg config.Config) {
 	// projects is built before vendors — vendors' "Lihat Project" resolves a
 	// vendor's cross-project engagement history through projects.Contracts()
 	// (project_vendors is owned by projects, not vendors).
-	projectsModule := projects.NewModule(db, storageClient, staffNameResolver{contracts: staffModule.Contracts()})
+	projectsModule := projects.NewModule(db, storageClient, staffNameResolver{contracts: staffModule.Contracts()}, platformModule.Contracts())
 	// Two-phase wiring: staff needs projects' contract (hard-delete "impact"
 	// lookup, PLAN.md) but staffModule is built above, before projectsModule
 	// exists.
@@ -288,10 +288,11 @@ func serve(cfg config.Config) {
 // siteMeta resolves the incoming request's Host to a tenant's own branding
 // (platform.Module.SiteMetaForHost, ADR-0015's Host lookup) — every
 // index.html fallback response runs through it so a shared link's preview
-// card (WhatsApp/Telegram/etc.) shows the tenant's own name, not "ElProof".
-// Those crawlers never execute the SPA's JS, so tabIdentity.ts's client-side
-// title swap never reaches them; this is the server-side equivalent for the
-// one document a crawler actually reads.
+// card (WhatsApp/Telegram/etc.) shows the tenant's own actual name/logo,
+// not the static default baked into index.html. Those crawlers never
+// execute the SPA's JS, so tabIdentity.ts's client-side title swap never
+// reaches them; this is the server-side equivalent for the one document a
+// crawler actually reads.
 func spaFileServer(root string, siteMeta func(ctx context.Context, host string) (platform.SiteMeta, bool)) http.Handler {
 	fileServer := http.FileServer(http.Dir(root))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

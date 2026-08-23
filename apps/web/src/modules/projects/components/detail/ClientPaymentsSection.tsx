@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, Pencil, Trash2, Eye, AlertTriangle } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, AlertTriangle, Receipt } from "lucide-react";
 import { Card, CardHeader, CardContent } from "@/shared/components/ui/Card";
 import { Badge } from "@/shared/components/ui/Badge";
 import { Button } from "@/shared/components/ui/Button";
@@ -42,6 +42,7 @@ export function ClientPaymentsSection({ projectId }: { projectId: string }) {
   const createClientPayment = useProjectStore((s) => s.createClientPayment);
   const updateClientPayment = useProjectStore((s) => s.updateClientPayment);
   const deleteClientPayment = useProjectStore((s) => s.deleteClientPayment);
+  const downloadClientPaymentReceipt = useProjectStore((s) => s.downloadClientPaymentReceipt);
   // Hard delete is Owner-or-Admin (broadened from Owner-only per explicit
   // user request) -- mirrors ProjectHeaderCard.tsx's own "!== \"Staff\"" idiom
   // for the same Owner-or-Admin bar, since those are the only 3 roles. Edit
@@ -92,6 +93,18 @@ export function ClientPaymentsSection({ projectId }: { projectId: string }) {
     if (!editingPayment) return;
     await updateClientPayment(projectId, editingPayment.id, values);
     setEditingPayment(null);
+  }
+
+  // Tombol "Cetak Kwitansi" disembunyikan untuk Refund (§1.11) -- arah
+  // uangnya berlawanan, "Telah terima dari <client>" akan salah.
+  async function handlePrintReceipt(payment: ClientPayment) {
+    setActionError(null);
+    try {
+      const blob = await downloadClientPaymentReceipt(projectId, payment.id);
+      window.open(URL.createObjectURL(blob), "_blank");
+    } catch (err) {
+      setActionError(getApiErrorMessage(err, "Gagal membuat PDF Kwitansi"));
+    }
   }
 
   async function handleDeletePayment() {
@@ -154,6 +167,9 @@ export function ClientPaymentsSection({ projectId }: { projectId: string }) {
                   </div>
                   <div className="flex items-center gap-2 pt-1">
                     <IconActionButton icon={Eye} label="Lihat Bukti" tone="info" onClick={() => setViewingEvidencePayment(payment)} />
+                    {payment.type !== "Refund" && (
+                      <IconActionButton icon={Receipt} label="Cetak Kwitansi" tone="navy" onClick={() => void handlePrintReceipt(payment)} />
+                    )}
                     <IconActionButton icon={Pencil} label="Ubah Pembayaran" tone="neutral" onClick={() => setEditingPayment(payment)} />
                     {canDelete && (
                       <IconActionButton icon={Trash2} label="Hapus Pembayaran" tone="danger" onClick={() => { setDeletingPayment(payment); setDeleteError(null); }} />
@@ -187,6 +203,9 @@ export function ClientPaymentsSection({ projectId }: { projectId: string }) {
                     <TD>
                       <div className="flex items-center gap-2">
                         <IconActionButton icon={Eye} label="Lihat Bukti" tone="info" onClick={() => setViewingEvidencePayment(payment)} />
+                        {payment.type !== "Refund" && (
+                          <IconActionButton icon={Receipt} label="Cetak Kwitansi" tone="navy" onClick={() => void handlePrintReceipt(payment)} />
+                        )}
                         <IconActionButton icon={Pencil} label="Ubah Pembayaran" tone="neutral" onClick={() => setEditingPayment(payment)} />
                         {canDelete && (
                           <IconActionButton icon={Trash2} label="Hapus Pembayaran" tone="danger" onClick={() => { setDeletingPayment(payment); setDeleteError(null); }} />

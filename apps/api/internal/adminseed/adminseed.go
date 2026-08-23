@@ -18,6 +18,7 @@ package adminseed
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -89,10 +90,29 @@ func Run(ctx context.Context, db *sql.DB) error {
 		customDomain = &def
 	}
 
+	// planID defaults to JWS's own private ElProof plan (id=2, mapped to
+	// app_id='app_02ef90c52704' in subscription_plan_apps — see migration
+	// 000045 and docs/DB_SCHEMA.md), not ElProof's public/demo plan (id=1).
+	// Without this, a freshly seeded tenant's plan_id stays NULL and
+	// SubscriptionPage never shows "Paket Aktif Anda" — see
+	// docs/plan/konsolidasi-plan-pasca-standalone/PLAN.md §3.3. Empty string
+	// opts out (nil), same convention as customDomain above.
+	var planID *int64
+	if raw, ok := os.LookupEnv("SEED_TENANT_PLAN_ID"); ok && raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return fmt.Errorf("SEED_TENANT_PLAN_ID tidak valid: %w", err)
+		}
+		planID = &parsed
+	} else if !ok {
+		def := int64(2)
+		planID = &def
+	}
+
 	expiresAt := time.Now().AddDate(0, subscriptionMonths, 0)
 	if _, err := db.ExecContext(ctx,
-		`UPDATE tenants SET subscription_expires_at = ?, custom_domain = ? WHERE id = ?`,
-		expiresAt, customDomain, tenant.ID,
+		`UPDATE tenants SET subscription_expires_at = ?, custom_domain = ?, plan_id = ? WHERE id = ?`,
+		expiresAt, customDomain, planID, tenant.ID,
 	); err != nil {
 		return err
 	}
@@ -100,7 +120,11 @@ func Run(ctx context.Context, db *sql.DB) error {
 	if customDomain != nil {
 		customDomainLog = *customDomain
 	}
-	log.Printf("seeded tenant: %s (id=%d), langganan aktif sampai %s, custom_domain=%s", tenant.BusinessName, tenant.ID, expiresAt.Format(time.RFC3339), customDomainLog)
+	planIDLog := "(kosong)"
+	if planID != nil {
+		planIDLog = strconv.FormatInt(*planID, 10)
+	}
+	log.Printf("seeded tenant: %s (id=%d), langganan aktif sampai %s, custom_domain=%s, plan_id=%s", tenant.BusinessName, tenant.ID, expiresAt.Format(time.RFC3339), customDomainLog, planIDLog)
 
 	// --- The one staff Owner account ---
 	owner, err := staffService.CreateOwner(ctx, tenant.ID, ownerName, email, phone, username)
@@ -120,47 +144,60 @@ func Run(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-// truncateAll's table list must cover every data table jwswedding_db owns —
-// verify against `docs/DB_SCHEMA.md`/a fresh `SHOW TABLES` whenever a
-// migration adds one, not just from memory. This list previously missed
-// `client_payments`, `venue_payments`, `venues`, and `project_milestone_templates`
-// (a bug inherited from ElProof, never updated when venues/client-payments/
-// venue-payments were added) — see `docs/plan/migrasi-data-jws/PLAN.md` T8/D8:
-// running this against a freshly migrated production database left those four
-// tables full of rows pointing at a tenant/projects that truncateAll had just
-// wiped, and `Run` reported success regardless.
+// truncateTables must cover every data table jwswedding_db owns — verify
+// against `docs/DB_SCHEMA.md`/a fresh `SHOW TABLES` whenever a migration adds
+// one, not just from memory. This list previously missed `client_payments`,
+// `venue_payments`, `venues`, and `project_milestone_templates` (a bug
+// inherited from ElProof, never updated when venues/client-payments/
+// venue-payments were added — docs/plan/migrasi-data-jws/PLAN.md T8/D8), and
+// missed `client_invoices` a second time when that table was added later
+// (docs/plan/konsolidasi-plan-pasca-standalone/PLAN.md §3.6). Both times,
+// running this against a freshly migrated database left rows pointing at a
+// tenant/projects that truncateAll had just wiped, and `Run` reported success
+// regardless.
+//
+// Exported as a package-level slice (not a local literal inside truncateAll)
+// so adminseed_test.go's completeness check reads the exact same list this
+// function truncates — the two can never drift apart again the way the
+// previous hardcoded-4-tables test did.
+var truncateTables = []string{
+	"refresh_tokens",
+	"credentials",
+	"subscription_transactions",
+	"staff_members",
+	"tenants",
+	"vendors",
+	"vendor_categories",
+	"activity_log",
+	"evidence",
+	"vendor_issues",
+	"vendor_payments",
+	"vendor_milestones",
+	"project_vendors",
+	"project_milestones",
+	"projects",
+	"clients",
+	"client_payments",
+	"client_invoices",
+	"venue_payments",
+	"venues",
+	"project_milestone_templates",
+	// platform's own pending-charge index (D8/D11) — not a business ledger,
+	// safe to wipe along with everything else.
+	"pending_subscription_charges",
+}
+
 func truncateAll(db *sql.DB) {
-	stmts := []string{
-		"SET FOREIGN_KEY_CHECKS=0",
-		"TRUNCATE TABLE refresh_tokens",
-		"TRUNCATE TABLE credentials",
-		"TRUNCATE TABLE subscription_transactions",
-		"TRUNCATE TABLE staff_members",
-		"TRUNCATE TABLE tenants",
-		"TRUNCATE TABLE vendors",
-		"TRUNCATE TABLE vendor_categories",
-		"TRUNCATE TABLE activity_log",
-		"TRUNCATE TABLE evidence",
-		"TRUNCATE TABLE vendor_issues",
-		"TRUNCATE TABLE vendor_payments",
-		"TRUNCATE TABLE vendor_milestones",
-		"TRUNCATE TABLE project_vendors",
-		"TRUNCATE TABLE project_milestones",
-		"TRUNCATE TABLE projects",
-		"TRUNCATE TABLE clients",
-		"TRUNCATE TABLE client_payments",
-		"TRUNCATE TABLE venue_payments",
-		"TRUNCATE TABLE venues",
-		"TRUNCATE TABLE project_milestone_templates",
-		// platform's own pending-charge index (D8/D11) — not a business
-		// ledger, safe to wipe along with everything else.
-		"TRUNCATE TABLE pending_subscription_charges",
-		"SET FOREIGN_KEY_CHECKS=1",
+	if _, err := db.Exec("SET FOREIGN_KEY_CHECKS=0"); err != nil {
+		log.Fatalf("disable fk checks: %v", err)
 	}
-	for _, stmt := range stmts {
-		if _, err := db.Exec(stmt); err != nil {
-			log.Fatalf("truncate (%s): %v", stmt, err)
+	for _, table := range truncateTables {
+		if _, err := db.Exec("TRUNCATE TABLE " + table); err != nil {
+			log.Fatalf("truncate %s: %v", table, err)
 		}
+	}
+	if _, err := db.Exec("SET FOREIGN_KEY_CHECKS=1"); err != nil {
+		log.Fatalf("enable fk checks: %v", err)
 	}
 }
 

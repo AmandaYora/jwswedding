@@ -18,8 +18,8 @@ export function AppLayout() {
   if (!brandingHydrated) {
     // Sidebar and every `variant="primary"` Button read their color live off
     // the `--brand-navy-*` CSS vars hydrate() overwrites — painting them
-    // before that resolves shows ElProof's own navy default first, then a
-    // visible swap to the tenant's real color once it lands. A plain white
+    // before that resolves shows the app's own static navy default first,
+    // then a visible swap to the tenant's real color once it lands. A plain white
     // screen carries no color of its own, so there's nothing left to flash
     // away from once the real chrome mounts (see useTenantBrandingStore).
     return (

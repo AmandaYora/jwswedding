@@ -2,15 +2,35 @@ package application
 
 import (
 	"context"
+	"encoding/base64"
 	"io"
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
+
 	billingcontracts "jwswedding/internal/modules/billing/contracts"
 	"jwswedding/internal/modules/platform/domain"
 	"jwswedding/internal/shared/apperror"
+	"jwswedding/internal/shared/compress"
+	"jwswedding/internal/shared/filename"
 	"jwswedding/internal/shared/logger"
 )
+
+// maxLogoDecodedSize mirrors projects/application's evidence maxDecodedSize
+// (ADR-0010's cap) — same 15MB ceiling, deliberately not shared across
+// modules (a numeric literal, not domain logic).
+const maxLogoDecodedSize = 15 * 1024 * 1024
+
+// allowedLogoMimeTypes is a whitelist, not a pass-through like
+// compress.Image's default branch — a logo that isn't one of these 3 types
+// is rejected outright rather than stored byte-identical (PLAN.md
+// invoice-kwitansi-client §4.6).
+var allowedLogoMimeTypes = map[string]bool{
+	"image/jpeg": true,
+	"image/png":  true,
+	"image/webp": true,
+}
 
 // ChargeResult mirrors elproofpay.ChargeResult — kept as a local type (not
 // imported directly) so this module's application layer never depends on
@@ -57,6 +77,13 @@ type TenantRepository interface {
 	FindByID(ctx context.Context, id int64) (*domain.Tenant, error)
 	FindByDomain(ctx context.Context, host string) (*domain.Tenant, error)
 	UpdateSubscription(ctx context.Context, id int64, planID int64, status domain.SubscriptionStatus, expiresAt time.Time) error
+	// Update/UpdateLogo back the self-service "Profil Usaha" page (PLAN.md
+	// invoice-kwitansi-client §1.7) — both already fully implemented on
+	// MySQLTenantRepository (unused since Platform Console's admin tenant
+	// CRUD was cut), just re-declared here now that TenantService calls them
+	// again.
+	Update(ctx context.Context, tenant *domain.Tenant) error
+	UpdateLogo(ctx context.Context, id int64, logoStoragePath *string) error
 }
 
 // ObjectStorage is the narrow slice of internal/shared/storage.Client this
@@ -159,6 +186,85 @@ func (s *TenantService) DownloadLogo(ctx context.Context, tenantID int64) (io.Re
 		return nil, apperror.Internal("Gagal mengambil logo dari object storage")
 	}
 	return reader, nil
+}
+
+// UpdateProfileInput carries every field the self-service "Profil Usaha" page
+// (Owner-only, PATCH /tenants/me) can write — deliberately excludes
+// BrandColorPreset/CustomDomain, which have no write path at all anymore
+// (PLAN.md invoice-kwitansi-client §4.6).
+type UpdateProfileInput struct {
+	BusinessName, OwnerName, Email, Phone, City                 string
+	Address, BankName, BankAccountNumber, BankAccountHolderName string
+}
+
+// UpdateProfile applies input onto the tenant's existing record and persists
+// it — a full-field overwrite of exactly the 9 profile fields (5 pre-existing
+// ones the Owner previously had no way to edit themselves, plus the 4 new
+// ones from §1.7), never touching BrandColorPreset/CustomDomain/subscription
+// state.
+func (s *TenantService) UpdateProfile(ctx context.Context, id int64, input UpdateProfileInput) (*domain.Tenant, error) {
+	tenant, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	tenant.BusinessName, tenant.OwnerName, tenant.Email, tenant.Phone, tenant.City =
+		input.BusinessName, input.OwnerName, input.Email, input.Phone, input.City
+	tenant.Address, tenant.BankName, tenant.BankAccountNumber, tenant.BankAccountHolderName =
+		input.Address, input.BankName, input.BankAccountNumber, input.BankAccountHolderName
+	if err := s.repo.Update(ctx, tenant); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
+}
+
+type UploadLogoInput struct {
+	FileName, MimeType string
+	Base64Data         string
+}
+
+// UploadLogo is genuinely new code (not a reuse of any prior admin-upload
+// path — that one was deleted along with Platform Console), mirroring
+// EvidenceService.Upload's body: decode, cap size, whitelist MIME (a real
+// validator, unlike compress.Image's pass-through default), compress,
+// build a storage key, save, then persist the path (PLAN.md
+// invoice-kwitansi-client §4.6).
+func (s *TenantService) UploadLogo(ctx context.Context, tenantID int64, input UploadLogoInput) (*domain.Tenant, error) {
+	if !allowedLogoMimeTypes[input.MimeType] {
+		return nil, apperror.Validation("Format logo tidak didukung", map[string][]string{
+			"mimeType": {"Gunakan JPEG, PNG, atau WEBP"},
+		})
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(input.Base64Data)
+	if err != nil {
+		return nil, apperror.Validation("Data file tidak valid", map[string][]string{"base64Data": {"Gagal membaca data file"}})
+	}
+	if len(decoded) == 0 {
+		return nil, apperror.Validation("File kosong", map[string][]string{"base64Data": {"File tidak boleh kosong"}})
+	}
+	if len(decoded) > maxLogoDecodedSize {
+		return nil, apperror.Validation("Ukuran file terlalu besar", map[string][]string{"base64Data": {"Maksimal 15 MB"}})
+	}
+
+	compressed, err := compress.Image(decoded, input.MimeType)
+	if err != nil {
+		return nil, apperror.Internal("Gagal memproses file")
+	}
+
+	// Sentinel "0" for the projectID slot — a tenant's logo belongs to no
+	// single project, same convention buildKey callers elsewhere use for a
+	// tenant-level (not project-level) upload.
+	key := s.buildKey(
+		strconv.FormatInt(tenantID, 10), "0", "logo",
+		uuid.NewString()+"-"+filename.Sanitize(input.FileName),
+	)
+	if _, err := s.storage.Save(ctx, key, compressed, input.MimeType); err != nil {
+		return nil, apperror.Internal("Gagal mengunggah file ke object storage")
+	}
+	if err := s.repo.UpdateLogo(ctx, tenantID, &key); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, tenantID)
 }
 
 // ActivateSubscription is an ops-only manual-activation path (D2: no HTTP

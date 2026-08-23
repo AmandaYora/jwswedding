@@ -41,6 +41,13 @@ type tenantResponse struct {
 	BrandColorPreset      string  `json:"brandColorPreset"`
 	HasLogo               bool    `json:"hasLogo"`
 	CustomDomain          *string `json:"customDomain"`
+	// Address/BankName/BankAccountNumber/BankAccountHolderName back the
+	// "Profil Usaha" page and the Invoice/Kwitansi PDF kop surat (PLAN.md
+	// invoice-kwitansi-client §1.7).
+	Address               string `json:"address"`
+	BankName              string `json:"bankName"`
+	BankAccountNumber     string `json:"bankAccountNumber"`
+	BankAccountHolderName string `json:"bankAccountHolderName"`
 }
 
 // brandingResponse is the minimal, non-sensitive branding shape any
@@ -70,6 +77,8 @@ func toTenantResponse(t domain.Tenant) tenantResponse {
 		LastCredentialResetAt: dateOrNil(t.LastCredentialResetAt),
 		BrandColorPreset:      t.BrandColorPreset, HasLogo: t.LogoStoragePath != nil,
 		CustomDomain: t.CustomDomain,
+		Address: t.Address, BankName: t.BankName, BankAccountNumber: t.BankAccountNumber,
+		BankAccountHolderName: t.BankAccountHolderName,
 	}
 }
 
@@ -107,20 +116,25 @@ func (h *TenantHandler) Item(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// "me" is the authenticated principal's own self-service read — the only
-	// path this handler serves at all now that Platform Console CRUD is gone
-	// (D2). /me itself (full tenant incl. subscription) stays Owner-only;
-	// /me/branding and /me/logo are open to any tenant-scoped principal (any
-	// staff role, or client), since branding must render for everyone inside
-	// WO Console / Client Portal, not just the Owner.
+	// "me" is the authenticated principal's own self-service read + partial
+	// write — the only path this handler serves at all now that Platform
+	// Console CRUD is gone (D2). /me itself (full tenant incl. subscription,
+	// GET/PATCH) and /me/logo's PUT stay Owner-only; /me/branding and GET
+	// /me/logo are open to any tenant-scoped principal (any staff role, or
+	// client), since branding must render for everyone inside WO Console /
+	// Client Portal, not just the Owner.
 	if segments[0] == "me" {
 		switch {
 		case len(segments) == 1 && r.Method == http.MethodGet:
 			h.me(w, r)
+		case len(segments) == 1 && r.Method == http.MethodPatch:
+			h.updateMyProfile(w, r)
 		case len(segments) == 2 && segments[1] == "branding" && r.Method == http.MethodGet:
 			h.myBranding(w, r)
 		case len(segments) == 2 && segments[1] == "logo" && r.Method == http.MethodGet:
 			h.myLogo(w, r)
+		case len(segments) == 2 && segments[1] == "logo" && r.Method == http.MethodPut:
+			h.uploadMyLogo(w, r)
 		default:
 			response.Error(w, http.StatusNotFound, "Endpoint tidak ditemukan", nil)
 		}
@@ -177,9 +191,10 @@ func hostWithoutPort(host string) string {
 // PublicBranding is the pre-auth counterpart to myBranding (ADR-0015) — it
 // resolves the tenant from the request's Host header instead of a JWT claim,
 // so LoginPage can render a tenant's own branding before anyone logs in. A
-// Host that matches no tenant's custom_domain (e.g. the platform's own
-// elproof.elcodelabs.com) 404s via writeAppError — the frontend treats that
-// as "no custom branding, use the default look".
+// Host that matches no tenant's custom_domain (e.g. localhost during dev, or
+// any Host other than the tenant's own configured custom_domain) 404s via
+// writeAppError — the frontend treats that as "no custom branding, use the
+// default look".
 func (h *TenantHandler) PublicBranding(w http.ResponseWriter, r *http.Request) {
 	tenant, err := h.tenants.GetBrandingByDomain(r.Context(), hostWithoutPort(r.Host))
 	if err != nil {
@@ -232,6 +247,86 @@ func (h *TenantHandler) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, "ok", toTenantResponse(*tenant))
+}
+
+type updateProfileBody struct {
+	BusinessName          string `json:"businessName"`
+	OwnerName             string `json:"ownerName"`
+	Email                 string `json:"email"`
+	Phone                 string `json:"phone"`
+	City                  string `json:"city"`
+	Address               string `json:"address"`
+	BankName              string `json:"bankName"`
+	BankAccountNumber     string `json:"bankAccountNumber"`
+	BankAccountHolderName string `json:"bankAccountHolderName"`
+}
+
+// updateMyProfile is the self-service "Profil Usaha" write (PLAN.md
+// invoice-kwitansi-client §1.7) — Owner-only, same gate as me().
+func (h *TenantHandler) updateMyProfile(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.FromContext(r.Context())
+	if !ok || claims.PrincipalType != "staff" || claims.Role != "Owner" {
+		response.Error(w, http.StatusForbidden, "Hanya akun Owner yang dapat mengubah profil usaha", nil)
+		return
+	}
+	tenantID, err := application.ParseTenantID(claims.TenantID)
+	if err != nil {
+		response.Error(w, http.StatusForbidden, "Akun ini tidak terikat ke tenant manapun", nil)
+		return
+	}
+
+	var body updateProfileBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
+		return
+	}
+	tenant, err := h.tenants.UpdateProfile(r.Context(), tenantID, application.UpdateProfileInput{
+		BusinessName: body.BusinessName, OwnerName: body.OwnerName, Email: body.Email, Phone: body.Phone, City: body.City,
+		Address: body.Address, BankName: body.BankName, BankAccountNumber: body.BankAccountNumber,
+		BankAccountHolderName: body.BankAccountHolderName,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	response.OK(w, "Profil usaha berhasil disimpan", toTenantResponse(*tenant))
+}
+
+type logoUploadBody struct {
+	FileName   string `json:"fileName"`
+	MimeType   string `json:"mimeType"`
+	Base64Data string `json:"base64Data"`
+}
+
+// uploadMyLogo is the self-service logo upload (PLAN.md
+// invoice-kwitansi-client §1.7) — Owner-only, same gate as me()/
+// updateMyProfile. TenantService.UploadLogo is genuinely new code, not a
+// reuse of any prior admin-upload path (deleted with Platform Console).
+func (h *TenantHandler) uploadMyLogo(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.FromContext(r.Context())
+	if !ok || claims.PrincipalType != "staff" || claims.Role != "Owner" {
+		response.Error(w, http.StatusForbidden, "Hanya akun Owner yang dapat mengubah logo usaha", nil)
+		return
+	}
+	tenantID, err := application.ParseTenantID(claims.TenantID)
+	if err != nil {
+		response.Error(w, http.StatusForbidden, "Akun ini tidak terikat ke tenant manapun", nil)
+		return
+	}
+
+	var body logoUploadBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
+		return
+	}
+	tenant, err := h.tenants.UploadLogo(r.Context(), tenantID, application.UploadLogoInput{
+		FileName: body.FileName, MimeType: body.MimeType, Base64Data: body.Base64Data,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	response.OK(w, "Logo usaha berhasil diperbarui", toTenantResponse(*tenant))
 }
 
 func streamLogo(w http.ResponseWriter, r *http.Request, tenants *application.TenantService, tenantID int64) {
