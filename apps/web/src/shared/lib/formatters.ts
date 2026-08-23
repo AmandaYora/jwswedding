@@ -12,7 +12,7 @@ export function formatCurrencyCompact(amount: number): string {
   return formatCurrency(amount);
 }
 
-const MONTHS_ID = [
+export const MONTHS_ID = [
   "Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des",
 ];
 
