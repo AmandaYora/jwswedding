@@ -53,6 +53,18 @@ func Run(ctx context.Context, db *sql.DB) error {
 	password := getEnv("SEED_OWNER_PASSWORD", "changeme123")
 	subscriptionMonths := getEnvInt("SEED_SUBSCRIPTION_MONTHS", 12)
 
+	// "bronze" (not platformdomain.DefaultBrandColorPreset's "navy") is JWS
+	// Wedding's actual brand color, carried over from when this tenant still
+	// ran on the ElProof SaaS platform (PLAN.md
+	// redesain-pdf-invoice-kwitansi §D12/§D13) — DefaultBrandColorPreset
+	// stays "navy" because it mirrors migration 000017's schema DEFAULT, a
+	// fact about the column, not a brand choice, so it's deliberately not
+	// reused here.
+	brandPreset := getEnv("SEED_TENANT_BRAND_PRESET", "bronze")
+	if !platformdomain.IsValidBrandColorPreset(brandPreset) {
+		return fmt.Errorf("SEED_TENANT_BRAND_PRESET tidak valid: %q", brandPreset)
+	}
+
 	// --- The one tenant (D1: single-tenant, tenant_id column kept as-is) ---
 	tenant := &platformdomain.Tenant{
 		BusinessName: businessName, OwnerName: ownerName, Username: username,
@@ -61,7 +73,7 @@ func Run(ctx context.Context, db *sql.DB) error {
 		// gets set once the Owner actually pays through ElProof.
 		PlanID:             nil,
 		SubscriptionStatus: platformdomain.StatusActive,
-		BrandColorPreset:   platformdomain.DefaultBrandColorPreset,
+		BrandColorPreset:   brandPreset,
 	}
 	if err := tenantRepo.Create(ctx, tenant); err != nil {
 		return err
@@ -94,9 +106,9 @@ func Run(ctx context.Context, db *sql.DB) error {
 	// app_id='app_02ef90c52704' in subscription_plan_apps — see migration
 	// 000045 and docs/DB_SCHEMA.md), not ElProof's public/demo plan (id=1).
 	// Without this, a freshly seeded tenant's plan_id stays NULL and
-	// SubscriptionPage never shows "Paket Aktif Anda" — see
-	// docs/plan/konsolidasi-plan-pasca-standalone/PLAN.md §3.3. Empty string
-	// opts out (nil), same convention as customDomain above.
+	// SubscriptionPage never shows "Paket Aktif Anda" (no code path used to
+	// set it). Empty string opts out (nil), same convention as customDomain
+	// above.
 	var planID *int64
 	if raw, ok := os.LookupEnv("SEED_TENANT_PLAN_ID"); ok && raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 64)
@@ -149,12 +161,13 @@ func Run(ctx context.Context, db *sql.DB) error {
 // one, not just from memory. This list previously missed `client_payments`,
 // `venue_payments`, `venues`, and `project_milestone_templates` (a bug
 // inherited from ElProof, never updated when venues/client-payments/
-// venue-payments were added — docs/plan/migrasi-data-jws/PLAN.md T8/D8), and
-// missed `client_invoices` a second time when that table was added later
-// (docs/plan/konsolidasi-plan-pasca-standalone/PLAN.md §3.6). Both times,
-// running this against a freshly migrated database left rows pointing at a
-// tenant/projects that truncateAll had just wiped, and `Run` reported success
-// regardless.
+// venue-payments were added), and missed `client_invoices` a second time
+// when that table was added later. Both times, running this against a
+// freshly migrated database left rows pointing at a tenant/projects that
+// truncateAll had just wiped, and `Run` reported success regardless — see
+// TestAdminSeed_TruncateTablesLengkap below, which locks this against a
+// third recurrence by comparing against information_schema.TABLES directly
+// instead of another hardcoded list.
 //
 // Exported as a package-level slice (not a local literal inside truncateAll)
 // so adminseed_test.go's completeness check reads the exact same list this

@@ -20,6 +20,7 @@ export const API = {
     tenantMe: "/api/v1/tenants/me",
     tenantMeBranding: "/api/v1/tenants/me/branding",
     tenantMeLogo: "/api/v1/tenants/me/logo",
+    tenantMeSignature: "/api/v1/tenants/me/signature",
     subscriptionsPay: "/api/v1/subscriptions/pay",
     subscriptionsPendingCharge: "/api/v1/subscriptions/pending-charge",
     subscriptionsCancelPendingCharge: "/api/v1/subscriptions/pending-charge/cancel",

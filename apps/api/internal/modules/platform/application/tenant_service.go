@@ -32,6 +32,15 @@ var allowedLogoMimeTypes = map[string]bool{
 	"image/webp": true,
 }
 
+// allowedSignatureMimeTypes is deliberately narrower than the logo whitelist
+// — PNG only, per the user's explicit requirement (PLAN.md
+// redesain-pdf-invoice-kwitansi §D4/§D10): a signature typically needs a
+// transparent background, which JPEG can't carry and WEBP's alpha survives
+// this app's own compress/render pipeline less predictably.
+var allowedSignatureMimeTypes = map[string]bool{
+	"image/png": true,
+}
+
 // ChargeResult mirrors elproofpay.ChargeResult — kept as a local type (not
 // imported directly) so this module's application layer never depends on
 // `internal/shared/elproofpay`'s own type identity, only on the narrow
@@ -84,6 +93,10 @@ type TenantRepository interface {
 	// again.
 	Update(ctx context.Context, tenant *domain.Tenant) error
 	UpdateLogo(ctx context.Context, id int64, logoStoragePath *string) error
+	// UpdateSignature backs the self-service "Profil Usaha" signature upload
+	// (PLAN.md redesain-pdf-invoice-kwitansi §D4/§D7) — same shape as
+	// UpdateLogo.
+	UpdateSignature(ctx context.Context, id int64, signatureStoragePath *string) error
 }
 
 // ObjectStorage is the narrow slice of internal/shared/storage.Client this
@@ -265,6 +278,70 @@ func (s *TenantService) UploadLogo(ctx context.Context, tenantID int64, input Up
 		return nil, err
 	}
 	return s.Get(ctx, tenantID)
+}
+
+type UploadSignatureInput struct {
+	FileName, MimeType string
+	Base64Data         string
+}
+
+// UploadSignature mirrors UploadLogo's body exactly (decode, cap size,
+// whitelist MIME, compress, build a storage key, save, then persist the
+// path), the only differences being the PNG-only whitelist and the
+// "signature" storage key category (PLAN.md
+// redesain-pdf-invoice-kwitansi §D4/§D10).
+func (s *TenantService) UploadSignature(ctx context.Context, tenantID int64, input UploadSignatureInput) (*domain.Tenant, error) {
+	if !allowedSignatureMimeTypes[input.MimeType] {
+		return nil, apperror.Validation("Format tanda tangan tidak didukung", map[string][]string{
+			"mimeType": {"Gunakan file PNG"},
+		})
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(input.Base64Data)
+	if err != nil {
+		return nil, apperror.Validation("Data file tidak valid", map[string][]string{"base64Data": {"Gagal membaca data file"}})
+	}
+	if len(decoded) == 0 {
+		return nil, apperror.Validation("File kosong", map[string][]string{"base64Data": {"File tidak boleh kosong"}})
+	}
+	if len(decoded) > maxLogoDecodedSize {
+		return nil, apperror.Validation("Ukuran file terlalu besar", map[string][]string{"base64Data": {"Maksimal 15 MB"}})
+	}
+
+	compressed, err := compress.Image(decoded, input.MimeType)
+	if err != nil {
+		return nil, apperror.Internal("Gagal memproses file")
+	}
+
+	// Sentinel "0" for the projectID slot — same convention UploadLogo uses
+	// for a tenant-level (not project-level) upload.
+	key := s.buildKey(
+		strconv.FormatInt(tenantID, 10), "0", "signature",
+		uuid.NewString()+"-"+filename.Sanitize(input.FileName),
+	)
+	if _, err := s.storage.Save(ctx, key, compressed, input.MimeType); err != nil {
+		return nil, apperror.Internal("Gagal mengunggah file ke object storage")
+	}
+	if err := s.repo.UpdateSignature(ctx, tenantID, &key); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, tenantID)
+}
+
+// DownloadSignature mirrors DownloadLogo's byte-proxy shape exactly.
+func (s *TenantService) DownloadSignature(ctx context.Context, tenantID int64) (io.ReadCloser, error) {
+	tenant, err := s.Get(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if tenant.SignatureStoragePath == nil {
+		return nil, apperror.NotFound("Tenant belum memiliki tanda tangan")
+	}
+	reader, err := s.storage.Open(ctx, *tenant.SignatureStoragePath)
+	if err != nil {
+		return nil, apperror.Internal("Gagal mengambil tanda tangan dari object storage")
+	}
+	return reader, nil
 }
 
 // ActivateSubscription is an ops-only manual-activation path (D2: no HTTP

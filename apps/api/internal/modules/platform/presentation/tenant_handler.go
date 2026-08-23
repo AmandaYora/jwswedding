@@ -1,6 +1,7 @@
 package presentation
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -40,6 +41,7 @@ type tenantResponse struct {
 	LastCredentialResetAt *string `json:"lastCredentialResetAt"`
 	BrandColorPreset      string  `json:"brandColorPreset"`
 	HasLogo               bool    `json:"hasLogo"`
+	HasSignature          bool    `json:"hasSignature"`
 	CustomDomain          *string `json:"customDomain"`
 	// Address/BankName/BankAccountNumber/BankAccountHolderName back the
 	// "Profil Usaha" page and the Invoice/Kwitansi PDF kop surat (PLAN.md
@@ -76,6 +78,7 @@ func toTenantResponse(t domain.Tenant) tenantResponse {
 		SubscriptionExpiresAt: dateOrNil(t.SubscriptionExpiresAt), IsSuspended: t.IsSuspended,
 		LastCredentialResetAt: dateOrNil(t.LastCredentialResetAt),
 		BrandColorPreset:      t.BrandColorPreset, HasLogo: t.LogoStoragePath != nil,
+		HasSignature: t.SignatureStoragePath != nil,
 		CustomDomain: t.CustomDomain,
 		Address: t.Address, BankName: t.BankName, BankAccountNumber: t.BankAccountNumber,
 		BankAccountHolderName: t.BankAccountHolderName,
@@ -119,10 +122,13 @@ func (h *TenantHandler) Item(w http.ResponseWriter, r *http.Request) {
 	// "me" is the authenticated principal's own self-service read + partial
 	// write — the only path this handler serves at all now that Platform
 	// Console CRUD is gone (D2). /me itself (full tenant incl. subscription,
-	// GET/PATCH) and /me/logo's PUT stay Owner-only; /me/branding and GET
-	// /me/logo are open to any tenant-scoped principal (any staff role, or
-	// client), since branding must render for everyone inside WO Console /
-	// Client Portal, not just the Owner.
+	// GET/PATCH), /me/logo's PUT, and /me/signature's PUT stay Owner-only;
+	// /me/branding and GET /me/logo are open to any tenant-scoped principal
+	// (any staff role, or client), since branding must render for everyone
+	// inside WO Console / Client Portal, not just the Owner. GET
+	// /me/signature follows the same "any tenant-scoped principal" rule as
+	// GET /me/logo — the Kwitansi PDF it feeds is reachable from Client
+	// Portal too (PLAN.md redesain-pdf-invoice-kwitansi §D4/§D7).
 	if segments[0] == "me" {
 		switch {
 		case len(segments) == 1 && r.Method == http.MethodGet:
@@ -135,6 +141,10 @@ func (h *TenantHandler) Item(w http.ResponseWriter, r *http.Request) {
 			h.myLogo(w, r)
 		case len(segments) == 2 && segments[1] == "logo" && r.Method == http.MethodPut:
 			h.uploadMyLogo(w, r)
+		case len(segments) == 2 && segments[1] == "signature" && r.Method == http.MethodGet:
+			h.mySignature(w, r)
+		case len(segments) == 2 && segments[1] == "signature" && r.Method == http.MethodPut:
+			h.uploadMySignature(w, r)
 		default:
 			response.Error(w, http.StatusNotFound, "Endpoint tidak ditemukan", nil)
 		}
@@ -172,7 +182,18 @@ func (h *TenantHandler) myLogo(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusForbidden, "Akun ini tidak terikat ke tenant manapun", nil)
 		return
 	}
-	streamLogo(w, r, h.tenants, tenantID)
+	streamFile(w, r, "logo", tenantID, h.tenants.DownloadLogo)
+}
+
+// mySignature streams the caller's own tenant's signature — same auth
+// scoping as myLogo above (PLAN.md redesain-pdf-invoice-kwitansi §D4/§D7).
+func (h *TenantHandler) mySignature(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := selfTenantID(r)
+	if !ok {
+		response.Error(w, http.StatusForbidden, "Akun ini tidak terikat ke tenant manapun", nil)
+		return
+	}
+	streamFile(w, r, "signature", tenantID, h.tenants.DownloadSignature)
 }
 
 // hostWithoutPort strips an optional ":port" suffix from r.Host — a custom
@@ -213,7 +234,7 @@ func (h *TenantHandler) PublicLogo(w http.ResponseWriter, r *http.Request) {
 		writeAppError(w, err)
 		return
 	}
-	streamLogo(w, r, h.tenants, tenant.ID)
+	streamFile(w, r, "logo", tenant.ID, h.tenants.DownloadLogo)
 }
 
 // selfTenantID resolves the calling principal's own tenant from the JWT
@@ -329,15 +350,54 @@ func (h *TenantHandler) uploadMyLogo(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Logo usaha berhasil diperbarui", toTenantResponse(*tenant))
 }
 
-func streamLogo(w http.ResponseWriter, r *http.Request, tenants *application.TenantService, tenantID int64) {
-	reader, err := tenants.DownloadLogo(r.Context(), tenantID)
+type signatureUploadBody struct {
+	FileName   string `json:"fileName"`
+	MimeType   string `json:"mimeType"`
+	Base64Data string `json:"base64Data"`
+}
+
+// uploadMySignature mirrors uploadMyLogo exactly (PLAN.md
+// redesain-pdf-invoice-kwitansi §D4/§D7) — Owner-only, same gate.
+func (h *TenantHandler) uploadMySignature(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.FromContext(r.Context())
+	if !ok || claims.PrincipalType != "staff" || claims.Role != "Owner" {
+		response.Error(w, http.StatusForbidden, "Hanya akun Owner yang dapat mengubah tanda tangan", nil)
+		return
+	}
+	tenantID, err := application.ParseTenantID(claims.TenantID)
+	if err != nil {
+		response.Error(w, http.StatusForbidden, "Akun ini tidak terikat ke tenant manapun", nil)
+		return
+	}
+
+	var body signatureUploadBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
+		return
+	}
+	tenant, err := h.tenants.UploadSignature(r.Context(), tenantID, application.UploadSignatureInput{
+		FileName: body.FileName, MimeType: body.MimeType, Base64Data: body.Base64Data,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	response.OK(w, "Tanda tangan berhasil diperbarui", toTenantResponse(*tenant))
+}
+
+// streamFile is streamLogo generalized to also serve the signature asset
+// (PLAN.md redesain-pdf-invoice-kwitansi §D4/§D7) — download is
+// TenantService.DownloadLogo or .DownloadSignature, whichever the caller
+// bound; name only affects the Content-Disposition filename.
+func streamFile(w http.ResponseWriter, r *http.Request, name string, tenantID int64, download func(ctx context.Context, tenantID int64) (io.ReadCloser, error)) {
+	reader, err := download(r.Context(), tenantID)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
 	defer reader.Close()
 
-	w.Header().Set("Content-Disposition", `inline; filename="logo"`)
+	w.Header().Set("Content-Disposition", `inline; filename="`+name+`"`)
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, reader)
 }

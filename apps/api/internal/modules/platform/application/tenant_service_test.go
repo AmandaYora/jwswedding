@@ -1,7 +1,11 @@
 package application
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -64,6 +68,17 @@ func (f *fakeTenantRepo) UpdateLogo(ctx context.Context, id int64, logoStoragePa
 		return apperror.NotFound("tenant tidak ditemukan")
 	}
 	t.LogoStoragePath = logoStoragePath
+	return nil
+}
+
+func (f *fakeTenantRepo) UpdateSignature(ctx context.Context, id int64, signatureStoragePath *string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.tenants[id]
+	if !ok {
+		return apperror.NotFound("tenant tidak ditemukan")
+	}
+	t.SignatureStoragePath = signatureStoragePath
 	return nil
 }
 
@@ -231,6 +246,58 @@ func (f *fakeCharges) ChargeStatus(ctx context.Context, orderRef string) (*Charg
 
 func newTestService(repo *fakeTenantRepo, pending *fakePendingChargeRepo, billing *fakeBilling, charges *fakeCharges) *TenantService {
 	return NewTenantService(repo, pending, billing, charges, nil, func(a, b, c, d string) string { return a + b + c + d })
+}
+
+// fakeObjectStorage is an in-memory stand-in for internal/shared/storage.Client
+// — good enough to test UploadLogo/UploadSignature's control flow (which key
+// gets saved, whether Save is even reached) without a real object store.
+type fakeObjectStorage struct {
+	mu       sync.Mutex
+	saved    map[string][]byte
+	saveErr  error
+	openErr  error
+	saveCall func(key string, data []byte, contentType string)
+}
+
+func newFakeObjectStorage() *fakeObjectStorage {
+	return &fakeObjectStorage{saved: make(map[string][]byte)}
+}
+
+func (f *fakeObjectStorage) Save(ctx context.Context, key string, data []byte, contentType string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.saveCall != nil {
+		f.saveCall(key, data, contentType)
+	}
+	if f.saveErr != nil {
+		return "", f.saveErr
+	}
+	f.saved[key] = data
+	return key, nil
+}
+
+func (f *fakeObjectStorage) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.openErr != nil {
+		return nil, f.openErr
+	}
+	data, ok := f.saved[key]
+	if !ok {
+		return nil, apperror.NotFound("berkas tidak ditemukan")
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+// newTestServiceWithStorage is newTestService plus a real (fake) ObjectStorage
+// and buildKey — needed by every UploadLogo/UploadSignature/DownloadLogo/
+// DownloadSignature test, none of which newTestService's nil storage can
+// exercise.
+func newTestServiceWithStorage(repo *fakeTenantRepo, storage *fakeObjectStorage) *TenantService {
+	return NewTenantService(repo, newFakePendingChargeRepo(), newFakeBilling(), &fakeCharges{}, storage,
+		func(tenantID, projectID, category, filename string) string {
+			return tenantID + "/" + projectID + "/" + category + "/" + filename
+		})
 }
 
 // --- T2/D11: atomic claim ---
@@ -557,5 +624,188 @@ func TestApplyWebhookEvent_TanpaBarisTransaksiTetapMengaktifkan(t *testing.T) {
 	}
 	if repo.updateSubscriptionCalls != 1 {
 		t.Error("expected the subscription to still be activated")
+	}
+}
+
+// --- PLAN.md redesain-pdf-invoice-kwitansi §D4/§D7: signature upload ---
+
+func b64(s string) string {
+	return base64.StdEncoding.EncodeToString([]byte(s))
+}
+
+func TestUploadSignature_PNGValid(t *testing.T) {
+	tenant := &domain.Tenant{ID: 1}
+	repo := newFakeTenantRepo(tenant)
+	storage := newFakeObjectStorage()
+	var savedKey, savedContentType string
+	storage.saveCall = func(key string, data []byte, contentType string) {
+		savedKey = key
+		savedContentType = contentType
+	}
+	svc := newTestServiceWithStorage(repo, storage)
+
+	updated, err := svc.UploadSignature(context.Background(), 1, UploadSignatureInput{
+		FileName: "ttd.png", MimeType: "image/png", Base64Data: b64("fake-png-bytes"),
+	})
+	if err != nil {
+		t.Fatalf("UploadSignature: %v", err)
+	}
+	if updated.SignatureStoragePath == nil {
+		t.Fatal("expected SignatureStoragePath to be set")
+	}
+	if savedContentType != "image/png" {
+		t.Errorf("expected content type image/png, got %q", savedContentType)
+	}
+	if !strings.Contains(savedKey, "signature") {
+		t.Errorf("expected storage key to be categorized as signature, got %q", savedKey)
+	}
+	if strings.Contains(savedKey, "logo") {
+		t.Errorf("signature key must not reuse the logo category: %q", savedKey)
+	}
+}
+
+func TestUploadSignature_TolakSelainPNG(t *testing.T) {
+	tenant := &domain.Tenant{ID: 1}
+	repo := newFakeTenantRepo(tenant)
+	storage := newFakeObjectStorage()
+	svc := newTestServiceWithStorage(repo, storage)
+
+	_, err := svc.UploadSignature(context.Background(), 1, UploadSignatureInput{
+		FileName: "ttd.jpg", MimeType: "image/jpeg", Base64Data: b64("fake-jpeg-bytes"),
+	})
+	appErr, ok := apperror.As(err)
+	if !ok || appErr.Kind != apperror.KindValidation {
+		t.Fatalf("expected a validation error for non-PNG mime type, got %v", err)
+	}
+	if len(storage.saved) != 0 {
+		t.Error("storage must never be touched when the MIME whitelist rejects the upload")
+	}
+}
+
+func TestUploadSignature_Base64Rusak(t *testing.T) {
+	tenant := &domain.Tenant{ID: 1}
+	repo := newFakeTenantRepo(tenant)
+	svc := newTestServiceWithStorage(repo, newFakeObjectStorage())
+
+	_, err := svc.UploadSignature(context.Background(), 1, UploadSignatureInput{
+		FileName: "ttd.png", MimeType: "image/png", Base64Data: "!!!bukan-base64!!!",
+	})
+	appErr, ok := apperror.As(err)
+	if !ok || appErr.Kind != apperror.KindValidation {
+		t.Fatalf("expected a validation error for corrupt base64, got %v", err)
+	}
+}
+
+func TestUploadSignature_PayloadKosong(t *testing.T) {
+	tenant := &domain.Tenant{ID: 1}
+	repo := newFakeTenantRepo(tenant)
+	svc := newTestServiceWithStorage(repo, newFakeObjectStorage())
+
+	_, err := svc.UploadSignature(context.Background(), 1, UploadSignatureInput{
+		FileName: "ttd.png", MimeType: "image/png", Base64Data: "",
+	})
+	appErr, ok := apperror.As(err)
+	if !ok || appErr.Kind != apperror.KindValidation {
+		t.Fatalf("expected a validation error for empty payload, got %v", err)
+	}
+}
+
+func TestUploadSignature_MelebihiUkuranMaksimal(t *testing.T) {
+	tenant := &domain.Tenant{ID: 1}
+	repo := newFakeTenantRepo(tenant)
+	svc := newTestServiceWithStorage(repo, newFakeObjectStorage())
+
+	oversized := make([]byte, maxLogoDecodedSize+1)
+	_, err := svc.UploadSignature(context.Background(), 1, UploadSignatureInput{
+		FileName: "ttd.png", MimeType: "image/png", Base64Data: base64.StdEncoding.EncodeToString(oversized),
+	})
+	appErr, ok := apperror.As(err)
+	if !ok || appErr.Kind != apperror.KindValidation {
+		t.Fatalf("expected a validation error for an oversized payload, got %v", err)
+	}
+}
+
+func TestUploadSignature_StorageGagal(t *testing.T) {
+	tenant := &domain.Tenant{ID: 1}
+	repo := newFakeTenantRepo(tenant)
+	storage := newFakeObjectStorage()
+	storage.saveErr = apperror.Internal("storage down")
+	svc := newTestServiceWithStorage(repo, storage)
+
+	_, err := svc.UploadSignature(context.Background(), 1, UploadSignatureInput{
+		FileName: "ttd.png", MimeType: "image/png", Base64Data: b64("fake-png-bytes"),
+	})
+	appErr, ok := apperror.As(err)
+	if !ok || appErr.Kind != apperror.KindInternal {
+		t.Fatalf("expected an internal error when storage.Save fails, got %v", err)
+	}
+	if repo.tenants[1].SignatureStoragePath != nil {
+		t.Error("UpdateSignature must never be called when Save already failed")
+	}
+}
+
+func TestDownloadSignature_BelumDiunggah(t *testing.T) {
+	tenant := &domain.Tenant{ID: 1, SignatureStoragePath: nil}
+	repo := newFakeTenantRepo(tenant)
+	svc := newTestServiceWithStorage(repo, newFakeObjectStorage())
+
+	_, err := svc.DownloadSignature(context.Background(), 1)
+	appErr, ok := apperror.As(err)
+	if !ok || appErr.Kind != apperror.KindNotFound {
+		t.Fatalf("expected a not-found error for a tenant with no signature yet, got %v", err)
+	}
+}
+
+func TestDownloadSignature_Ada(t *testing.T) {
+	path := "1/0/signature/x-ttd.png"
+	tenant := &domain.Tenant{ID: 1, SignatureStoragePath: &path}
+	repo := newFakeTenantRepo(tenant)
+	storage := newFakeObjectStorage()
+	storage.saved[path] = []byte("isi-png")
+	svc := newTestServiceWithStorage(repo, storage)
+
+	reader, err := svc.DownloadSignature(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("DownloadSignature: %v", err)
+	}
+	defer reader.Close()
+	data, _ := io.ReadAll(reader)
+	if !bytes.Equal(data, []byte("isi-png")) {
+		t.Errorf("expected the stored signature bytes back, got %q", data)
+	}
+}
+
+func TestGetTenantProfile_MembawaCityDanWarnaAksen(t *testing.T) {
+	tenant := &domain.Tenant{ID: 1, City: "Bandung", BrandColorPreset: "bronze"}
+	repo := newFakeTenantRepo(tenant)
+	svc := newTestServiceWithStorage(repo, newFakeObjectStorage())
+
+	got, err := svc.Get(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.City != "Bandung" {
+		t.Errorf("expected City to round-trip, got %q", got.City)
+	}
+	accent, accentDark, accentSoft := domain.PresetRGB(got.BrandColorPreset)
+	if accent != [3]int{150, 105, 46} {
+		t.Errorf("expected bronze accent RGB {150,105,46}, got %v", accent)
+	}
+	if accentDark != [3]int{107, 74, 31} {
+		t.Errorf("expected bronze accent-dark RGB {107,74,31}, got %v", accentDark)
+	}
+	if accentSoft != [3]int{244, 228, 204} {
+		t.Errorf("expected bronze accent-soft RGB {244,228,204}, got %v", accentSoft)
+	}
+}
+
+func TestGetTenantProfile_PresetTakDikenalJatuhKeNavy(t *testing.T) {
+	accent, _, _ := domain.PresetRGB("warna-yang-tidak-ada")
+	navyAccent, _, _ := domain.PresetRGB(domain.DefaultBrandColorPreset)
+	if accent != navyAccent {
+		t.Errorf("expected an unknown preset to resolve to navy's accent %v, got %v", navyAccent, accent)
+	}
+	if accent == ([3]int{0, 0, 0}) {
+		t.Error("must never resolve to black — a dirty preset value must still render a real accent color")
 	}
 }

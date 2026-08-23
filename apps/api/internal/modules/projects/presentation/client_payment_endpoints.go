@@ -198,8 +198,16 @@ func (h *Handler) downloadClientPaymentReceiptPDF(w http.ResponseWriter, r *http
 	if !hasLogo {
 		logo = nil
 	}
+	signature, _, hasSignature, err := h.platform.GetTenantSignature(r.Context(), claims.tenantID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	if !hasSignature {
+		signature = nil
+	}
 
-	pdf, err := buildClientPaymentReceiptPDF(*project, *p, invoiceNumber, profile, logo)
+	pdf, err := buildClientPaymentReceiptPDF(*project, *p, invoiceNumber, profile, logo, signature)
 	if err != nil {
 		writeAppError(w, err)
 		return

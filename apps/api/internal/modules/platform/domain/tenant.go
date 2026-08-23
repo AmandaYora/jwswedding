@@ -56,6 +56,10 @@ type Tenant struct {
 	LastCredentialResetAt *time.Time
 	BrandColorPreset      string
 	LogoStoragePath       *string
+	// SignatureStoragePath backs the Kwitansi PDF's signature block (PLAN.md
+	// redesain-pdf-invoice-kwitansi §D4/§D7) — nil for a tenant that never
+	// uploaded one, same "optional asset" convention as LogoStoragePath.
+	SignatureStoragePath  *string
 	CustomDomain          *string
 	CreatedAt             time.Time
 	UpdatedAt             time.Time

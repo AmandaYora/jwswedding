@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Building2 } from "lucide-react";
+import { Building2, Signature } from "lucide-react";
 import { Card, CardHeader, CardContent } from "@/shared/components/ui/Card";
 import { Button } from "@/shared/components/ui/Button";
 import { Input, Textarea, Field } from "@/shared/components/ui/Input";
@@ -19,9 +19,11 @@ const EMPTY_VALUES: CompanyProfileFormValues = {
 export default function CompanyProfilePage() {
   const profile = useCompanyProfileStore((s) => s.profile);
   const logoUrl = useCompanyProfileStore((s) => s.logoUrl);
+  const signatureUrl = useCompanyProfileStore((s) => s.signatureUrl);
   const fetchProfile = useCompanyProfileStore((s) => s.fetchProfile);
   const updateProfile = useCompanyProfileStore((s) => s.updateProfile);
   const uploadLogo = useCompanyProfileStore((s) => s.uploadLogo);
+  const uploadSignature = useCompanyProfileStore((s) => s.uploadSignature);
 
   const [values, setValues] = useState<CompanyProfileFormValues>(EMPTY_VALUES);
   const [errors, setErrors] = useState<Partial<Record<keyof CompanyProfileFormValues, string>>>({});
@@ -30,6 +32,8 @@ export default function CompanyProfilePage() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [logoError, setLogoError] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [signatureError, setSignatureError] = useState<string | null>(null);
+  const [uploadingSignature, setUploadingSignature] = useState(false);
 
   useEffect(() => {
     void fetchProfile();
@@ -89,6 +93,21 @@ export default function CompanyProfilePage() {
     }
   }
 
+  // Mirrors handleLogoChange exactly (PLAN.md redesain-pdf-invoice-kwitansi
+  // §D4/§D7).
+  async function handleSignatureChange(file: File | undefined) {
+    if (!file) return;
+    setSignatureError(null);
+    setUploadingSignature(true);
+    try {
+      await uploadSignature(file);
+    } catch (err) {
+      setSignatureError(getApiErrorMessage(err, "Gagal mengunggah tanda tangan"));
+    } finally {
+      setUploadingSignature(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-center gap-2">
@@ -124,6 +143,36 @@ export default function CompanyProfilePage() {
                 className="block text-[13px] text-text-secondary file:mr-3 file:rounded-md file:border-0 file:bg-navy-900 file:px-3 file:py-1.5 file:text-[12.5px] file:font-semibold file:text-white disabled:opacity-60"
               />
               <span className="text-xs text-text-secondary">JPEG, PNG, atau WEBP. Tersimpan otomatis begitu file dipilih.</span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="max-w-2xl">
+        <CardHeader title="Tanda Tangan" subtitle="Tanda tangan ini muncul otomatis pada Kwitansi yang diterbitkan." />
+        <CardContent>
+          {signatureError && (
+            <p className="mb-3 rounded-md border border-danger/30 bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger">{signatureError}</p>
+          )}
+          <div className="flex items-center gap-4">
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-surface-muted">
+              {signatureUrl ? (
+                <img src={signatureUrl} alt="Tanda tangan" className="h-full w-full object-contain" />
+              ) : (
+                <Signature className="h-6 w-6 text-text-secondary" />
+              )}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <input
+                type="file"
+                accept="image/png"
+                disabled={uploadingSignature}
+                onChange={(e) => void handleSignatureChange(e.target.files?.[0])}
+                className="block text-[13px] text-text-secondary file:mr-3 file:rounded-md file:border-0 file:bg-navy-900 file:px-3 file:py-1.5 file:text-[12.5px] file:font-semibold file:text-white disabled:opacity-60"
+              />
+              <span className="text-xs text-text-secondary">
+                PNG saja, sebaiknya berlatar transparan. Tersimpan otomatis begitu file dipilih.
+              </span>
             </div>
           </div>
         </CardContent>

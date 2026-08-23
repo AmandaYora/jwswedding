@@ -113,11 +113,10 @@ func seededPlanID(t *testing.T, db *sql.DB) sql.NullInt64 {
 	return planID
 }
 
-// TestAdminSeed_MengisiPlanID locks §6.1 A4 of
-// docs/plan/konsolidasi-plan-pasca-standalone/PLAN.md: a freshly seeded
-// tenant's plan_id used to stay NULL (no code path ever set it), so
-// SubscriptionPage never showed "Paket Aktif Anda" in a fresh dev
-// environment even though the tenant's subscription itself is active.
+// TestAdminSeed_MengisiPlanID locks the fix for a freshly seeded tenant's
+// plan_id used to stay NULL (no code path ever set it), so SubscriptionPage
+// never showed "Paket Aktif Anda" in a fresh dev environment even though the
+// tenant's subscription itself is active.
 func TestAdminSeed_MengisiPlanID(t *testing.T) {
 	db := setupTestDB(t)
 	if err := os.Unsetenv("SEED_TENANT_PLAN_ID"); err != nil {
@@ -151,9 +150,9 @@ func TestAdminSeed_PlanIDKosongTetapNull(t *testing.T) {
 	}
 }
 
-// TestAdminSeed_TruncateMembersihkanSemuaTabel locks T8/D8 from
-// docs/plan/migrasi-data-jws/PLAN.md: truncateAll's table list previously
-// missed venues/client_payments/venue_payments/project_milestone_templates
+// TestAdminSeed_TruncateMembersihkanSemuaTabel locks the fix for
+// truncateAll's table list, which previously missed
+// venues/client_payments/venue_payments/project_milestone_templates
 // (inherited from ElProof, never updated when those tables were added) —
 // Run() reported success while leaving all four full of rows pointing at a
 // tenant/projects it had just wiped. Seed dummy rows into each, run Run(),
@@ -208,8 +207,7 @@ func TestAdminSeed_TruncateMembersihkanSemuaTabel(t *testing.T) {
 	); err != nil {
 		t.Fatalf("insert dummy venue_payment: %v", err)
 	}
-	// client_invoices missed truncateAll a second time (§3.6 of
-	// docs/plan/konsolidasi-plan-pasca-standalone/PLAN.md) when it was added
+	// client_invoices missed truncateAll a second time when it was added
 	// after this test was written — dummy row proves the fix, not just the
 	// completeness check below.
 	if _, err := db.Exec(
@@ -235,12 +233,11 @@ func TestAdminSeed_TruncateMembersihkanSemuaTabel(t *testing.T) {
 }
 
 // TestAdminSeed_TruncateTablesLengkap adalah gerbang kelengkapan struktural
-// yang mencegah kelas bug T8/D8 kambuh untuk ketiga kalinya (lihat komentar
-// di atas truncateTables di adminseed.go, dan
-// docs/plan/konsolidasi-plan-pasca-standalone/PLAN.md §3.6/§6.1 A2) —
-// truncateTables dibandingkan langsung terhadap information_schema.TABLES,
-// bukan terhadap daftar nama hardcoded lain, supaya migrasi baru yang lupa
-// didaftarkan gagal di sini tanpa perlu menulis test baru setiap kali.
+// yang mencegah kelas bug ini (lihat komentar di atas truncateTables di
+// adminseed.go) kambuh untuk ketiga kalinya — truncateTables dibandingkan
+// langsung terhadap information_schema.TABLES, bukan terhadap daftar nama
+// hardcoded lain, supaya migrasi baru yang lupa didaftarkan gagal di sini
+// tanpa perlu menulis test baru setiap kali.
 func TestAdminSeed_TruncateTablesLengkap(t *testing.T) {
 	db := setupTestDB(t)
 
@@ -282,5 +279,75 @@ func TestAdminSeed_TruncateTablesLengkap(t *testing.T) {
 			"truncateTables (adminseed.go) tertinggal %d tabel yang ada di skema tapi tidak pernah di-truncate: %v — tambahkan ke truncateTables",
 			len(missing), missing,
 		)
+	}
+}
+
+// --- PLAN.md redesain-pdf-invoice-kwitansi §D13: seeded brand color ---
+
+func seededBrandColorPreset(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	var preset string
+	if err := db.QueryRow("SELECT brand_color_preset FROM tenants LIMIT 1").Scan(&preset); err != nil {
+		t.Fatalf("query brand_color_preset: %v", err)
+	}
+	return preset
+}
+
+// TestAdminSeed_BrandColorPresetDefaultBronze locks the fix for Create()'s
+// INSERT previously omitting brand_color_preset entirely — before this,
+// Tenant.BrandColorPreset (set in Run() to "bronze", JWS Wedding's actual
+// brand) was a dead assignment and every freshly seeded tenant fell back to
+// migration 000017's schema DEFAULT ('navy') regardless.
+func TestAdminSeed_BrandColorPresetDefaultBronze(t *testing.T) {
+	db := setupTestDB(t)
+	if err := os.Unsetenv("SEED_TENANT_BRAND_PRESET"); err != nil {
+		t.Fatalf("unsetenv: %v", err)
+	}
+
+	if err := Run(context.Background(), db); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	preset := seededBrandColorPreset(t, db)
+	if preset != "bronze" {
+		t.Errorf("expected seeded tenant's brand_color_preset = bronze (JWS Wedding's actual brand, not the schema default), got %q", preset)
+	}
+}
+
+func TestAdminSeed_BrandColorPresetDariEnv(t *testing.T) {
+	db := setupTestDB(t)
+	if err := os.Setenv("SEED_TENANT_BRAND_PRESET", "emerald"); err != nil {
+		t.Fatalf("setenv: %v", err)
+	}
+	defer os.Unsetenv("SEED_TENANT_BRAND_PRESET")
+
+	if err := Run(context.Background(), db); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	preset := seededBrandColorPreset(t, db)
+	if preset != "emerald" {
+		t.Errorf("expected SEED_TENANT_BRAND_PRESET to override the default, got %q", preset)
+	}
+}
+
+func TestAdminSeed_BrandColorPresetTidakValidGagal(t *testing.T) {
+	db := setupTestDB(t)
+	if err := os.Setenv("SEED_TENANT_BRAND_PRESET", "warna-ngawur"); err != nil {
+		t.Fatalf("setenv: %v", err)
+	}
+	defer os.Unsetenv("SEED_TENANT_BRAND_PRESET")
+
+	err := Run(context.Background(), db)
+	if err == nil {
+		t.Fatal("expected Run to reject an invalid SEED_TENANT_BRAND_PRESET, got nil error")
+	}
+
+	var count int
+	if scanErr := db.QueryRow("SELECT COUNT(*) FROM tenants").Scan(&count); scanErr != nil {
+		t.Fatalf("count tenants: %v", scanErr)
+	}
+	if count != 0 {
+		t.Errorf("expected no tenant row to be committed when the brand preset is invalid, got %d rows", count)
 	}
 }
