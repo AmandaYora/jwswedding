@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"time"
 
-	"elproof/internal/modules/clients/domain"
-	"elproof/internal/shared/pagination"
+	"jwswedding/internal/modules/clients/domain"
+	"jwswedding/internal/shared/pagination"
 )
 
 type MySQLClientRepository struct {

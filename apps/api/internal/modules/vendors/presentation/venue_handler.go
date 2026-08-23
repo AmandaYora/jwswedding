@@ -10,13 +10,13 @@ import (
 
 	"github.com/xuri/excelize/v2"
 
-	projectscontracts "elproof/internal/modules/projects/contracts"
-	"elproof/internal/modules/vendors/application"
-	"elproof/internal/modules/vendors/domain"
-	"elproof/internal/shared/httpx"
-	"elproof/internal/shared/middleware"
-	"elproof/internal/shared/pagination"
-	"elproof/internal/shared/response"
+	projectscontracts "jwswedding/internal/modules/projects/contracts"
+	"jwswedding/internal/modules/vendors/application"
+	"jwswedding/internal/modules/vendors/domain"
+	"jwswedding/internal/shared/httpx"
+	"jwswedding/internal/shared/middleware"
+	"jwswedding/internal/shared/pagination"
+	"jwswedding/internal/shared/response"
 )
 
 // requireStaffTenant is requireTenant's stricter sibling: `client` principals

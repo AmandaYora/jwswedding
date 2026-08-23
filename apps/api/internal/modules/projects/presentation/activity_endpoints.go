@@ -3,7 +3,7 @@ package presentation
 import (
 	"net/http"
 
-	"elproof/internal/shared/response"
+	"jwswedding/internal/shared/response"
 )
 
 func (h *Handler) listActivity(w http.ResponseWriter, r *http.Request, projectID int64) {

@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"strconv"
 
-	"elproof/internal/modules/billing/application"
-	"elproof/internal/modules/billing/domain"
-	"elproof/internal/shared/middleware"
-	"elproof/internal/shared/pagination"
-	"elproof/internal/shared/response"
+	"jwswedding/internal/modules/billing/application"
+	"jwswedding/internal/modules/billing/domain"
+	"jwswedding/internal/shared/middleware"
+	"jwswedding/internal/shared/pagination"
+	"jwswedding/internal/shared/response"
 )
 
 type TransactionHandler struct {
@@ -44,12 +44,12 @@ func toTransactionResponse(t domain.Transaction) transactionResponse {
 	}
 }
 
-// List: platform_admin sees all tenants (optionally filtered by ?tenantId=),
-// staff is always forced to their own tenant regardless of any query param —
-// and, for a staff principal, Owner-only (billing/transaction history is
-// part of the "Langganan" menu, which the confirmed role rule locks to
-// Owner in full, not just the write actions already gated elsewhere in
-// `platform/tenant_handler.go`).
+// List is Owner-only (billing/transaction history is part of the
+// "Langganan" menu, which the confirmed role rule locks to Owner in full,
+// not just the write actions already gated elsewhere in
+// `platform/tenant_handler.go`) and always scoped to the caller's own
+// tenant from the JWT claim — no platform_admin branch anymore (D2), so a
+// `?tenantId=` query param is never honored.
 func (h *TransactionHandler) List(w http.ResponseWriter, r *http.Request) {
 	claims, ok := middleware.FromContext(r.Context())
 	if !ok {
@@ -61,24 +61,12 @@ func (h *TransactionHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var tenantID *int64
-	if claims.PrincipalType == "platform_admin" {
-		if raw := r.URL.Query().Get("tenantId"); raw != "" {
-			id, err := strconv.ParseInt(raw, 10, 64)
-			if err != nil {
-				response.Error(w, http.StatusBadRequest, "tenantId tidak valid", nil)
-				return
-			}
-			tenantID = &id
-		}
-	} else {
-		id, err := strconv.ParseInt(claims.TenantID, 10, 64)
-		if err != nil {
-			response.Error(w, http.StatusForbidden, "Akun ini tidak terikat ke tenant manapun", nil)
-			return
-		}
-		tenantID = &id
+	id, err := strconv.ParseInt(claims.TenantID, 10, 64)
+	if err != nil {
+		response.Error(w, http.StatusForbidden, "Akun ini tidak terikat ke tenant manapun", nil)
+		return
 	}
+	tenantID := &id
 
 	if r.URL.Query().Get("all") == "true" {
 		transactions, err := h.transactions.List(r.Context(), tenantID)

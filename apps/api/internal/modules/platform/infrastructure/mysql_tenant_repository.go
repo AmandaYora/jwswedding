@@ -9,8 +9,8 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 
-	"elproof/internal/modules/platform/domain"
-	"elproof/internal/shared/pagination"
+	"jwswedding/internal/modules/platform/domain"
+	"jwswedding/internal/shared/pagination"
 )
 
 type MySQLTenantRepository struct {

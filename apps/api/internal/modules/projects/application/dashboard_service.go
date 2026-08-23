@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"elproof/internal/modules/projects/domain"
+	"jwswedding/internal/modules/projects/domain"
 )
 
 // DashboardRepository holds the tenant-wide (cross-project) queries the

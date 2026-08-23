@@ -11,12 +11,12 @@ import (
 	"database/sql"
 	"net/http"
 
-	projectscontracts "elproof/internal/modules/projects/contracts"
-	"elproof/internal/modules/vendors/application"
-	vendorscontracts "elproof/internal/modules/vendors/contracts"
-	"elproof/internal/modules/vendors/infrastructure"
-	"elproof/internal/modules/vendors/presentation"
-	"elproof/internal/shared/storage"
+	projectscontracts "jwswedding/internal/modules/projects/contracts"
+	"jwswedding/internal/modules/vendors/application"
+	vendorscontracts "jwswedding/internal/modules/vendors/contracts"
+	"jwswedding/internal/modules/vendors/infrastructure"
+	"jwswedding/internal/modules/vendors/presentation"
+	"jwswedding/internal/shared/storage"
 )
 
 type Module struct {

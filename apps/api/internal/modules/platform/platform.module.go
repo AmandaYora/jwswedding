@@ -1,6 +1,7 @@
-// Package platform wires the platform module: tenant lifecycle and Platform
-// Console's own admin accounts. It orchestrates staff, identity, and billing
-// via their contracts — see ADR-0008.
+// Package platform wires the platform module: tenant lifecycle and the
+// read-only subscription guard's own contract. The Platform Console (7
+// pages of multi-tenant admin) is gone (D2) — jwswedding is single-tenant,
+// seeded via internal/adminseed, not self-registered through this module.
 package platform
 
 import (
@@ -8,74 +9,61 @@ import (
 	"database/sql"
 	"net/http"
 	"strings"
+	"time"
 
-	billingcontracts "elproof/internal/modules/billing/contracts"
-	identitycontracts "elproof/internal/modules/identity/contracts"
-	paymentcontracts "elproof/internal/modules/payment/contracts"
-	"elproof/internal/modules/platform/application"
-	"elproof/internal/modules/platform/infrastructure"
-	"elproof/internal/modules/platform/presentation"
-	projectscontracts "elproof/internal/modules/projects/contracts"
-	staffcontracts "elproof/internal/modules/staff/contracts"
-	vendorscontracts "elproof/internal/modules/vendors/contracts"
-	"elproof/internal/shared/httpx"
-	"elproof/internal/shared/storage"
+	billingcontracts "jwswedding/internal/modules/billing/contracts"
+	"jwswedding/internal/modules/platform/application"
+	platformcontracts "jwswedding/internal/modules/platform/contracts"
+	"jwswedding/internal/modules/platform/infrastructure"
+	"jwswedding/internal/modules/platform/presentation"
+	"jwswedding/internal/shared/elproofpay"
+	"jwswedding/internal/shared/httpx"
+	"jwswedding/internal/shared/storage"
 )
 
 type Module struct {
 	tenantHandler      *presentation.TenantHandler
-	adminHandler       *presentation.PlatformAdminHandler
+	webhookHandler     *presentation.WebhookHandler
 	loginSlidesHandler *presentation.LoginSlidesHandler
 	tenantService      *application.TenantService
+	reconciler         *application.Reconciler
 }
 
 func NewModule(
 	db *sql.DB,
-	staff staffcontracts.Contracts,
-	identity identitycontracts.Contracts,
 	billing billingcontracts.Contracts,
-	payment paymentcontracts.Client,
+	elproofClient *elproofpay.Client,
+	chargeMaxAge time.Duration,
 	storageClient *storage.Client,
 ) *Module {
 	tenantRepo := infrastructure.NewMySQLTenantRepository(db)
 	pendingChargeRepo := infrastructure.NewMySQLPendingChargeRepository(db)
-	adminRepo := infrastructure.NewMySQLPlatformAdminRepository(db)
+	charges := infrastructure.NewElProofChargeClient(elproofClient)
 
 	tenantService := application.NewTenantService(
-		tenantRepo, pendingChargeRepo, staff, identity, billing, payment, storageClient, storage.BuildKey,
+		tenantRepo, pendingChargeRepo, billing, charges, storageClient, storage.BuildKey,
 	)
-	adminService := application.NewPlatformAdminService(adminRepo, identity)
+	reconciler := application.NewReconciler(pendingChargeRepo, charges, tenantService, chargeMaxAge)
 
 	return &Module{
 		tenantHandler:      presentation.NewTenantHandler(tenantService),
-		adminHandler:       presentation.NewPlatformAdminHandler(adminService),
+		webhookHandler:     presentation.NewWebhookHandler(elproofClient, tenantService),
 		loginSlidesHandler: presentation.NewLoginSlidesHandler(storageClient),
 		tenantService:      tenantService,
+		reconciler:         reconciler,
 	}
 }
 
-// SetVendors completes two-phase wiring with the vendors module — see
-// TenantService.SetVendors. main.go calls this right after vendorsModule is
-// built, the same slot as projectsModule.SetClientAccessResolver.
-func (m *Module) SetVendors(vendors vendorscontracts.Contracts) {
-	m.tenantService.SetVendors(vendors)
+// Contracts exposes WritesAllowed to shared/middleware's subscription guard
+// — platform's first contracts package (D5/D10/D13).
+func (m *Module) Contracts() platformcontracts.Contracts {
+	return platformcontracts.New(m.tenantService)
 }
 
-// SetProjects completes the same two-phase wiring as SetVendors above — see
-// TenantService.SetProjects. main.go calls this right after projectsModule
-// is built.
-func (m *Module) SetProjects(projects projectscontracts.Contracts) {
-	m.tenantService.SetProjects(projects)
-}
-
-// ApplyWebhookEvent makes *Module itself satisfy
-// `paymentcontracts.WebhookConsumer` — main.go registers this module
-// directly with the payment module's Dispatcher
-// (`paymentModule.Dispatcher().RegisterConsumer(paymentcontracts.InternalAppBilling, platformModule)`)
-// after both modules are constructed, the same bridging pattern used for
-// Fase 6's projects<->clients wiring.
-func (m *Module) ApplyWebhookEvent(ctx context.Context, orderRef string, event paymentcontracts.WebhookEvent) error {
-	return m.tenantService.ApplyWebhookEvent(ctx, orderRef, event)
+// StartReconciler runs the reconciliation sweep (T1) on a fixed interval
+// until ctx is cancelled.
+func (m *Module) StartReconciler(ctx context.Context, interval time.Duration) {
+	m.reconciler.Start(ctx, interval)
 }
 
 // SiteMeta is the minimal, primitive-typed slice of a tenant's branding
@@ -108,22 +96,22 @@ func (m *Module) SiteMetaForHost(ctx context.Context, host string) (meta SiteMet
 	return SiteMeta{BusinessName: tenant.BusinessName, HasLogo: tenant.LogoStoragePath != nil}, true
 }
 
-// RegisterPublicRoutes registers this module's pre-auth endpoints (ADR-0015)
-// — Host-header-resolved tenant branding for a custom domain's login page,
-// never wrapped in the `authed` middleware since no session exists yet.
+// RegisterPublicRoutes registers this module's pre-auth endpoints — Host-header-resolved
+// tenant branding for a custom domain's login page (ADR-0015), plus
+// ElProof's webhook relay (PAYMENT_INTEGRATION_GUIDE.md §8) — never wrapped
+// in the `authed` middleware, since neither a browser session nor ElProof's
+// server-to-server call carries one.
 func (m *Module) RegisterPublicRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/v1/public/branding", httpx.Method(http.MethodGet, m.tenantHandler.PublicBranding))
 	mux.Handle("/api/v1/public/logo", httpx.Method(http.MethodGet, m.tenantHandler.PublicLogo))
 	mux.Handle("/api/v1/public/login-slides", httpx.Method(http.MethodGet, m.loginSlidesHandler.List))
 	mux.Handle("/api/v1/public/login-slides/", httpx.Method(http.MethodGet, m.loginSlidesHandler.Slide))
+	mux.Handle("/webhooks/elproof-payment", httpx.Method(http.MethodPost, m.webhookHandler.Receive))
 }
 
 func (m *Module) RegisterRoutes(mux *http.ServeMux, authed func(http.Handler) http.Handler) {
-	mux.Handle("/api/v1/tenants", authed(http.HandlerFunc(m.tenantHandler.Collection)))
 	mux.Handle("/api/v1/tenants/", authed(http.HandlerFunc(m.tenantHandler.Item)))
 	mux.Handle("/api/v1/subscriptions/pay", authed(httpx.Method(http.MethodPost, m.tenantHandler.Pay)))
 	mux.Handle("/api/v1/subscriptions/pending-charge", authed(httpx.Method(http.MethodGet, m.tenantHandler.PendingCharge)))
 	mux.Handle("/api/v1/subscriptions/pending-charge/cancel", authed(httpx.Method(http.MethodPost, m.tenantHandler.CancelPendingCharge)))
-	mux.Handle("/api/v1/platform-admins", authed(http.HandlerFunc(m.adminHandler.Collection)))
-	mux.Handle("/api/v1/platform-admins/", authed(http.HandlerFunc(m.adminHandler.Item)))
 }

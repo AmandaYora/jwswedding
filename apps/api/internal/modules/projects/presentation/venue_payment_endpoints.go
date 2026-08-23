@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"elproof/internal/modules/projects/application"
-	"elproof/internal/modules/projects/domain"
-	"elproof/internal/shared/response"
+	"jwswedding/internal/modules/projects/application"
+	"jwswedding/internal/modules/projects/domain"
+	"jwswedding/internal/shared/response"
 )
 
 func (h *Handler) listVenuePayments(w http.ResponseWriter, r *http.Request, projectID int64) {

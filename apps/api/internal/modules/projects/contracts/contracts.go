@@ -9,7 +9,7 @@ import (
 	"context"
 	"time"
 
-	"elproof/internal/modules/projects/application"
+	"jwswedding/internal/modules/projects/application"
 )
 
 // VendorEngagementHistoryItem is the cross-module-safe shape of one history

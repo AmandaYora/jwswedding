@@ -6,13 +6,13 @@ interface RequireAuthProps {
   allow: PrincipalType[];
 }
 
-// Gates an entire route subtree by principal type — WO Console (`staff`),
-// Client Portal (`client`), and Platform Console (`platform_admin`) are
-// otherwise indistinguishable at the router level (all three share one
-// `useAuthStore` session shape), so without this a client with a valid token
-// could navigate straight to `/platform/dashboard` and see the page shell
-// render before any API call 401s. Role-specific gates (e.g. Owner-only
-// pages) are handled locally in the page itself, not here.
+// Gates an entire route subtree by principal type — WO Console (`staff`)
+// and Client Portal (`client`) are otherwise indistinguishable at the
+// router level (both share one `useAuthStore` session shape), so without
+// this a client with a valid token could navigate straight to a staff-only
+// route and see the page shell render before any API call 401s.
+// Role-specific gates (e.g. Owner-only pages) are handled locally in the
+// page itself, not here.
 export function RequireAuth({ allow }: RequireAuthProps) {
   const session = useAuthStore((s) => s.session);
   const location = useLocation();

@@ -12,6 +12,6 @@ services:
     # container itself, not the host machine, so it must be overridden here
     # to reach the host-run MySQL via the special Docker Desktop DNS name.
     environment:
-      DATABASE_URL: "mysql://${DB_USER:-root}:${DB_PASSWORD}@tcp(host.docker.internal:${DB_PORT:-3306})/${DB_NAME:-elproof_db}"
+      DATABASE_URL: "mysql://${DB_USER:-root}:${DB_PASSWORD}@tcp(host.docker.internal:${DB_PORT:-3306})/${DB_NAME:-jwswedding_db}"
     extra_hosts:
       - "host.docker.internal:host-gateway"

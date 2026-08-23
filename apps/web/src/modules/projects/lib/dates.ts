@@ -3,7 +3,7 @@ import type { Evidence, MilestoneStats, MilestoneStatus } from "@/modules/projec
 
 // Re-exported for the many existing call sites in this module — the actual
 // implementation now lives in shared/lib/formatters.ts so other modules
-// (e.g. platform-admin) don't have to import across module boundaries.
+// don't have to import across module boundaries.
 export { todayISO };
 
 export function daysUntil(dateISO: string): number {

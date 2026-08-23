@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"elproof/internal/modules/projects/domain"
+	"jwswedding/internal/modules/projects/domain"
 )
 
 // seedDefaultMilestones seeds a newly created project's Timeline tab from the

@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 
-	"elproof/internal/modules/staff/domain"
-	"elproof/internal/shared/pagination"
+	"jwswedding/internal/modules/staff/domain"
+	"jwswedding/internal/shared/pagination"
 )
 
 type MySQLStaffRepository struct {

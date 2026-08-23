@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"elproof/internal/modules/billing/domain"
-	"elproof/internal/shared/pagination"
+	"jwswedding/internal/modules/billing/domain"
+	"jwswedding/internal/shared/pagination"
 )
 
 type TransactionRepository interface {

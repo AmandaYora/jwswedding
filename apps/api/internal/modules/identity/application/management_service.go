@@ -3,8 +3,8 @@ package application
 import (
 	"context"
 
-	"elproof/internal/modules/identity/domain"
-	"elproof/internal/shared/apperror"
+	"jwswedding/internal/modules/identity/domain"
+	"jwswedding/internal/shared/apperror"
 )
 
 // ManagementService is what OTHER modules call (via identity/contracts) to

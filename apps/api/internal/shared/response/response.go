@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"elproof/internal/shared/pagination"
+	"jwswedding/internal/shared/pagination"
 )
 
 type successBody struct {

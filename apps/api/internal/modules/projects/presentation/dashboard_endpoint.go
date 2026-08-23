@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"elproof/internal/modules/projects/domain"
-	"elproof/internal/shared/response"
+	"jwswedding/internal/modules/projects/domain"
+	"jwswedding/internal/shared/response"
 )
 
 type dashboardIssueResponse struct {

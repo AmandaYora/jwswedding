@@ -3,7 +3,7 @@ package validator
 import (
 	"regexp"
 
-	"elproof/internal/shared/apperror"
+	"jwswedding/internal/shared/apperror"
 )
 
 // customDomainPattern accepts a bare hostname only -- no scheme, path, or

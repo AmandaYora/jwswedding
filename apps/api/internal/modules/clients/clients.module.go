@@ -7,12 +7,12 @@ import (
 	"database/sql"
 	"net/http"
 
-	"elproof/internal/modules/clients/application"
-	"elproof/internal/modules/clients/contracts"
-	"elproof/internal/modules/clients/infrastructure"
-	"elproof/internal/modules/clients/presentation"
-	identitycontracts "elproof/internal/modules/identity/contracts"
-	projectscontracts "elproof/internal/modules/projects/contracts"
+	"jwswedding/internal/modules/clients/application"
+	"jwswedding/internal/modules/clients/contracts"
+	"jwswedding/internal/modules/clients/infrastructure"
+	"jwswedding/internal/modules/clients/presentation"
+	identitycontracts "jwswedding/internal/modules/identity/contracts"
+	projectscontracts "jwswedding/internal/modules/projects/contracts"
 )
 
 type Module struct {

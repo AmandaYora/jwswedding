@@ -11,39 +11,18 @@ export const API = {
     me: "/api/v1/auth/me",
   },
   billing: {
+    // Read-only now (D7) — the plan catalog lives at ElProof, `billing` just
+    // proxies it through.
     plans: "/api/v1/plans",
-    plan: (id: string) => `/api/v1/plans/${id}`,
-    planToggleActive: (id: string) => `/api/v1/plans/${id}/toggle-active`,
     transactions: "/api/v1/subscription-transactions",
   },
-  // `payment` module — see knowledge/MODULE_PAYMENT.md. Internal-mode
-  // (Fase 9) config + external-mode App registry (Fase 10, Platform
-  // Console's "Manajemen Aplikasi"). `/auth/app/token` and
-  // `/external/payments/*` are consumed by external SaaS callers directly,
-  // never by this frontend.
-  payment: {
-    gatewayConfig: "/api/v1/payment/gateway-config",
-    apps: "/api/v1/payment/apps",
-    appResetSecret: (appId: string) => `/api/v1/payment/apps/${appId}/reset-secret`,
-    appToggleActive: (appId: string) => `/api/v1/payment/apps/${appId}/toggle-active`,
-  },
   platform: {
-    tenants: "/api/v1/tenants",
-    tenant: (id: string) => `/api/v1/tenants/${id}`,
     tenantMe: "/api/v1/tenants/me",
     tenantMeBranding: "/api/v1/tenants/me/branding",
     tenantMeLogo: "/api/v1/tenants/me/logo",
-    tenantLogo: (id: string) => `/api/v1/tenants/${id}/logo`,
-    tenantToggleSuspension: (id: string) => `/api/v1/tenants/${id}/toggle-suspension`,
-    tenantResetCredential: (id: string) => `/api/v1/tenants/${id}/reset-credential`,
-    tenantActivateSubscription: (id: string) => `/api/v1/tenants/${id}/activate-subscription`,
     subscriptionsPay: "/api/v1/subscriptions/pay",
     subscriptionsPendingCharge: "/api/v1/subscriptions/pending-charge",
     subscriptionsCancelPendingCharge: "/api/v1/subscriptions/pending-charge/cancel",
-    platformAdmins: "/api/v1/platform-admins",
-    platformAdmin: (id: string) => `/api/v1/platform-admins/${id}`,
-    platformAdminToggleActive: (id: string) => `/api/v1/platform-admins/${id}/toggle-active`,
-    platformAdminResetPassword: (id: string) => `/api/v1/platform-admins/${id}/reset-password`,
   },
   // Pre-auth, Host-header-resolved tenant branding (ADR-0015) — powers
   // LoginPage for a tenant's own custom domain. Unlike every other group

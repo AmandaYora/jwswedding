@@ -12,7 +12,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"elproof/internal/shared/response"
+	"jwswedding/internal/shared/response"
 )
 
 // Claims is the shared shape both the identity module (issuer) and this
@@ -40,8 +40,7 @@ func (c *Claims) HasRole(roles ...string) bool {
 
 // TenantIDInt parses the string tenant_id claim to int64 — every
 // tenant-scoped module (staff, clients, vendors, projects) needs this to
-// scope its own queries; platform_admin principals have no tenant_id, so ok
-// is false for them.
+// scope its own queries; a principal with no tenant_id claim gets ok=false.
 func (c *Claims) TenantIDInt() (int64, bool) {
 	if c.TenantID == "" {
 		return 0, false
@@ -55,7 +54,7 @@ func (c *Claims) TenantIDInt() (int64, bool) {
 
 type contextKey string
 
-const claimsContextKey contextKey = "elproof.auth.claims"
+const claimsContextKey contextKey = "jwswedding.auth.claims"
 
 // RequireAuth verifies the Authorization: Bearer <token> header against secret,
 // and injects the parsed Claims into the request context on success.

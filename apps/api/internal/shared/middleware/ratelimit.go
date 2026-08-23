@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"elproof/internal/shared/response"
+	"jwswedding/internal/shared/response"
 )
 
 // RateLimiter is a simple in-memory, per-key sliding-window limiter — no

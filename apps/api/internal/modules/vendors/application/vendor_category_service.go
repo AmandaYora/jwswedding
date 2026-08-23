@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"elproof/internal/modules/vendors/domain"
-	"elproof/internal/shared/apperror"
-	"elproof/internal/shared/pagination"
+	"jwswedding/internal/modules/vendors/domain"
+	"jwswedding/internal/shared/apperror"
+	"jwswedding/internal/shared/pagination"
 )
 
 type VendorCategoryRepository interface {

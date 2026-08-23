@@ -69,7 +69,7 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 }
 
 // BuildKey constructs the object key per ADR-0006's convention:
-// elproof/upload/{tenantId}/{projectId}/{category}/{filename}
+// jwswedding/upload/{tenantId}/{projectId}/{category}/{filename}
 func BuildKey(tenantID, projectID, category, filename string) string {
-	return fmt.Sprintf("elproof/upload/%s/%s/%s/%s", tenantID, projectID, category, filename)
+	return fmt.Sprintf("jwswedding/upload/%s/%s/%s/%s", tenantID, projectID, category, filename)
 }

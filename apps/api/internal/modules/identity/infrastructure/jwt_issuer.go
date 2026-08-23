@@ -10,8 +10,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"elproof/internal/modules/identity/domain"
-	"elproof/internal/shared/middleware"
+	"jwswedding/internal/modules/identity/domain"
+	"jwswedding/internal/shared/middleware"
 )
 
 type JWTIssuer struct {
@@ -38,24 +38,6 @@ func (i *JWTIssuer) IssueAccessToken(cred *domain.Credential, ttl time.Duration)
 		Role:          cred.Role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   cred.Username,
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(i.secret)
-}
-
-// IssueServiceToken signs an access-token-only JWT for a principal not backed
-// by a Credential row — see application.TokenIssuer's doc. tenant_id/role are
-// left empty; the caller (e.g. `payment`) doesn't have those concepts.
-func (i *JWTIssuer) IssueServiceToken(principalType, principalID string, ttl time.Duration) (string, error) {
-	claims := middleware.Claims{
-		PrincipalType: principalType,
-		PrincipalID:   principalID,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   principalID,
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},

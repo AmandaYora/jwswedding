@@ -2,40 +2,61 @@ package application
 
 import (
 	"context"
-	"encoding/base64"
-	"errors"
 	"io"
-	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
-	billingcontracts "elproof/internal/modules/billing/contracts"
-	identitycontracts "elproof/internal/modules/identity/contracts"
-	paymentcontracts "elproof/internal/modules/payment/contracts"
-	"elproof/internal/modules/platform/domain"
-	projectscontracts "elproof/internal/modules/projects/contracts"
-	staffcontracts "elproof/internal/modules/staff/contracts"
-	vendorscontracts "elproof/internal/modules/vendors/contracts"
-	"elproof/internal/shared/apperror"
-	"elproof/internal/shared/compress"
-	"elproof/internal/shared/logger"
-	"elproof/internal/shared/pagination"
-	"elproof/internal/shared/validator"
+	billingcontracts "jwswedding/internal/modules/billing/contracts"
+	"jwswedding/internal/modules/platform/domain"
+	"jwswedding/internal/shared/apperror"
+	"jwswedding/internal/shared/logger"
 )
 
+// ChargeResult mirrors elproofpay.ChargeResult — kept as a local type (not
+// imported directly) so this module's application layer never depends on
+// `internal/shared/elproofpay`'s own type identity, only on the narrow
+// ChargeCreator interface below. Same idiom as the ObjectStorage interface.
+type ChargeResult struct {
+	OrderRef    string
+	ProviderRef string
+	Channel     string
+	QRImageURL  string
+	PayCode     string
+	CheckoutURL string
+	Amount      int64
+	FeeAmount   int64
+	ExpiresAt   time.Time
+	Status      string
+}
+
+// WebhookEvent is the generic shape ElProof's webhook relay (or this
+// module's own reconciler) resolves a charge outcome into — see D8: unlike
+// `payment`'s old WebhookEvent, ProviderRef/Amount/PaidAt are never read by
+// ApplyWebhookEvent, so they aren't carried here either (T4).
+type WebhookEvent struct {
+	Paid bool
+}
+
+// ChargeCreator is the narrow slice of elproofpay.Client this service needs
+// to create/check a charge at ElProof — exactly the 2 methods `platform` ever
+// called on the old payment module's Client (T4). Declared locally (like
+// ObjectStorage below) so this module never imports another module's
+// infrastructure; the concrete implementation
+// (platform/infrastructure.ElProofChargeClient) just delegates to
+// elproofpay.Client.
+type ChargeCreator interface {
+	CreateCharge(ctx context.Context, orderRef string, amount int64) (*ChargeResult, error)
+	ChargeStatus(ctx context.Context, orderRef string) (*ChargeResult, error)
+}
+
+// TenantRepository is deliberately narrower than MySQLTenantRepository's full
+// method set (List/ListPaginated/Update/UpdateLogo/SetSuspended/
+// SetCredentialResetAt still exist there, just unused now that the Platform
+// Console CRUD they backed is gone — D2) — this interface only declares what
+// TenantService actually calls.
 type TenantRepository interface {
-	List(ctx context.Context) ([]domain.Tenant, error)
-	ListPaginated(ctx context.Context, params pagination.Params, search, status string) ([]domain.Tenant, int64, error)
 	FindByID(ctx context.Context, id int64) (*domain.Tenant, error)
 	FindByDomain(ctx context.Context, host string) (*domain.Tenant, error)
-	Create(ctx context.Context, tenant *domain.Tenant) error
-	Update(ctx context.Context, tenant *domain.Tenant) error
-	UpdateLogo(ctx context.Context, id int64, logoStoragePath *string) error
-	SetSuspended(ctx context.Context, id int64, suspended bool) error
-	SetCredentialResetAt(ctx context.Context, id int64, when time.Time) error
 	UpdateSubscription(ctx context.Context, id int64, planID int64, status domain.SubscriptionStatus, expiresAt time.Time) error
 }
 
@@ -48,24 +69,25 @@ type ObjectStorage interface {
 	Open(ctx context.Context, key string) (io.ReadCloser, error)
 }
 
-// PendingChargeRepository backs the Fase 9 self-service payment flow — see
-// domain.PendingCharge.
+// PendingChargeRepository backs the self-service payment flow — see
+// domain.PendingCharge. Create takes the plan snapshot (D8); FindByOrderRef/
+// FindByTenant only ever return unresolved rows; FindUnresolved/
+// ClaimUnresolved back the reconciler and webhook handler's atomic claim
+// (D11).
 type PendingChargeRepository interface {
-	Create(ctx context.Context, orderRef string, tenantID, planID int64) error
+	Create(ctx context.Context, orderRef string, tenantID, planID int64, planName string, planPrice int64, planDurationMonths int) error
 	FindByOrderRef(ctx context.Context, orderRef string) (*domain.PendingCharge, error)
 	FindByTenant(ctx context.Context, tenantID int64) ([]domain.PendingCharge, error)
+	FindUnresolved(ctx context.Context, olderThan time.Duration, limit int) ([]domain.PendingCharge, error)
+	ClaimUnresolved(ctx context.Context, orderRef string) (bool, error)
 	Delete(ctx context.Context, orderRef string) error
 }
 
 type TenantService struct {
 	repo           TenantRepository
 	pendingCharges PendingChargeRepository
-	staff          staffcontracts.Contracts
-	identity       identitycontracts.Contracts
 	billing        billingcontracts.Contracts
-	payment        paymentcontracts.Client
-	vendors        vendorscontracts.Contracts
-	projects       projectscontracts.Contracts
+	charges        ChargeCreator
 	storage        ObjectStorage
 	buildKey       func(tenantID, projectID, category, filename string) string
 }
@@ -73,42 +95,28 @@ type TenantService struct {
 func NewTenantService(
 	repo TenantRepository,
 	pendingCharges PendingChargeRepository,
-	staff staffcontracts.Contracts,
-	identity identitycontracts.Contracts,
 	billing billingcontracts.Contracts,
-	payment paymentcontracts.Client,
+	charges ChargeCreator,
 	storage ObjectStorage,
 	buildKey func(string, string, string, string) string,
 ) *TenantService {
 	return &TenantService{
 		repo: repo, pendingCharges: pendingCharges,
-		staff: staff, identity: identity, billing: billing, payment: payment,
+		billing: billing, charges: charges,
 		storage: storage, buildKey: buildKey,
 	}
 }
 
-// SetVendors completes two-phase wiring with the vendors module — main.go
-// builds `platform` before `vendors` (which itself depends on `projects`), so
-// this can't be a NewTenantService constructor argument. Same idiom as
-// projects' SetClientAccessResolver for the clients<->projects cycle.
-func (s *TenantService) SetVendors(vendors vendorscontracts.Contracts) {
-	s.vendors = vendors
-}
-
-// SetProjects completes the same two-phase wiring as SetVendors above, so
-// Register() can seed a newly registered tenant's Timeline Default template
-// (PLAN.md) via projects/contracts, alongside the existing default vendor
-// categories seed.
-func (s *TenantService) SetProjects(projects projectscontracts.Contracts) {
-	s.projects = projects
-}
-
-func (s *TenantService) List(ctx context.Context) ([]domain.Tenant, error) {
-	return s.repo.List(ctx)
-}
-
-func (s *TenantService) ListPaginated(ctx context.Context, params pagination.Params, search, status string) ([]domain.Tenant, int64, error) {
-	return s.repo.ListPaginated(ctx, params, search, status)
+// WritesAllowed backs the read-only subscription guard (D10, D13): it
+// evaluates subscription_expires_at directly, never subscription_status —
+// no code path ever writes StatusExpired/StatusExpiringSoon (T3), so a
+// status-based check would never trip.
+func (s *TenantService) WritesAllowed(ctx context.Context, tenantID int64) (bool, error) {
+	tenant, err := s.Get(ctx, tenantID)
+	if err != nil {
+		return false, err
+	}
+	return tenant.SubscriptionExpiresAt != nil && tenant.SubscriptionExpiresAt.After(time.Now()), nil
 }
 
 func (s *TenantService) Get(ctx context.Context, id int64) (*domain.Tenant, error) {
@@ -136,215 +144,6 @@ func (s *TenantService) GetBrandingByDomain(ctx context.Context, host string) (*
 	return tenant, nil
 }
 
-type RegisterTenantInput struct {
-	BusinessName string
-	OwnerName    string
-	Username     string
-	Email        string
-	Phone        string
-	City         string
-	Password     string
-}
-
-type RegisterTenantResult struct {
-	Tenant   domain.Tenant
-	Username string
-}
-
-// Register orchestrates three modules in one flow: creates the tenant row
-// (platform), creates the Owner staff row (staff), and creates the Owner's
-// login credential (identity) — see ADR-0008. Each module still only writes
-// its own tables. The tenant starts unbound to any plan (PlanID nil,
-// StatusPendingPayment) — no transaction is recorded here, since none exists
-// yet: the Owner hasn't chosen a plan or paid, and the Platform Console
-// hasn't manually activated one either. The first transaction row this
-// tenant ever gets is whichever real subscription event happens first (Pay
-// or ActivateSubscription), so there is never a placeholder row left
-// dangling forever if the tenant is instead activated manually.
-func (s *TenantService) Register(ctx context.Context, input RegisterTenantInput) (*RegisterTenantResult, error) {
-	if err := validator.Username(input.Username); err != nil {
-		return nil, err
-	}
-
-	username := input.Username
-
-	tenant := &domain.Tenant{
-		BusinessName:       input.BusinessName,
-		OwnerName:          input.OwnerName,
-		Username:           username,
-		Email:              input.Email,
-		Phone:              input.Phone,
-		City:               input.City,
-		JoinedAt:           time.Now(),
-		PlanID:             nil,
-		SubscriptionStatus: domain.StatusPendingPayment,
-		BrandColorPreset:   domain.DefaultBrandColorPreset,
-	}
-	if err := s.repo.Create(ctx, tenant); err != nil {
-		return nil, err
-	}
-
-	if err := s.vendors.SeedDefaultCategories(ctx, tenant.ID); err != nil {
-		return nil, err
-	}
-
-	if err := s.projects.SeedDefaultMilestoneTemplate(ctx, tenant.ID); err != nil {
-		return nil, err
-	}
-
-	ownerResult, err := s.staff.CreateOwner(ctx, staffcontracts.CreateOwnerInput{
-		TenantID: tenant.ID, Name: input.OwnerName, Email: input.Email, Phone: input.Phone, Username: username,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	if err := s.identity.CreateCredential(ctx, identitycontracts.CreateCredentialInput{
-		TenantID:      &tenant.ID,
-		PrincipalType: identitycontracts.PrincipalStaff,
-		PrincipalID:   ownerResult.StaffID,
-		Username:      username,
-		Email:         input.Email,
-		Password:      input.Password,
-		Role:          "Owner",
-		DisplayName:   input.OwnerName,
-	}); err != nil {
-		return nil, err
-	}
-
-	return &RegisterTenantResult{Tenant: *tenant, Username: username}, nil
-}
-
-type UpdateTenantInput struct {
-	BusinessName     string
-	OwnerName        string
-	Email            string
-	Phone            string
-	City             string
-	BrandColorPreset string
-	// CustomDomain is a pointer, unlike every other field on this input: nil
-	// means the caller's JSON body omitted the key entirely (e.g. a stale
-	// cached frontend bundle that predates this field, same "don't touch it"
-	// concern BrandColorPreset's own comment below addresses) and the
-	// tenant's existing domain is left untouched. A non-nil pointer means the
-	// key was present — "" explicitly clears it to NULL, anything else is
-	// normalized/validated and set.
-	CustomDomain *string
-}
-
-func (s *TenantService) Update(ctx context.Context, id int64, input UpdateTenantInput) (*domain.Tenant, error) {
-	tenant, err := s.Get(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	// BrandColorPreset is optional on this otherwise-full-replace update: an
-	// empty value (an older cached frontend bundle mid-deploy, calling this
-	// endpoint without knowing about branding yet) keeps the tenant's current
-	// preset rather than rejecting the whole edit; a non-empty, invalid value
-	// is still rejected, since presets are a fixed enum, not free text.
-	if input.BrandColorPreset != "" {
-		if !domain.IsValidBrandColorPreset(input.BrandColorPreset) {
-			return nil, apperror.Validation("Warna brand tidak valid", map[string][]string{
-				"brandColorPreset": {"Pilih salah satu preset warna yang tersedia"},
-			})
-		}
-		tenant.BrandColorPreset = input.BrandColorPreset
-	}
-	// CustomDomain (ADR-0015): nil means the key was absent from the request
-	// — leave tenant.CustomDomain exactly as Get() returned it. Only a
-	// present key can change it: "" clears to NULL, anything else is
-	// normalized + validated then set.
-	if input.CustomDomain != nil {
-		if *input.CustomDomain != "" {
-			normalized := strings.ToLower(strings.TrimSpace(*input.CustomDomain))
-			if err := validator.CustomDomain(normalized); err != nil {
-				return nil, err
-			}
-			tenant.CustomDomain = &normalized
-		} else {
-			tenant.CustomDomain = nil
-		}
-	}
-	tenant.BusinessName = input.BusinessName
-	tenant.OwnerName = input.OwnerName
-	tenant.Email = input.Email
-	tenant.Phone = input.Phone
-	tenant.City = input.City
-	if err := s.repo.Update(ctx, tenant); err != nil {
-		if errors.Is(err, domain.ErrDuplicateCustomDomain) {
-			return nil, apperror.Validation("Domain kustom sudah digunakan tenant lain", map[string][]string{
-				"customDomain": {"Domain ini sudah dipakai tenant lain"},
-			})
-		}
-		return nil, err
-	}
-	return tenant, nil
-}
-
-// maxLogoDecodedSize caps a tenant logo well below evidence's 15MB — this is
-// a small header/sidebar image, not a document.
-const maxLogoDecodedSize = 2 * 1024 * 1024
-
-var allowedLogoMimeTypes = map[string]bool{
-	"image/png":  true,
-	"image/jpeg": true,
-	"image/webp": true,
-}
-
-type UploadLogoInput struct {
-	FileName   string
-	MimeType   string
-	Base64Data string
-}
-
-// UploadLogo stores a tenant's logo in object storage (never inline in the
-// DB) and records only its key. SVG is deliberately not in
-// allowedLogoMimeTypes — sanitizing embedded <script>/event-handler risk
-// properly is out of scope for this feature (see PLAN.md §7).
-func (s *TenantService) UploadLogo(ctx context.Context, tenantID int64, input UploadLogoInput) (*domain.Tenant, error) {
-	if !allowedLogoMimeTypes[input.MimeType] {
-		return nil, apperror.Validation("Format logo tidak didukung", map[string][]string{
-			"mimeType": {"Gunakan PNG, JPEG, atau WebP"},
-		})
-	}
-	tenant, err := s.Get(ctx, tenantID)
-	if err != nil {
-		return nil, err
-	}
-
-	decoded, err := base64.StdEncoding.DecodeString(input.Base64Data)
-	if err != nil {
-		return nil, apperror.Validation("Data logo tidak valid", map[string][]string{"base64Data": {"Gagal membaca data file"}})
-	}
-	if len(decoded) == 0 {
-		return nil, apperror.Validation("File logo kosong", map[string][]string{"base64Data": {"File tidak boleh kosong"}})
-	}
-	if len(decoded) > maxLogoDecodedSize {
-		return nil, apperror.Validation("Ukuran logo terlalu besar", map[string][]string{"base64Data": {"Maksimal 2 MB"}})
-	}
-
-	// Same backend re-compression pass evidence uploads get (ADR-0010) —
-	// authoritative regardless of what the frontend already did.
-	compressed, err := compress.Image(decoded, input.MimeType)
-	if err != nil {
-		return nil, apperror.Internal("Gagal memproses logo")
-	}
-
-	key := s.buildKey(
-		strconv.FormatInt(tenantID, 10), "0", "branding",
-		uuid.NewString()+"-"+sanitizeLogoFileName(input.FileName),
-	)
-	if _, err := s.storage.Save(ctx, key, compressed, input.MimeType); err != nil {
-		return nil, apperror.Internal("Gagal mengunggah logo ke object storage")
-	}
-
-	if err := s.repo.UpdateLogo(ctx, tenantID, &key); err != nil {
-		return nil, err
-	}
-	tenant.LogoStoragePath = &key
-	return tenant, nil
-}
-
 // DownloadLogo streams a tenant's stored logo back — same byte-proxy shape
 // as evidence.Download, since object storage requires backend auth and can't
 // be linked to directly from the browser.
@@ -363,55 +162,12 @@ func (s *TenantService) DownloadLogo(ctx context.Context, tenantID int64) (io.Re
 	return reader, nil
 }
 
-var unsafeLogoFileNameChars = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
-
-func sanitizeLogoFileName(name string) string {
-	cleaned := unsafeLogoFileNameChars.ReplaceAllString(name, "-")
-	if cleaned == "" {
-		return "logo"
-	}
-	return cleaned
-}
-
-func (s *TenantService) SetSuspended(ctx context.Context, id int64, suspended bool) (*domain.Tenant, error) {
-	if _, err := s.Get(ctx, id); err != nil {
-		return nil, err
-	}
-	if err := s.repo.SetSuspended(ctx, id, suspended); err != nil {
-		return nil, err
-	}
-	return s.Get(ctx, id)
-}
-
-type ResetCredentialResult struct {
-	Username string
-}
-
-func (s *TenantService) ResetCredential(ctx context.Context, id int64, newPassword string) (*ResetCredentialResult, error) {
-	tenant, err := s.Get(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
-	// The Owner's principal_id is the staff row created at registration —
-	// identity resolves it by (principal_type, principal_id); platform never
-	// stores or looks up the staff_members.id itself (no cross-module FK).
-	// ResetPassword is looked up by username since that is the value both
-	// `tenants` and `credentials` share as a plain, unenforced value.
-	if err := s.identity.ResetPasswordByUsername(ctx, tenant.Username, newPassword); err != nil {
-		return nil, err
-	}
-	if err := s.repo.SetCredentialResetAt(ctx, id, time.Now()); err != nil {
-		return nil, err
-	}
-	return &ResetCredentialResult{Username: tenant.Username}, nil
-}
-
-// ActivateSubscription is the Platform Console's manual-activation flow —
-// bypasses payment entirely; recorded as a "granted" transaction so it never
-// counts as real revenue. See ADR (subscription bypass) and docs/DB_SCHEMA.md.
-// Unlike Pay, this never touches the payment gateway at all — it activates
-// synchronously, in this same call, exactly as before Fase 9.
+// ActivateSubscription is an ops-only manual-activation path (D2: no HTTP
+// route exposes it anymore, since the Platform Console it used to serve is
+// gone) — bypasses payment entirely; recorded as a "granted" transaction so
+// it never counts as real revenue. See ADR (subscription bypass) and
+// docs/DB_SCHEMA.md. Unlike Pay, this never touches ElProof at all — it
+// activates synchronously, in this same call.
 //
 // If the Owner's own self-service "Bayar Sekarang" charge is still pending
 // for this tenant, it's resolved here first: expired in the transaction
@@ -453,18 +209,18 @@ func (s *TenantService) ActivateSubscription(ctx context.Context, tenantID int64
 	}); err != nil {
 		return nil, err
 	}
-	if err := s.repo.UpdateSubscription(ctx, tenantID, planID, domain.StatusActive, computeNewExpiry(tenant, plan)); err != nil {
+	if err := s.repo.UpdateSubscription(ctx, tenantID, planID, domain.StatusActive, computeNewExpiry(tenant, plan.DurationMonths)); err != nil {
 		return nil, err
 	}
 	return s.Get(ctx, tenantID)
 }
 
-// Pay is the tenant Owner's own self-service "Bayar Sekarang" action (Fase
-// 9) — creates a real charge at the configured gateway (QRIS by default) and
-// returns it for the frontend to render; the subscription is NOT activated
-// here. Activation only happens once the gateway's webhook confirms payment
-// (see ApplyWebhookEvent below) — this function only ever gets the charge
-// started.
+// Pay is the tenant Owner's own self-service "Bayar Sekarang" action —
+// creates a real charge at ElProof (QRIS by default) and returns it for the
+// frontend to render; the subscription is NOT activated here. Activation
+// only happens once ElProof's webhook confirms payment (see
+// ApplyWebhookEvent below) or the reconciler catches up (T1) — this
+// function only ever gets the charge started.
 //
 // Guard: rejects a second charge while one is already pending for this
 // tenant (409), instead of silently starting a second, independent charge —
@@ -474,7 +230,15 @@ func (s *TenantService) ActivateSubscription(ctx context.Context, tenantID int64
 // in flight. If both charges were ever paid, the tenant would be billed
 // twice and the subscription would be double-extended (computeNewExpiry
 // stacks on top of whatever expiry is already there).
-func (s *TenantService) Pay(ctx context.Context, tenantID int64, planID int64) (*paymentcontracts.ChargeResult, error) {
+//
+// Order is deliberately reversed from the old payment-module-backed flow
+// (D16/T7): the local pendingCharges row is written BEFORE calling ElProof.
+// It is now the only local record of this charge and the reconciler's only
+// input, so a process death between the two calls must never leave a charge
+// at ElProof with zero local trace. If CreateCharge itself fails (network,
+// or a 409 from a duplicate orderRef), the just-written row is deleted so a
+// retried Pay never gets stuck behind its own failed attempt.
+func (s *TenantService) Pay(ctx context.Context, tenantID int64, planID int64) (*ChargeResult, error) {
 	tenant, err := s.Get(ctx, tenantID)
 	if err != nil {
 		return nil, err
@@ -493,8 +257,15 @@ func (s *TenantService) Pay(ctx context.Context, tenantID int64, planID int64) (
 	}
 
 	orderRef := generatePaymentReference()
-	charge, err := s.payment.CreateCharge(ctx, paymentcontracts.InternalAppBilling, strconv.FormatInt(tenantID, 10), orderRef, plan.Price)
+	if err := s.pendingCharges.Create(ctx, orderRef, tenantID, planID, plan.Name, plan.Price, plan.DurationMonths); err != nil {
+		return nil, err
+	}
+
+	charge, err := s.charges.CreateCharge(ctx, orderRef, plan.Price)
 	if err != nil {
+		if delErr := s.pendingCharges.Delete(ctx, orderRef); delErr != nil {
+			logger.Error("gagal membersihkan baris pending %s setelah CreateCharge gagal: %v", orderRef, delErr)
+		}
 		return nil, err
 	}
 
@@ -502,9 +273,6 @@ func (s *TenantService) Pay(ctx context.Context, tenantID int64, planID int64) (
 		TenantID: tenantID, Type: txTypeFor(tenant), Amount: plan.Price,
 		PaymentMethod: charge.Channel, PaymentReference: orderRef, Status: billingcontracts.StatusPending,
 	}); err != nil {
-		return nil, err
-	}
-	if err := s.pendingCharges.Create(ctx, orderRef, tenantID, planID); err != nil {
 		return nil, err
 	}
 
@@ -515,10 +283,10 @@ func (s *TenantService) Pay(ctx context.Context, tenantID int64, planID int64) (
 // charge after closing its QR modal (accidentally or otherwise) — instead of
 // the charge's display fields (QR image, pay code, checkout URL) being lost
 // forever, since they were never persisted anywhere beyond Pay's one-time
-// response. Re-fetches them live from the gateway via CheckStatusForApp
-// rather than caching a copy that could go stale. Returns nil (not an error)
-// when there's nothing pending — this is a normal, common state.
-func (s *TenantService) GetPendingCharge(ctx context.Context, tenantID int64) (*paymentcontracts.ChargeResult, error) {
+// response. Re-fetches them live from ElProof via ChargeStatus rather than
+// caching a copy that could go stale. Returns nil (not an error) when
+// there's nothing pending — this is a normal, common state.
+func (s *TenantService) GetPendingCharge(ctx context.Context, tenantID int64) (*ChargeResult, error) {
 	pending, err := s.pendingCharges.FindByTenant(ctx, tenantID)
 	if err != nil {
 		return nil, err
@@ -527,25 +295,21 @@ func (s *TenantService) GetPendingCharge(ctx context.Context, tenantID int64) (*
 		return nil, nil
 	}
 	p := pending[0]
-	charge, err := s.payment.CheckStatusForApp(ctx, paymentcontracts.InternalAppBilling, p.OrderRef)
+	charge, err := s.charges.ChargeStatus(ctx, p.OrderRef)
 	if err != nil {
-		// The live gateway call can fail for reasons that have nothing to do
-		// with whether the charge is still genuinely pending (a rotated API
-		// key, a Tripay outage, a transient network error) — letting that
-		// failure bubble up as an opaque error here would silently hide the
-		// pending-charge banner (the frontend fetch has no visible failure
-		// state) and strand the Owner exactly like the bug this endpoint
-		// exists to fix: unable to see or cancel their pending charge. Log
-		// for diagnosis and fall back to what we already know locally — no
-		// QR/pay code/checkout URL (only the gateway has those), but enough
-		// for the Owner to see it's pending and use "Batalkan".
-		logger.Error("gagal memuat status live charge %s dari gateway: %v", p.OrderRef, err)
-		plan, planErr := s.billing.GetPlan(ctx, p.PlanID)
-		amount := int64(0)
-		if planErr == nil && plan != nil {
-			amount = plan.Price
-		}
-		return &paymentcontracts.ChargeResult{OrderRef: p.OrderRef, Amount: amount, Status: "pending"}, nil
+		// The live ElProof call can fail for reasons that have nothing to do
+		// with whether the charge is still genuinely pending (an expired
+		// service token exchange, ElProof down, a transient network error) —
+		// letting that failure bubble up as an opaque error here would
+		// silently hide the pending-charge banner (the frontend fetch has no
+		// visible failure state) and strand the Owner exactly like the bug
+		// this endpoint exists to fix: unable to see or cancel their pending
+		// charge. Log for diagnosis and fall back to the snapshot already
+		// stored locally (D8) — no QR/pay code/checkout URL (only ElProof has
+		// those), but enough for the Owner to see it's pending and use
+		// "Batalkan", without a second call to ElProof's plan catalog.
+		logger.Error("gagal memuat status live charge %s dari ElProof: %v", p.OrderRef, err)
+		return &ChargeResult{OrderRef: p.OrderRef, Amount: p.PlanPrice, Status: "pending"}, nil
 	}
 	return charge, nil
 }
@@ -579,18 +343,33 @@ func (s *TenantService) CancelPendingCharge(ctx context.Context, tenantID int64)
 	return nil
 }
 
-// ApplyWebhookEvent is `platform`'s implementation of
-// `paymentcontracts.WebhookConsumer` — registered with the payment module's
-// Dispatcher as the consumer for `paymentcontracts.InternalAppBilling` (see
-// main.go). Called in-process, same request, when the gateway's webhook
-// confirms (or fails) a charge created by Pay above.
-func (s *TenantService) ApplyWebhookEvent(ctx context.Context, orderRef string, event paymentcontracts.WebhookEvent) error {
+// ApplyWebhookEvent applies a charge outcome discovered either via ElProof's
+// webhook relay (platform/presentation.WebhookHandler) or this module's own
+// reconciler (Reconciler.ReconcilePending, T1) — both call this same method,
+// so downstream behavior is identical regardless of how the outcome was
+// discovered.
+//
+// ClaimUnresolved (D11) makes this safe against the two ever racing on the
+// same orderRef: only whichever caller wins the atomic claim proceeds, the
+// loser gets a no-op. Duration comes from the snapshot stored at Pay-time
+// (pending.PlanDurationMonths, D8), never from billing.GetPlan — this is
+// exactly what keeps activation working even if ElProof itself is
+// unreachable when the webhook/reconciler fires.
+func (s *TenantService) ApplyWebhookEvent(ctx context.Context, orderRef string, event WebhookEvent) error {
 	pending, err := s.pendingCharges.FindByOrderRef(ctx, orderRef)
 	if err != nil {
 		return err
 	}
 	if pending == nil {
-		return nil // unknown or already-consumed order_ref — idempotent no-op
+		return nil // unknown, already-consumed, or already-resolved order_ref — idempotent no-op
+	}
+
+	won, err := s.pendingCharges.ClaimUnresolved(ctx, orderRef)
+	if err != nil {
+		return err
+	}
+	if !won {
+		return nil // the webhook and the reconciler raced on this order_ref — the other one already claimed it
 	}
 
 	if !event.Paid {
@@ -604,15 +383,11 @@ func (s *TenantService) ApplyWebhookEvent(ctx context.Context, orderRef string, 
 	if err != nil {
 		return err
 	}
-	plan, err := s.billing.GetPlan(ctx, pending.PlanID)
-	if err != nil {
-		return err
-	}
 
 	if err := s.billing.UpdateTransactionStatus(ctx, orderRef, billingcontracts.StatusPaid); err != nil {
 		return err
 	}
-	if err := s.repo.UpdateSubscription(ctx, pending.TenantID, pending.PlanID, domain.StatusActive, computeNewExpiry(tenant, plan)); err != nil {
+	if err := s.repo.UpdateSubscription(ctx, pending.TenantID, pending.PlanID, domain.StatusActive, computeNewExpiry(tenant, pending.PlanDurationMonths)); err != nil {
 		return err
 	}
 	return s.pendingCharges.Delete(ctx, orderRef)
@@ -628,13 +403,13 @@ func txTypeFor(tenant *domain.Tenant) billingcontracts.TransactionType {
 // computeNewExpiry extends from the tenant's existing expiry if their plan
 // is still active (renewal stacks on top of remaining time), otherwise from
 // now (new subscription, or reactivating a lapsed one).
-func computeNewExpiry(tenant *domain.Tenant, plan *billingcontracts.Plan) time.Time {
+func computeNewExpiry(tenant *domain.Tenant, durationMonths int) time.Time {
 	wasActive := tenant.SubscriptionStatus == domain.StatusActive || tenant.SubscriptionStatus == domain.StatusExpiringSoon
 	base := time.Now()
 	if wasActive && tenant.SubscriptionExpiresAt != nil && tenant.SubscriptionExpiresAt.After(base) {
 		base = *tenant.SubscriptionExpiresAt
 	}
-	return base.AddDate(0, plan.DurationMonths, 0)
+	return base.AddDate(0, durationMonths, 0)
 }
 
 // ParseTenantID converts a JWT tenant-id claim (string) to int64 — used by the

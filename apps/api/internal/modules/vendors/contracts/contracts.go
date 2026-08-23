@@ -5,7 +5,7 @@ import (
 	"context"
 	"strings"
 
-	"elproof/internal/modules/vendors/application"
+	"jwswedding/internal/modules/vendors/application"
 )
 
 // VenueSummary is the public-safe subset of a venue's data (ADR-0016) --

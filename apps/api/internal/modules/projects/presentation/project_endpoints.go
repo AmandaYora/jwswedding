@@ -6,11 +6,11 @@ import (
 	"strconv"
 	"time"
 
-	"elproof/internal/modules/projects/application"
-	"elproof/internal/modules/projects/domain"
-	"elproof/internal/shared/middleware"
-	"elproof/internal/shared/pagination"
-	"elproof/internal/shared/response"
+	"jwswedding/internal/modules/projects/application"
+	"jwswedding/internal/modules/projects/domain"
+	"jwswedding/internal/shared/middleware"
+	"jwswedding/internal/shared/pagination"
+	"jwswedding/internal/shared/response"
 )
 
 func parseDate(s string) (time.Time, error) {

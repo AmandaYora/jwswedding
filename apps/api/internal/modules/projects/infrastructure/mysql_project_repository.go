@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"elproof/internal/modules/projects/domain"
-	"elproof/internal/shared/pagination"
-	"elproof/internal/shared/utils"
+	"jwswedding/internal/modules/projects/domain"
+	"jwswedding/internal/shared/pagination"
+	"jwswedding/internal/shared/utils"
 )
 
 type MySQLProjectRepository struct {

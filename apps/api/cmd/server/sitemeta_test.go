@@ -9,16 +9,16 @@ import (
 	"strings"
 	"testing"
 
-	"elproof/internal/modules/platform"
+	"jwswedding/internal/modules/platform"
 )
 
 const testIndexHTML = `<!doctype html>
 <html lang="en">
   <head>
-    <title>ElProof — Client Transparency Portal</title>
+    <title>JWS Wedding — Client Transparency Portal</title>
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="ElProof" />
-    <meta property="og:title" content="ElProof — Client Transparency Portal" />
+    <meta property="og:site_name" content="JWS Wedding" />
+    <meta property="og:title" content="JWS Wedding — Client Transparency Portal" />
     <meta property="og:description" content="Transparansi persiapan pernikahan Anda, dari WO hingga hari H." />
   </head>
   <body>
@@ -28,21 +28,24 @@ const testIndexHTML = `<!doctype html>
 `
 
 func TestInjectTenantSiteMeta_MatchedWithLogo(t *testing.T) {
-	out := string(injectTenantSiteMeta([]byte(testIndexHTML), platform.SiteMeta{BusinessName: "JWS Wedding", HasLogo: true}, "journey.jwswedding.com:443"))
+	// Deliberately a different name than the platform default ("JWS Wedding",
+	// see defaultOGSiteNameTag) -- otherwise a bug that skips the replace
+	// entirely could still pass this test by coincidence.
+	out := string(injectTenantSiteMeta([]byte(testIndexHTML), platform.SiteMeta{BusinessName: "Griya Pengantin Nusantara", HasLogo: true}, "journey.jwswedding.com:443"))
 
-	if strings.Contains(out, "ElProof") {
-		t.Errorf("expected every ElProof default to be replaced, got:\n%s", out)
+	if strings.Contains(out, "JWS Wedding") {
+		t.Errorf("expected every platform default to be replaced by the tenant's own name, got:\n%s", out)
 	}
-	if !strings.Contains(out, `<title>JWS Wedding</title>`) {
+	if !strings.Contains(out, `<title>Griya Pengantin Nusantara</title>`) {
 		t.Errorf("expected tenant title, got:\n%s", out)
 	}
-	if !strings.Contains(out, `<meta property="og:site_name" content="JWS Wedding" />`) {
+	if !strings.Contains(out, `<meta property="og:site_name" content="Griya Pengantin Nusantara" />`) {
 		t.Errorf("expected tenant og:site_name, got:\n%s", out)
 	}
-	if !strings.Contains(out, `<meta property="og:title" content="JWS Wedding" />`) {
+	if !strings.Contains(out, `<meta property="og:title" content="Griya Pengantin Nusantara" />`) {
 		t.Errorf("expected tenant og:title, got:\n%s", out)
 	}
-	if !strings.Contains(out, "Pantau progress pernikahan Anda secara real-time bersama JWS Wedding.") {
+	if !strings.Contains(out, "Pantau progress pernikahan Anda secara real-time bersama Griya Pengantin Nusantara.") {
 		t.Errorf("expected tenant og:description, got:\n%s", out)
 	}
 	// Port must be stripped and host lowercased before landing in the URL.
@@ -108,7 +111,7 @@ func TestServeIndexWithSiteMeta(t *testing.T) {
 
 	t.Run("unmatched host serves the static file untouched", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.Host = "elproof.elcodelabs.com"
+		req.Host = "unrelated.example.com"
 		rec := httptest.NewRecorder()
 		serveIndexWithSiteMeta(rec, req, dir, matched)
 		if rec.Body.String() != testIndexHTML {

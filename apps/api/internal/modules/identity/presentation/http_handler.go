@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"elproof/internal/modules/identity/application"
-	"elproof/internal/shared/apperror"
-	"elproof/internal/shared/response"
+	"jwswedding/internal/modules/identity/application"
+	"jwswedding/internal/shared/apperror"
+	"jwswedding/internal/shared/response"
 )
 
 type Handler struct {

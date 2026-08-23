@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 
-	"elproof/internal/modules/projects/domain"
+	"jwswedding/internal/modules/projects/domain"
 )
 
 type MySQLClientPaymentRepository struct {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"elproof/internal/modules/projects/domain"
-	"elproof/internal/shared/logger"
+	"jwswedding/internal/modules/projects/domain"
+	"jwswedding/internal/shared/logger"
 )
 
 type ActivityRepository interface {

@@ -3,8 +3,8 @@ package presentation
 import (
 	"time"
 
-	"elproof/internal/modules/projects/domain"
-	vendorscontracts "elproof/internal/modules/vendors/contracts"
+	"jwswedding/internal/modules/projects/domain"
+	vendorscontracts "jwswedding/internal/modules/vendors/contracts"
 )
 
 const dateLayout = "2006-01-02"

@@ -17,11 +17,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"elproof/internal/shared/compress"
-	"elproof/internal/shared/storage"
+	"jwswedding/internal/shared/compress"
+	"jwswedding/internal/shared/storage"
 )
 
-const keyPrefix = "elproof/marketing/login-slides/"
+const keyPrefix = "jwswedding/marketing/login-slides/"
 
 // flattenJPEGQuality is used only for the one PNG source below, converting it
 // to JPEG before the shared compress pipeline runs. This is intentionally not

@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"elproof/internal/shared/httpx"
-	"elproof/internal/shared/response"
-	"elproof/internal/shared/storage"
+	"jwswedding/internal/shared/httpx"
+	"jwswedding/internal/shared/response"
+	"jwswedding/internal/shared/storage"
 )
 
 // loginSlideKeys is the fixed, ordered set of object storage keys the login
@@ -15,9 +15,9 @@ import (
 // `api upload-login-slides <dir>` (internal/loginslides), never written by
 // any request handler.
 var loginSlideKeys = []string{
-	"elproof/marketing/login-slides/slide-01.jpg",
-	"elproof/marketing/login-slides/slide-02.jpg",
-	"elproof/marketing/login-slides/slide-03.jpg",
+	"jwswedding/marketing/login-slides/slide-01.jpg",
+	"jwswedding/marketing/login-slides/slide-02.jpg",
+	"jwswedding/marketing/login-slides/slide-03.jpg",
 }
 
 // LoginSlidesHandler serves the login page's fixed marketing photos —

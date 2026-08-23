@@ -12,24 +12,23 @@ import (
 	"strings"
 	"time"
 
-	"elproof/internal/adminseed"
-	"elproof/internal/loginslides"
-	"elproof/internal/migrator"
-	"elproof/internal/modules/billing"
-	"elproof/internal/modules/clients"
-	"elproof/internal/modules/identity"
-	"elproof/internal/modules/payment"
-	paymentcontracts "elproof/internal/modules/payment/contracts"
-	"elproof/internal/modules/platform"
-	"elproof/internal/modules/projects"
-	"elproof/internal/modules/staff"
-	staffcontracts "elproof/internal/modules/staff/contracts"
-	"elproof/internal/modules/vendors"
-	"elproof/internal/shared/config"
-	"elproof/internal/shared/database"
-	"elproof/internal/shared/middleware"
-	"elproof/internal/shared/response"
-	"elproof/internal/shared/storage"
+	"jwswedding/internal/adminseed"
+	"jwswedding/internal/loginslides"
+	"jwswedding/internal/migrator"
+	"jwswedding/internal/modules/billing"
+	"jwswedding/internal/modules/clients"
+	"jwswedding/internal/modules/identity"
+	"jwswedding/internal/modules/platform"
+	"jwswedding/internal/modules/projects"
+	"jwswedding/internal/modules/staff"
+	staffcontracts "jwswedding/internal/modules/staff/contracts"
+	"jwswedding/internal/modules/vendors"
+	"jwswedding/internal/shared/config"
+	"jwswedding/internal/shared/database"
+	"jwswedding/internal/shared/elproofpay"
+	"jwswedding/internal/shared/middleware"
+	"jwswedding/internal/shared/response"
+	"jwswedding/internal/shared/storage"
 )
 
 // staffNameResolver adapts staffcontracts.Contracts to
@@ -180,13 +179,6 @@ func serve(cfg config.Config) {
 	identityModule := identity.NewModule(db, cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
 	identityModule.RegisterRoutes(mux)
 
-	authed := middleware.RequireAuth(cfg.JWTSecret)
-
-	mux.Handle("/api/v1/auth/me", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		claims, _ := middleware.FromContext(r.Context())
-		response.OK(w, "ok", claims)
-	})))
-
 	storageClient, err := storage.New(storage.Config{
 		Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket,
 		AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, UseSSL: cfg.S3UseSSL,
@@ -195,41 +187,48 @@ func serve(cfg config.Config) {
 		log.Fatalf("failed to create object storage client: %v", err)
 	}
 
-	// payment depends on identity (Fase 10, one-way, same shape as
-	// vendors -> projects — see knowledge/MODULE_MAP.md) to mint bearer
-	// tokens for external Apps; it still depends on no other module for its
-	// own gateway/App-registry logic, so any App internal (e.g. platform)
-	// can receive its Client at their own construction time.
-	paymentModule, err := payment.NewModule(db, cfg.PaymentEncryptionKey, identityModule.Contracts(), cfg.AppTokenTTL)
-	if err != nil {
-		log.Fatalf("failed to init payment module: %v", err)
-	}
+	// One shared elproofpay.Client instance (D12) — jwswedding is a
+	// `kind=external` App consuming ElProof's API to pay for its own
+	// subscription. Both `billing` (plan catalog) and `platform` (charges)
+	// need it; the token cache MUST be shared between them, since ElProof
+	// rate-limits POST /auth/app/token to 10 attempts/minute/IP.
+	elproofClient := elproofpay.NewClient(cfg.ElProofPaymentBaseURL, cfg.ElProofAppID, cfg.ElProofAppSecret)
 
 	staffModule := staff.NewModule(db, identityModule.Contracts())
-	billingModule := billing.NewModule(db)
-	platformModule := platform.NewModule(db, staffModule.Contracts(), identityModule.Contracts(), billingModule.Contracts(), paymentModule.Client(), storageClient)
-	// Pre-auth, Host-header-resolved tenant branding (ADR-0015) — registered
-	// unwrapped, same style as identityModule.RegisterRoutes(mux) above.
+	billingModule := billing.NewModule(db, elproofClient)
+	platformModule := platform.NewModule(db, billingModule.Contracts(), elproofClient, cfg.ElProofChargeMaxAge, storageClient)
+	// Pre-auth, Host-header-resolved tenant branding (ADR-0015), plus
+	// ElProof's webhook relay — registered unwrapped, same style as
+	// identityModule.RegisterRoutes(mux) above.
 	platformModule.RegisterPublicRoutes(mux)
+
+	// gate is the read-only subscription guard (D5/D10/D13) — nested INSIDE
+	// RequireAuth (not the reverse) so Claims already exist in the request
+	// context by the time gate reads PrincipalType/TenantID. The whitelist is
+	// mandatory: without it, a tenant whose subscription just expired could
+	// never pay again, locking jwswedding permanently.
+	gate := middleware.RequireActiveSubscription(platformModule.Contracts().WritesAllowed, []string{
+		"/api/v1/subscriptions/pay",
+		"/api/v1/subscriptions/pending-charge/cancel",
+	})
+	authed := func(h http.Handler) http.Handler {
+		return middleware.RequireAuth(cfg.JWTSecret)(gate(h))
+	}
+
+	mux.Handle("/api/v1/auth/me", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims, _ := middleware.FromContext(r.Context())
+		response.OK(w, "ok", claims)
+	})))
+
 	// projects is built before vendors — vendors' "Lihat Project" resolves a
 	// vendor's cross-project engagement history through projects.Contracts()
 	// (project_vendors is owned by projects, not vendors).
 	projectsModule := projects.NewModule(db, storageClient, staffNameResolver{contracts: staffModule.Contracts()})
-	// Two-phase wiring: platform needs projects' contract (seed a newly
-	// registered tenant's Timeline Default template, PLAN.md) but
-	// platformModule is built above, before projectsModule exists — same
-	// bridging pattern as SetVendors below.
-	platformModule.SetProjects(projectsModule.Contracts())
 	// Two-phase wiring: staff needs projects' contract (hard-delete "impact"
 	// lookup, PLAN.md) but staffModule is built above, before projectsModule
-	// exists — same bridging pattern as SetProjects above.
+	// exists.
 	staffModule.SetProjectReferenceLookup(projectsModule.Contracts())
 	vendorsModule := vendors.NewModule(db, projectsModule.Contracts(), storageClient)
-	// Two-phase wiring: platform needs vendors' contract (seed default vendor
-	// categories on tenant registration) but platformModule is built above,
-	// before vendorsModule exists — same bridging pattern as the
-	// SetClientAccessResolver call below.
-	platformModule.SetVendors(vendorsModule.Contracts())
 	// Same bridge, the new reciprocal direction (ADR-0016): projects needs to
 	// resolve a project's attached venue_id into venue details for its own
 	// Project Detail tab and Client Portal's Venue tab, but projectsModule is
@@ -244,18 +243,13 @@ func serve(cfg config.Config) {
 	// clientsModule.Contracts() satisfies both ClientAccessResolver and
 	// ClientCleaner, so this is the same object as the call above.
 	projectsModule.SetClientCleaner(clientsModule.Contracts())
-	// Same bridging pattern: payment can't import platform (or any other App
-	// internal) to know its webhook consumer, so main.go registers it here,
-	// after both modules are built — see payment.module.go's Dispatcher doc.
-	paymentModule.Dispatcher().RegisterConsumer(paymentcontracts.InternalAppBilling, platformModule)
-	// Started only after every App internal's consumer is registered above —
-	// a sweep tick may need to dispatch to one right away. Runs for the
-	// lifetime of the process; no separate shutdown signal exists anywhere
-	// else in this server either (see server.ListenAndServe() below), so this
-	// goroutine simply ends when the process does.
-	paymentModule.StartReconciler(context.Background(), cfg.PaymentReconcileInterval)
 
-	paymentModule.RegisterRoutes(mux, authed)
+	// Runs for the lifetime of the process (T1's safety net for a missed
+	// webhook) — no separate shutdown signal exists anywhere else in this
+	// server either (see server.ListenAndServe() below), so this goroutine
+	// simply ends when the process does.
+	platformModule.StartReconciler(context.Background(), cfg.ElProofReconcileInterval)
+
 	billingModule.RegisterRoutes(mux, authed)
 	platformModule.RegisterRoutes(mux, authed)
 	staffModule.RegisterRoutes(mux, authed)
@@ -318,9 +312,9 @@ func spaFileServer(root string, siteMeta func(ctx context.Context, host string) 
 // injectTenantSiteMeta replaces these verbatim, so the two must stay in
 // sync; each carries a matching comment in index.html itself.
 const (
-	defaultTitleTag      = `<title>ElProof — Client Transparency Portal</title>`
-	defaultOGSiteNameTag = `<meta property="og:site_name" content="ElProof" />`
-	defaultOGTitleTag    = `<meta property="og:title" content="ElProof — Client Transparency Portal" />`
+	defaultTitleTag      = `<title>JWS Wedding — Client Transparency Portal</title>`
+	defaultOGSiteNameTag = `<meta property="og:site_name" content="JWS Wedding" />`
+	defaultOGTitleTag    = `<meta property="og:title" content="JWS Wedding — Client Transparency Portal" />`
 	defaultOGDescription = `<meta property="og:description" content="Transparansi persiapan pernikahan Anda, dari WO hingga hari H." />`
 	headCloseTag         = `</head>`
 )

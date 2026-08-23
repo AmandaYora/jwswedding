@@ -36,8 +36,7 @@ interface TenantBrandingState {
    * which stays Owner-only) and applies it by overriding the app's brand CSS
    * variables at runtime, plus the browser tab title/favicon. Call once per
    * authenticated WO Console/Client Portal session (fresh login or page
-   * reload) — never for a platform_admin session, which has no tenant to
-   * brand. `consoleLabel` (e.g. "WO Console", "Portal Klien") is appended to
+   * reload). `consoleLabel` (e.g. "WO Console", "Portal Klien") is appended to
    * the tab title so it still reads like a real page title, not just a bare
    * company name. Failures are swallowed: branding is a visual nicety, not
    * something that should block the app. */
@@ -81,8 +80,8 @@ export const useTenantBrandingStore = create<TenantBrandingState>((set, get) => 
       set({ colorPreset, logoUrl, businessName: raw.businessName, hydrated: true });
       if (previousLogoUrl) URL.revokeObjectURL(previousLogoUrl);
     } catch {
-      // No tenant to brand (e.g. platform_admin) or a transient failure —
-      // the app keeps rendering with its default navy look. Still unblocks
+      // A transient failure — the app keeps rendering with its default navy
+      // look. Still unblocks
       // whichever layout is waiting on `hydrated` (AppLayout/
       // ClientPortalLayout) -- a real failure here must never hang the app
       // on its loading screen forever.

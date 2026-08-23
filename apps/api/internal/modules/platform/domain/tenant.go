@@ -14,14 +14,21 @@ const (
 	StatusPendingPayment SubscriptionStatus = "pending_payment"
 )
 
-// PendingCharge remembers, for a subscription charge still awaiting gateway
-// confirmation, which tenant+plan it was for — `payment` itself is never
-// told about tenants/plans (see MODULE_PAYMENT.md's non-goals), so this
-// mapping has to live in `platform`, not inside the payment module.
+// PendingCharge remembers, for a subscription charge still awaiting ElProof's
+// confirmation, which tenant+plan it was for, plus a snapshot of that plan's
+// name/price/duration at the moment the charge was created (D8 — the
+// activation path, webhook or reconciler, never calls ElProof's plan catalog
+// again) and an atomic claim marker (D11 — ResolvedAt) so a webhook and the
+// reconciler racing on the same OrderRef can never both activate it.
 type PendingCharge struct {
-	OrderRef string
-	TenantID int64
-	PlanID   int64
+	OrderRef           string
+	TenantID           int64
+	PlanID             int64
+	PlanName           string
+	PlanPrice          int64
+	PlanDurationMonths int
+	CreatedAt          time.Time
+	ResolvedAt         *time.Time
 }
 
 type Tenant struct {

@@ -1,1 +1,1 @@
-export const APP_NAME = "ElProof";
+export const APP_NAME = "JWS Wedding";

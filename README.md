@@ -1,4 +1,4 @@
-# ElProof
+# JWS Wedding
 
 Monorepo generated to Dimas' standard (modular-monolith backend + React 19 frontend).
 

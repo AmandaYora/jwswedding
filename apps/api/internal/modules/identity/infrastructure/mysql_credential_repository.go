@@ -8,7 +8,7 @@ import (
 	"database/sql"
 	"errors"
 
-	"elproof/internal/modules/identity/domain"
+	"jwswedding/internal/modules/identity/domain"
 )
 
 type MySQLCredentialRepository struct {

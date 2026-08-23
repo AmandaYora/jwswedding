@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"strconv"
 
-	"elproof/internal/modules/projects/application"
-	"elproof/internal/modules/projects/domain"
-	"elproof/internal/shared/httpx"
-	"elproof/internal/shared/middleware"
-	"elproof/internal/shared/response"
+	"jwswedding/internal/modules/projects/application"
+	"jwswedding/internal/modules/projects/domain"
+	"jwswedding/internal/shared/httpx"
+	"jwswedding/internal/shared/middleware"
+	"jwswedding/internal/shared/response"
 )
 
 // MilestoneTemplateHandler backs Pengaturan -> Timeline Default (PLAN.md) --

@@ -1,17 +1,18 @@
 // Package billing wires the billing module: the subscription plan catalog
-// (single source of truth for both consoles) and the subscription
-// transaction ledger. See ADR-0008, docs/API_CONTRACT.md.
+// (read-only, sourced from ElProof — D7) and the subscription transaction
+// ledger. See ADR-0008, docs/API_CONTRACT.md.
 package billing
 
 import (
 	"database/sql"
 	"net/http"
 
-	"elproof/internal/modules/billing/application"
-	"elproof/internal/modules/billing/contracts"
-	"elproof/internal/modules/billing/infrastructure"
-	"elproof/internal/modules/billing/presentation"
-	"elproof/internal/shared/httpx"
+	"jwswedding/internal/modules/billing/application"
+	"jwswedding/internal/modules/billing/contracts"
+	"jwswedding/internal/modules/billing/infrastructure"
+	"jwswedding/internal/modules/billing/presentation"
+	"jwswedding/internal/shared/elproofpay"
+	"jwswedding/internal/shared/httpx"
 )
 
 type Module struct {
@@ -20,8 +21,8 @@ type Module struct {
 	contracts          contracts.Contracts
 }
 
-func NewModule(db *sql.DB) *Module {
-	planRepo := infrastructure.NewMySQLPlanRepository(db)
+func NewModule(db *sql.DB, elproofClient *elproofpay.Client) *Module {
+	planRepo := infrastructure.NewElProofPlanSource(elproofClient)
 	transactionRepo := infrastructure.NewMySQLTransactionRepository(db)
 
 	planService := application.NewPlanService(planRepo)
@@ -40,6 +41,5 @@ func (m *Module) Contracts() contracts.Contracts {
 
 func (m *Module) RegisterRoutes(mux *http.ServeMux, authed func(http.Handler) http.Handler) {
 	mux.Handle("/api/v1/plans", authed(http.HandlerFunc(m.planHandler.Collection)))
-	mux.Handle("/api/v1/plans/", authed(http.HandlerFunc(m.planHandler.Item)))
 	mux.Handle("/api/v1/subscription-transactions", authed(httpx.Method(http.MethodGet, m.transactionHandler.List)))
 }

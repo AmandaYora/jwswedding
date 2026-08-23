@@ -1,8 +1,8 @@
 {
-  "name": "elproof",
+  "name": "jwswedding",
   "private": true,
   "version": "0.1.0",
-  "description": "ElProof — monorepo (Dimas standard)",
+  "description": "JWS Wedding — monorepo (Dimas standard)",
   "workspaces": [
     "apps/web",
     "packages/*"

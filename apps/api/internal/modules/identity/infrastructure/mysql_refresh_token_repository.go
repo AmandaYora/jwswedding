@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"elproof/internal/modules/identity/domain"
+	"jwswedding/internal/modules/identity/domain"
 )
 
 type MySQLRefreshTokenRepository struct {

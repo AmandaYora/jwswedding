@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 
-	"elproof/internal/modules/vendors/domain"
-	"elproof/internal/shared/pagination"
+	"jwswedding/internal/modules/vendors/domain"
+	"jwswedding/internal/shared/pagination"
 )
 
 type MySQLVendorCategoryRepository struct {

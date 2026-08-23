@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	"elproof/internal/modules/projects/domain"
+	"jwswedding/internal/modules/projects/domain"
 )
 
 // MySQLDashboardRepository backs the tenant-wide aggregation queries the WO

@@ -5,13 +5,13 @@ import (
 	"net/http"
 	"strconv"
 
-	"elproof/internal/modules/clients/application"
-	"elproof/internal/modules/clients/domain"
-	"elproof/internal/shared/apperror"
-	"elproof/internal/shared/httpx"
-	"elproof/internal/shared/middleware"
-	"elproof/internal/shared/pagination"
-	"elproof/internal/shared/response"
+	"jwswedding/internal/modules/clients/application"
+	"jwswedding/internal/modules/clients/domain"
+	"jwswedding/internal/shared/apperror"
+	"jwswedding/internal/shared/httpx"
+	"jwswedding/internal/shared/middleware"
+	"jwswedding/internal/shared/pagination"
+	"jwswedding/internal/shared/response"
 )
 
 type Handler struct {

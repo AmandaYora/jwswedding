@@ -4,14 +4,14 @@ import (
 	"context"
 	"time"
 
-	identitycontracts "elproof/internal/modules/identity/contracts"
-	projectscontracts "elproof/internal/modules/projects/contracts"
+	identitycontracts "jwswedding/internal/modules/identity/contracts"
+	projectscontracts "jwswedding/internal/modules/projects/contracts"
 
-	"elproof/internal/modules/clients/domain"
-	"elproof/internal/shared/apperror"
-	"elproof/internal/shared/logger"
-	"elproof/internal/shared/pagination"
-	"elproof/internal/shared/validator"
+	"jwswedding/internal/modules/clients/domain"
+	"jwswedding/internal/shared/apperror"
+	"jwswedding/internal/shared/logger"
+	"jwswedding/internal/shared/pagination"
+	"jwswedding/internal/shared/validator"
 )
 
 type ClientRepository interface {

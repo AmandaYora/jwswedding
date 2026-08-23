@@ -4,7 +4,7 @@ package httpx
 import (
 	"net/http"
 
-	"elproof/internal/shared/response"
+	"jwswedding/internal/shared/response"
 )
 
 // Method wraps a handler so it only responds to the given HTTP method — kept as

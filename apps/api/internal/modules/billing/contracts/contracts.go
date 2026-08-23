@@ -4,8 +4,8 @@ package contracts
 import (
 	"context"
 
-	"elproof/internal/modules/billing/application"
-	"elproof/internal/modules/billing/domain"
+	"jwswedding/internal/modules/billing/application"
+	"jwswedding/internal/modules/billing/domain"
 )
 
 type TransactionType string

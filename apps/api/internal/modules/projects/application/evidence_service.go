@@ -11,10 +11,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"elproof/internal/modules/projects/domain"
-	"elproof/internal/shared/apperror"
-	"elproof/internal/shared/compress"
-	"elproof/internal/shared/logger"
+	"jwswedding/internal/modules/projects/domain"
+	"jwswedding/internal/shared/apperror"
+	"jwswedding/internal/shared/compress"
+	"jwswedding/internal/shared/logger"
 )
 
 // maxDecodedSize is the base64-decoded size cap enforced before any

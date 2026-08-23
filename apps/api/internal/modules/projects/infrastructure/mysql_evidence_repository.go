@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 
-	"elproof/internal/modules/projects/domain"
-	"elproof/internal/shared/utils"
+	"jwswedding/internal/modules/projects/domain"
+	"jwswedding/internal/shared/utils"
 )
 
 type MySQLEvidenceRepository struct {

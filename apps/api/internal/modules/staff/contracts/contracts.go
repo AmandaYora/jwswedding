@@ -5,8 +5,8 @@ import (
 	"context"
 	"strconv"
 
-	"elproof/internal/modules/staff/application"
-	"elproof/internal/shared/apperror"
+	"jwswedding/internal/modules/staff/application"
+	"jwswedding/internal/shared/apperror"
 )
 
 type CreateOwnerInput struct {

@@ -8,8 +8,8 @@ package contracts
 import (
 	"context"
 
-	"elproof/internal/modules/clients/application"
-	"elproof/internal/shared/apperror"
+	"jwswedding/internal/modules/clients/application"
+	"jwswedding/internal/shared/apperror"
 )
 
 type Contracts interface {

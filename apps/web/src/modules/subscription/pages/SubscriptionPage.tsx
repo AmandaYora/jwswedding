@@ -12,9 +12,9 @@ import { formatCurrency, formatDate, daysBetween } from "@/shared/lib/formatters
 import { useAuthStore } from "@/shared/stores/useAuthStore";
 import { useTenantBrandingStore } from "@/shared/stores/useTenantBrandingStore";
 import { useSubscriptionPlanStore } from "@/shared/stores/useSubscriptionPlanStore";
-import { usePlatformAdminStore, type PaymentCharge } from "@/modules/platform-admin/stores/usePlatformAdminStore";
+import { useSubscriptionStore, type PaymentCharge } from "@/modules/subscription/stores/useSubscriptionStore";
 import { APP_NAME } from "@/shared/constants/brand";
-import { TRANSACTION_STATUS_TONE, TRANSACTION_STATUS_LABEL, TRANSACTION_TYPE_LABEL } from "@/modules/platform-admin/lib/status";
+import { TRANSACTION_STATUS_TONE, TRANSACTION_STATUS_LABEL, TRANSACTION_TYPE_LABEL } from "@/modules/subscription/lib/status";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
 
 const POLL_INTERVAL_MS = 4000;
@@ -31,14 +31,14 @@ export default function SubscriptionPage() {
 
   const plans = useSubscriptionPlanStore((s) => s.plans);
   const fetchPlans = useSubscriptionPlanStore((s) => s.fetchPlans);
-  const tenant = usePlatformAdminStore((s) => s.myTenant);
-  const fetchMyTenant = usePlatformAdminStore((s) => s.fetchMyTenant);
-  const transactions = usePlatformAdminStore((s) => s.transactionPage);
-  const meta = usePlatformAdminStore((s) => s.transactionPageMeta);
-  const fetchTransactionPage = usePlatformAdminStore((s) => s.fetchTransactionPage);
-  const paySubscription = usePlatformAdminStore((s) => s.paySubscription);
-  const fetchPendingCharge = usePlatformAdminStore((s) => s.fetchPendingCharge);
-  const cancelPendingCharge = usePlatformAdminStore((s) => s.cancelPendingCharge);
+  const tenant = useSubscriptionStore((s) => s.myTenant);
+  const fetchMyTenant = useSubscriptionStore((s) => s.fetchMyTenant);
+  const transactions = useSubscriptionStore((s) => s.transactionPage);
+  const meta = useSubscriptionStore((s) => s.transactionPageMeta);
+  const fetchTransactionPage = useSubscriptionStore((s) => s.fetchTransactionPage);
+  const paySubscription = useSubscriptionStore((s) => s.paySubscription);
+  const fetchPendingCharge = useSubscriptionStore((s) => s.fetchPendingCharge);
+  const cancelPendingCharge = useSubscriptionStore((s) => s.cancelPendingCharge);
 
   // The plan the Owner just clicked a card for — independent of
   // tenant.planId, since a tenant may have no plan yet (never subscribed) or
@@ -60,10 +60,16 @@ export default function SubscriptionPage() {
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // ElProof's plan-catalog endpoint (PLAN.md §5.2) may not exist yet, or
+  // ElProof itself may be unreachable — either way the rest of this page
+  // (subscription status, transaction history) must keep working; only the
+  // plan cards degrade to an error message with no "Bayar Sekarang" button.
+  const [plansError, setPlansError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOwner) return;
-    void fetchPlans();
+    setPlansError(null);
+    void fetchPlans().catch((err) => setPlansError(getApiErrorMessage(err, "Gagal memuat daftar paket langganan")));
     void fetchMyTenant();
     void fetchPendingCharge().then(setPendingCharge).catch(() => {});
   }, [isOwner, fetchPlans, fetchMyTenant, fetchPendingCharge]);
@@ -111,7 +117,7 @@ export default function SubscriptionPage() {
     pollRef.current = setInterval(() => {
       void (async () => {
         await fetchTransactionPage(1, "");
-        const match = usePlatformAdminStore.getState().transactionPage.find((tx) => tx.paymentReference === orderRef);
+        const match = useSubscriptionStore.getState().transactionPage.find((tx) => tx.paymentReference === orderRef);
         if (!match || match.status === "pending") return;
         stopPolling();
         if (match.status === "paid") {
@@ -273,7 +279,17 @@ export default function SubscriptionPage() {
           </p>
         )}
 
-        {activePlans.length === 0 ? (
+        {plansError ? (
+          <Card className="max-w-md">
+            <CardContent className="py-5">
+              <EmptyState
+                icon={<AlertTriangle className="h-8 w-8 text-danger" />}
+                title="Gagal memuat daftar paket"
+                description={plansError}
+              />
+            </CardContent>
+          </Card>
+        ) : activePlans.length === 0 ? (
           <Card className="max-w-md">
             <CardContent className="py-5">
               <EmptyState title="Belum ada paket tersedia" description="Hubungi ElProof untuk informasi paket langganan." />
@@ -301,14 +317,16 @@ export default function SubscriptionPage() {
                       <span className="pb-0.5 text-[12.5px] text-text-secondary">/ {p.durationMonths} bulan</span>
                     </div>
 
-                    <ul className="flex flex-col gap-2 border-t border-border-light pt-4">
-                      {p.features.map((feature) => (
-                        <li key={feature} className="flex items-start gap-2 text-[13px] text-text-primary">
-                          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-                          {feature}
-                        </li>
-                      ))}
-                    </ul>
+                    {p.features.length > 0 && (
+                      <ul className="flex flex-col gap-2 border-t border-border-light pt-4">
+                        {p.features.map((feature) => (
+                          <li key={feature} className="flex items-start gap-2 text-[13px] text-text-primary">
+                            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+                            {feature}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
 
                     {pendingCharge ? (
                       <p className="rounded-md bg-surface-muted px-3.5 py-2.5 text-[12px] text-text-secondary">

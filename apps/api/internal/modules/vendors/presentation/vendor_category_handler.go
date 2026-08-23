@@ -5,13 +5,13 @@ import (
 	"net/http"
 	"strconv"
 
-	"elproof/internal/modules/vendors/application"
-	"elproof/internal/modules/vendors/domain"
-	"elproof/internal/shared/apperror"
-	"elproof/internal/shared/httpx"
-	"elproof/internal/shared/middleware"
-	"elproof/internal/shared/pagination"
-	"elproof/internal/shared/response"
+	"jwswedding/internal/modules/vendors/application"
+	"jwswedding/internal/modules/vendors/domain"
+	"jwswedding/internal/shared/apperror"
+	"jwswedding/internal/shared/httpx"
+	"jwswedding/internal/shared/middleware"
+	"jwswedding/internal/shared/pagination"
+	"jwswedding/internal/shared/response"
 )
 
 type VendorCategoryHandler struct {

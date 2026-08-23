@@ -10,12 +10,12 @@ import (
 	"net/http"
 	"strconv"
 
-	"elproof/internal/modules/projects/application"
-	"elproof/internal/shared/apperror"
-	"elproof/internal/shared/httpx"
-	"elproof/internal/shared/logger"
-	"elproof/internal/shared/middleware"
-	"elproof/internal/shared/response"
+	"jwswedding/internal/modules/projects/application"
+	"jwswedding/internal/shared/apperror"
+	"jwswedding/internal/shared/httpx"
+	"jwswedding/internal/shared/logger"
+	"jwswedding/internal/shared/middleware"
+	"jwswedding/internal/shared/response"
 )
 
 // ClientAccessResolver is the narrow shape this module needs from `clients`

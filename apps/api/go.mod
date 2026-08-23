@@ -1,4 +1,4 @@
-module elproof
+module jwswedding
 
 go 1.25.0
 

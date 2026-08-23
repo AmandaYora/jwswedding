@@ -47,12 +47,14 @@ const SCRIM_CLASSES = {
 // The platform's own hostname(s) — a request arriving on any of these can
 // never resolve to a tenant (ADR-0015's Host-header lookup 404s), so there's
 // nothing worth waiting for and the page can paint its neutral look on the
-// very first render, exactly as before this fix. Every other hostname is a
-// *candidate* custom domain (it might 404 too, e.g. an unconfigured or
-// decommissioned domain) and is worth a brief wait to avoid painting the
-// wrong identity first. "elproof.elcodelabs.com" is the same platform-domain
-// string already used in contact.ts/tenant_handler.go.
-const PLATFORM_HOSTNAMES = new Set(["elproof.elcodelabs.com", "localhost", "127.0.0.1"]);
+// very first render, exactly as before this fix. Every other hostname
+// (including jwswedding's own production domain, journey.jwswedding.com) is
+// a *candidate* custom domain and is worth a brief wait to avoid painting
+// the wrong identity first — jwswedding is single-tenant, and its one
+// tenant's `custom_domain` is seeded to its own production host (D4,
+// internal/adminseed), so that domain is meant to resolve through this path,
+// not be excluded from it.
+const PLATFORM_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
 
 // A hung/slow `/public/branding` call must never hold a custom-domain login
 // page hostage forever — past this, fall back to the neutral look exactly as
@@ -151,10 +153,8 @@ export default function LoginPage() {
         // one page they can actually reach instead of a page RequireRole
         // would just redirect away from anyway.
         navigate(session.role === "Staff" || session.role === "Sales" ? ROUTE_PATHS.projects : ROUTE_PATHS.dashboard);
-      } else if (session.principalType === "client") {
-        navigate(ROUTE_PATHS.portal());
       } else {
-        navigate(ROUTE_PATHS.platformDashboard);
+        navigate(ROUTE_PATHS.portal());
       }
     } catch (err) {
       const message = axios.isAxiosError(err) ? (err.response?.data as { message?: string })?.message : undefined;

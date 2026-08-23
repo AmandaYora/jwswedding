@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"time"
 
-	"elproof/internal/modules/projects/application"
-	"elproof/internal/modules/projects/domain"
-	"elproof/internal/shared/response"
+	"jwswedding/internal/modules/projects/application"
+	"jwswedding/internal/modules/projects/domain"
+	"jwswedding/internal/shared/response"
 )
 
 // vendorPaidAmounts sums each project_vendor's own vendor_payments rows

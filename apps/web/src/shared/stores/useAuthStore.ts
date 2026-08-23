@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type PrincipalType = "staff" | "client" | "platform_admin";
+export type PrincipalType = "staff" | "client";
 
 export interface AuthSession {
   accessToken: string;
@@ -12,23 +12,21 @@ export interface AuthSession {
   displayName: string;
 }
 
-const STORAGE_KEY = "elproof.session";
+const STORAGE_KEY = "jwswedding.session";
 
 // Pre-integration default identities — kept as the fallback when no real
 // session exists yet, so the many pages built before real auth existed
-// (Sidebar, ClientPortalLayout, PlatformLayout, project detail sections, etc.)
-// keep rendering unchanged until Fase 7 adds route guards and a true
-// logged-out state. Once a real login happens, the real principal takes over.
+// (Sidebar, ClientPortalLayout, project detail sections, etc.) keep
+// rendering unchanged until Fase 7 adds route guards and a true logged-out
+// state. Once a real login happens, the real principal takes over.
 const FALLBACK_STAFF_ID = "1";
 const FALLBACK_CLIENT_ID = "cl-p1-bride";
-const FALLBACK_PLATFORM_ADMIN_ID = "pa1";
 
 interface AuthState {
   session: AuthSession | null;
   isAuthenticated: boolean;
   currentStaffId: string;
   currentClientId: string;
-  currentPlatformAdminId: string;
   login: (session: AuthSession) => void;
   logout: () => void;
 }
@@ -58,8 +56,6 @@ function deriveLegacyIds(session: AuthSession | null) {
   return {
     currentStaffId: session?.principalType === "staff" ? session.principalId : FALLBACK_STAFF_ID,
     currentClientId: session?.principalType === "client" ? session.principalId : FALLBACK_CLIENT_ID,
-    currentPlatformAdminId:
-      session?.principalType === "platform_admin" ? session.principalId : FALLBACK_PLATFORM_ADMIN_ID,
   };
 }
 

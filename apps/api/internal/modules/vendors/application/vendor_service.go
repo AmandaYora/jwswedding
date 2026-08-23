@@ -9,11 +9,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"elproof/internal/modules/vendors/domain"
-	"elproof/internal/shared/apperror"
-	"elproof/internal/shared/compress"
-	"elproof/internal/shared/logger"
-	"elproof/internal/shared/pagination"
+	"jwswedding/internal/modules/vendors/domain"
+	"jwswedding/internal/shared/apperror"
+	"jwswedding/internal/shared/compress"
+	"jwswedding/internal/shared/logger"
+	"jwswedding/internal/shared/pagination"
 )
 
 // vendorImportRowCap/vendorImportBatchSize mirror Venue's own bulk-import

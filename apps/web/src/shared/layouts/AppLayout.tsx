@@ -3,6 +3,7 @@ import { Outlet } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { Sidebar } from "@/shared/layouts/Sidebar";
 import { Topbar } from "@/shared/layouts/Topbar";
+import { ReadOnlyBanner } from "@/shared/components/ReadOnlyBanner";
 import { useTenantBrandingStore } from "@/shared/stores/useTenantBrandingStore";
 
 export function AppLayout() {
@@ -33,6 +34,7 @@ export function AppLayout() {
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="lg:pl-64">
         <Topbar onMenuClick={() => setSidebarOpen(true)} />
+        <ReadOnlyBanner />
         <main className="mx-auto max-w-[1400px] px-4 py-5 sm:px-6 sm:py-6">
           <Suspense fallback={<div className="py-20 text-center text-sm text-text-secondary">Memuat halaman...</div>}>
             <Outlet />

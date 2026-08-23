@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"time"
 
-	"elproof/internal/modules/identity/application"
-	"elproof/internal/modules/identity/contracts"
-	"elproof/internal/modules/identity/infrastructure"
-	"elproof/internal/modules/identity/presentation"
-	"elproof/internal/shared/httpx"
+	"jwswedding/internal/modules/identity/application"
+	"jwswedding/internal/modules/identity/contracts"
+	"jwswedding/internal/modules/identity/infrastructure"
+	"jwswedding/internal/modules/identity/presentation"
+	"jwswedding/internal/shared/httpx"
 )
 
 type Module struct {
@@ -30,7 +30,7 @@ func NewModule(db *sql.DB, jwtSecret string, accessTTL, refreshTTL time.Duration
 
 	return &Module{
 		handler:   presentation.NewHandler(authService),
-		contracts: contracts.New(managementService, authService),
+		contracts: contracts.New(managementService),
 	}
 }
 

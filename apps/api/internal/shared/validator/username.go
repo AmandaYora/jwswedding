@@ -3,7 +3,7 @@ package validator
 import (
 	"regexp"
 
-	"elproof/internal/shared/apperror"
+	"jwswedding/internal/shared/apperror"
 )
 
 var usernamePattern = regexp.MustCompile(`^[a-z0-9_.]{4,32}$`)

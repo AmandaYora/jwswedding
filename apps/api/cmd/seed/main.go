@@ -10,9 +10,9 @@ import (
 	"context"
 	"log"
 
-	"elproof/internal/adminseed"
-	"elproof/internal/shared/config"
-	"elproof/internal/shared/database"
+	"jwswedding/internal/adminseed"
+	"jwswedding/internal/shared/config"
+	"jwswedding/internal/shared/database"
 )
 
 func main() {

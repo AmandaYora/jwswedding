@@ -6,9 +6,8 @@ import "time"
 type PrincipalType string
 
 const (
-	PrincipalStaff         PrincipalType = "staff"
-	PrincipalClient        PrincipalType = "client"
-	PrincipalPlatformAdmin PrincipalType = "platform_admin"
+	PrincipalStaff  PrincipalType = "staff"
+	PrincipalClient PrincipalType = "client"
 )
 
 // Credential is a login identity for one of the three principal types. It does

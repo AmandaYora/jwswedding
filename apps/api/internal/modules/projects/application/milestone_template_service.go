@@ -3,8 +3,8 @@ package application
 import (
 	"context"
 
-	"elproof/internal/modules/projects/domain"
-	"elproof/internal/shared/apperror"
+	"jwswedding/internal/modules/projects/domain"
+	"jwswedding/internal/shared/apperror"
 )
 
 type MilestoneTemplateRepository interface {

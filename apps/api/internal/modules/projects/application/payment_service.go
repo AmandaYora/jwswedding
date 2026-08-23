@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"elproof/internal/modules/projects/domain"
-	"elproof/internal/shared/apperror"
+	"jwswedding/internal/modules/projects/domain"
+	"jwswedding/internal/shared/apperror"
 )
 
 type PaymentRepository interface {

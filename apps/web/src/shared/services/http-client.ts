@@ -2,6 +2,7 @@ import axios, { AxiosError, type InternalAxiosRequestConfig } from "axios";
 import { API } from "@/shared/services/api-endpoints";
 import { useAuthStore } from "@/shared/stores/useAuthStore";
 import { useTenantBrandingStore } from "@/shared/stores/useTenantBrandingStore";
+import { useSubscriptionGateStore } from "@/shared/stores/useSubscriptionGateStore";
 
 export const httpClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL,
@@ -59,6 +60,14 @@ httpClient.interceptors.response.use(
       originalRequest?.url === API.auth.login ||
       originalRequest?.url === API.auth.refresh ||
       originalRequest?.url === API.auth.logout;
+
+    // D14: the read-only subscription guard rejects with 402 — surfaced via
+    // ReadOnlyBanner, never fed into the 401/refresh-token flow below (an
+    // expired subscription has nothing to do with an expired access token).
+    if (error.response?.status === 402) {
+      useSubscriptionGateStore.getState().setReadOnly(true);
+      return Promise.reject(error);
+    }
 
     if (error.response?.status === 401 && originalRequest && !originalRequest._retried && !isAuthEndpoint) {
       originalRequest._retried = true;

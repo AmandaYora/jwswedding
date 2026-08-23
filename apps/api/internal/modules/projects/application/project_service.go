@@ -4,11 +4,11 @@ import (
 	"context"
 	"time"
 
-	"elproof/internal/modules/projects/domain"
-	vendorscontracts "elproof/internal/modules/vendors/contracts"
-	"elproof/internal/shared/apperror"
-	"elproof/internal/shared/logger"
-	"elproof/internal/shared/pagination"
+	"jwswedding/internal/modules/projects/domain"
+	vendorscontracts "jwswedding/internal/modules/vendors/contracts"
+	"jwswedding/internal/shared/apperror"
+	"jwswedding/internal/shared/logger"
+	"jwswedding/internal/shared/pagination"
 )
 
 type ProjectRepository interface {

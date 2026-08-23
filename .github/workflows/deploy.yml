@@ -1,9 +1,9 @@
 name: Build and push image
 
-# This VPS never builds (2 GB RAM) — see knowledge/decisions/ADR-0011 and
+# This VPS never builds (2 GB RAM) — see knowledge/decisions/ADR-0022 and
 # docs/DEPLOYMENT.md. This workflow is the only place the Docker image gets
 # built; the server only ever `docker pull`s the tag this pushes, then runs
-# `~/elproof/deploy.sh <git-sha>`.
+# `~/jwswedding/deploy.sh <git-sha>`.
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
   workflow_dispatch: {}
 
 env:
-  IMAGE: ghcr.io/amandayora/elproof
+  IMAGE: ghcr.io/amandayora/jwswedding
 
 jobs:
   build-and-push:
@@ -44,4 +44,4 @@ jobs:
       - name: Summary
         run: |
           echo "Pushed ${{ env.IMAGE }}:${{ github.sha }} and :latest" >> "$GITHUB_STEP_SUMMARY"
-          echo "Deploy on the VPS with: cd ~/elproof && ./deploy.sh ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deploy on the VPS with: cd ~/jwswedding && ./deploy.sh ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"

@@ -126,7 +126,7 @@ export function UserFormModal({ open, onClose, initialUser, onSubmitCreate, onSu
         </Field>
         <div className="sm:col-span-2">
           <Field label="Email" required hint={errors.email}>
-            <Input type="email" value={values.email} onChange={(e) => set("email", e.target.value)} placeholder="nama@elproof.id" />
+            <Input type="email" value={values.email} onChange={(e) => set("email", e.target.value)} placeholder="nama@jwswedding.id" />
           </Field>
         </div>
         <div className="sm:col-span-2">

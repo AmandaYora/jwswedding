@@ -20,25 +20,29 @@ type Config struct {
 	JWTAccessTTL  time.Duration
 	JWTRefreshTTL time.Duration
 
-	// AppTokenTTL is how long an external payment App's access token (Fase
-	// 10, `POST /auth/app/token`) is valid — no refresh token exists for
-	// this principal type, it simply re-exchanges appId+secret once expired.
-	AppTokenTTL time.Duration
-
 	S3Endpoint  string
 	S3Bucket    string
 	S3AccessKey string
 	S3SecretKey string
 	S3UseSSL    bool
 
-	// PaymentEncryptionKey derives the AES-256-GCM key `payment` uses to
-	// encrypt gateway credentials at rest — see MODULE_PAYMENT.md §8.
-	PaymentEncryptionKey string
+	// ElProofPaymentBaseURL is the base URL of the ElProof external API that
+	// jwswedding consumes as a `kind=external` App to pay for its own
+	// subscription — see docs/plan/standalone-jwswedding/PLAN.md §5.
+	ElProofPaymentBaseURL string
+	ElProofAppID          string
+	ElProofAppSecret      string
 
-	// PaymentReconcileInterval is how often `payment` re-checks charges whose
-	// webhook was never received against the gateway directly — the safety
-	// net described in knowledge/MODULE_PAYMENT.md.
-	PaymentReconcileInterval time.Duration
+	// ElProofReconcileInterval is how often the platform module re-checks
+	// pending charges whose webhook was never received against ElProof
+	// directly — the safety net for the fire-and-forget webhook relay.
+	ElProofReconcileInterval time.Duration
+
+	// ElProofChargeMaxAge is how old a pending charge with a definitive
+	// "unpaid" answer from ElProof must be before the reconciler force-closes
+	// it as failed. A charge whose check errored is never force-closed
+	// regardless of age.
+	ElProofChargeMaxAge time.Duration
 }
 
 // Load reads .env from the repo root (or the current directory) into the process
@@ -51,14 +55,13 @@ func Load() Config {
 	return Config{
 		AppEnv:  getEnv("APP_ENV", "development"),
 		AppPort: getEnv("APP_PORT", "8080"),
-		AppName: getEnv("APP_NAME", "ElProof"),
+		AppName: getEnv("APP_NAME", "JWS Wedding"),
 
 		DatabaseURL: getEnv("DATABASE_URL", ""),
 
 		JWTSecret:     getEnv("JWT_SECRET", ""),
 		JWTAccessTTL:  getDuration("JWT_ACCESS_TTL", 30*time.Minute),
 		JWTRefreshTTL: getDuration("JWT_REFRESH_TTL", 168*time.Hour),
-		AppTokenTTL:   getDuration("APP_TOKEN_TTL", time.Hour),
 
 		S3Endpoint:  getEnv("S3_ENDPOINT", ""),
 		S3Bucket:    getEnv("S3_BUCKET", ""),
@@ -66,8 +69,11 @@ func Load() Config {
 		S3SecretKey: getEnv("S3_SECRET_KEY", ""),
 		S3UseSSL:    getEnv("S3_USE_SSL", "true") == "true",
 
-		PaymentEncryptionKey:     getEnv("PAYMENT_ENCRYPTION_KEY", ""),
-		PaymentReconcileInterval: getDuration("PAYMENT_RECONCILE_INTERVAL", 3*time.Minute),
+		ElProofPaymentBaseURL:    getEnv("ELPROOF_PAYMENT_BASE_URL", "https://elproof.elcodelabs.com/api/v1"),
+		ElProofAppID:             getEnv("ELPROOF_APP_ID", ""),
+		ElProofAppSecret:         getEnv("ELPROOF_APP_SECRET", ""),
+		ElProofReconcileInterval: getDuration("ELPROOF_RECONCILE_INTERVAL", 3*time.Minute),
+		ElProofChargeMaxAge:      getDuration("ELPROOF_CHARGE_MAX_AGE", 24*time.Hour),
 	}
 }
 

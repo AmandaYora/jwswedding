@@ -1,5 +1,5 @@
 // Package migrator runs the project's embedded SQL migrations
-// (elproof/migrations) against the configured database from inside the
+// (jwswedding/migrations) against the configured database from inside the
 // compiled binary — the counterpart of `npm run migrate:up`/`migrate:down`
 // (which drive the same *.sql files via the external golang-migrate CLI for
 // local dev) for environments where only the deployed image exists, no CLI
@@ -14,7 +14,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/mysql"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 
-	"elproof/migrations"
+	"jwswedding/migrations"
 )
 
 // newMigrate opens its own dedicated connection from databaseURL (the

@@ -6,19 +6,16 @@ package contracts
 
 import (
 	"context"
-	"errors"
-	"time"
 
-	"elproof/internal/modules/identity/application"
-	"elproof/internal/modules/identity/domain"
+	"jwswedding/internal/modules/identity/application"
+	"jwswedding/internal/modules/identity/domain"
 )
 
 type PrincipalType string
 
 const (
-	PrincipalStaff         PrincipalType = "staff"
-	PrincipalClient        PrincipalType = "client"
-	PrincipalPlatformAdmin PrincipalType = "platform_admin"
+	PrincipalStaff  PrincipalType = "staff"
+	PrincipalClient PrincipalType = "client"
 )
 
 type CreateCredentialInput struct {
@@ -45,23 +42,14 @@ type Contracts interface {
 	// a principal's role after account creation — CreateCredential only ever
 	// sets it once, at creation time.
 	UpdateRole(ctx context.Context, principalType PrincipalType, principalID string, role string) error
-	// IssueServiceToken mints a bearer token for a principal not backed by a
-	// Credential row — the caller has already authenticated it against its
-	// own store (e.g. `payment`'s external Apps, see
-	// knowledge/MODULE_PAYMENT.md §7.1). No refresh token is issued.
-	IssueServiceToken(ctx context.Context, principalType string, principalID string, ttl time.Duration) (string, error)
 }
 
 type impl struct {
 	management *application.ManagementService
-	auth       *application.AuthService
 }
 
-// New builds a Contracts implementation. auth may be nil for callers that
-// only ever need credential CRUD (e.g. internal/adminseed) — IssueServiceToken
-// errors clearly if called on such an instance instead of panicking.
-func New(management *application.ManagementService, auth *application.AuthService) Contracts {
-	return &impl{management: management, auth: auth}
+func New(management *application.ManagementService) Contracts {
+	return &impl{management: management}
 }
 
 func (c *impl) CreateCredential(ctx context.Context, input CreateCredentialInput) error {
@@ -91,11 +79,4 @@ func (c *impl) SetActive(ctx context.Context, principalType PrincipalType, princ
 
 func (c *impl) UpdateRole(ctx context.Context, principalType PrincipalType, principalID string, role string) error {
 	return c.management.UpdateRole(ctx, domain.PrincipalType(principalType), principalID, role)
-}
-
-func (c *impl) IssueServiceToken(ctx context.Context, principalType string, principalID string, ttl time.Duration) (string, error) {
-	if c.auth == nil {
-		return "", errors.New("identity: instance Contracts ini dibuat tanpa AuthService, tidak bisa menerbitkan token")
-	}
-	return c.auth.IssueServiceToken(ctx, principalType, principalID, ttl)
 }
