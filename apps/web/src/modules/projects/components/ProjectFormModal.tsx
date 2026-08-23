@@ -1,0 +1,196 @@
+import { useEffect, useState } from "react";
+import { Modal } from "@/shared/components/ui/Modal";
+import { Button } from "@/shared/components/ui/Button";
+import { Input, Textarea, Select, Field } from "@/shared/components/ui/Input";
+import { CurrencyInput } from "@/shared/components/ui/CurrencyInput";
+import { projectSchema, PROJECT_STATUS_OPTIONS, type ProjectFormValues } from "@/modules/projects/schemas/project.schema";
+import type { Project } from "@/modules/projects/types";
+import { useStaffStore } from "@/modules/users/stores/useStaffStore";
+import { useAuthStore } from "@/shared/stores/useAuthStore";
+
+interface ProjectFormModalProps {
+  open: boolean;
+  onClose: () => void;
+  onSubmit: (values: ProjectFormValues) => void;
+  initialProject?: Project;
+  // "duplicate" pre-fills every field from initialProject (like edit) but is
+  // meant to create a brand-new project — see ADR-0014. Name gets a "(Salinan)"
+  // suffix and status resets to Draft as safer defaults; everything else
+  // (including dates) is copied verbatim for the user to adjust as needed.
+  mode?: "edit" | "duplicate";
+}
+
+function toFormValues(project?: Project, defaultStaffId = "", mode?: "edit" | "duplicate"): ProjectFormValues {
+  if (!project) {
+    return {
+      name: "",
+      brideName: "",
+      groomName: "",
+      eventDate: "",
+      venue: "",
+      prepStartDate: "",
+      packageName: "",
+      contractValue: 0,
+      status: "Draft",
+      picStaffId: defaultStaffId,
+      picSalesStaffId: "",
+      description: "",
+    };
+  }
+  return {
+    name: mode === "duplicate" ? `${project.name} (Salinan)` : project.name,
+    brideName: project.brideName,
+    groomName: project.groomName,
+    eventDate: project.eventDate,
+    venue: project.venue,
+    prepStartDate: project.prepStartDate,
+    packageName: project.packageName,
+    contractValue: project.contractValue,
+    status: mode === "duplicate" ? "Draft" : project.status,
+    picStaffId: project.picStaffId,
+    picSalesStaffId: project.picSalesStaffId,
+    description: project.description,
+  };
+}
+
+export function ProjectFormModal({ open, onClose, onSubmit, initialProject, mode }: ProjectFormModalProps) {
+  const staffList = useStaffStore((s) => s.staffSummaries);
+  const fetchStaff = useStaffStore((s) => s.fetchStaffSummaries);
+  const role = useAuthStore((s) => s.session?.role);
+  const currentStaffId = useAuthStore((s) => s.currentStaffId);
+  const [values, setValues] = useState<ProjectFormValues>(() => toFormValues(initialProject, "", mode));
+  const [errors, setErrors] = useState<Partial<Record<keyof ProjectFormValues, string>>>({});
+
+  // Wedding Planner never reassigns a project's PIC, even their own project's
+  // (only Owner/Admin do — see PLAN.md's RBAC section); the backend already
+  // rejects a changed picStaffId from this role, so this is a read-only
+  // display for them, not a disabled-but-still-submittable control.
+  const picLocked = role === "Staff" && Boolean(initialProject) && mode !== "duplicate";
+  // Sales always creates a project as their own PIC Sales — the backend
+  // forces this server-side regardless of what's submitted, so the field is
+  // shown read-only (locked to self) for them rather than a disabled-but-
+  // submittable control. Owner/Admin keep a free picker, including on an
+  // existing project (mirrors picStaffId's own edit affordance).
+  const picSalesLocked = role === "Sales" && !initialProject;
+
+  useEffect(() => {
+    void fetchStaff();
+  }, [fetchStaff]);
+
+  useEffect(() => {
+    if (!initialProject && !values.picStaffId && staffList.length > 0 && role !== "Sales") {
+      setValues((prev) => ({ ...prev, picStaffId: staffList[0].id }));
+    }
+  }, [initialProject, staffList, values.picStaffId, role]);
+
+  useEffect(() => {
+    if (!initialProject && picSalesLocked) {
+      setValues((prev) => (prev.picSalesStaffId === currentStaffId ? prev : { ...prev, picSalesStaffId: currentStaffId }));
+    }
+  }, [initialProject, picSalesLocked, currentStaffId]);
+
+  function set<K extends keyof ProjectFormValues>(key: K, value: ProjectFormValues[K]) {
+    setValues((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function handleSubmit() {
+    const result = projectSchema.safeParse(values);
+    if (!result.success) {
+      const fieldErrors: Partial<Record<keyof ProjectFormValues, string>> = {};
+      for (const issue of result.error.issues) {
+        const key = issue.path[0] as keyof ProjectFormValues;
+        fieldErrors[key] = issue.message;
+      }
+      setErrors(fieldErrors);
+      return;
+    }
+    onSubmit(result.data);
+    setValues(toFormValues(undefined, role === "Sales" ? "" : staffList[0]?.id ?? ""));
+    setErrors({});
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={mode === "duplicate" ? "Duplikat Project" : initialProject ? "Ubah Project" : "Tambah Project Baru"}
+      description={
+        mode === "duplicate"
+          ? "Project baru berdasarkan project ini — timeline dan daftar vendor akan ikut disalin sebagai template. Sesuaikan bagian yang berbeda sebelum menyimpan."
+          : "Informasi dasar project pernikahan yang dikelola WO."
+      }
+      size="lg"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Batal</Button>
+          <Button onClick={handleSubmit}>
+            {mode === "duplicate" ? "Buat Duplikat" : initialProject ? "Simpan Perubahan" : "Simpan Project"}
+          </Button>
+        </>
+      }
+    >
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Nama Project" required hint={errors.name}>
+          <Input value={values.name} onChange={(e) => set("name", e.target.value)} placeholder="cth. Aurelia & Bagas Wedding" />
+        </Field>
+        <Field label="Status Project" required>
+          <Select value={values.status} onChange={(e) => set("status", e.target.value as ProjectFormValues["status"])}>
+            {PROJECT_STATUS_OPTIONS.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Nama Mempelai Wanita" required hint={errors.brideName}>
+          <Input value={values.brideName} onChange={(e) => set("brideName", e.target.value)} />
+        </Field>
+        <Field label="Nama Mempelai Pria" required hint={errors.groomName}>
+          <Input value={values.groomName} onChange={(e) => set("groomName", e.target.value)} />
+        </Field>
+        <Field label="Tanggal Acara" required hint={errors.eventDate}>
+          <Input type="date" value={values.eventDate} onChange={(e) => set("eventDate", e.target.value)} />
+        </Field>
+        <Field label="Tanggal Booking" required hint={errors.prepStartDate}>
+          <Input type="date" value={values.prepStartDate} onChange={(e) => set("prepStartDate", e.target.value)} />
+        </Field>
+        <Field label="Lokasi / Venue" required hint={errors.venue}>
+          <Input value={values.venue} onChange={(e) => set("venue", e.target.value)} />
+        </Field>
+        <Field label="Paket / Layanan" required hint={errors.packageName}>
+          <Input value={values.packageName} onChange={(e) => set("packageName", e.target.value)} />
+        </Field>
+        <Field label="Nilai Kontrak (Rp)" required hint={errors.contractValue}>
+          <CurrencyInput value={values.contractValue} onChange={(n) => set("contractValue", n)} />
+        </Field>
+        <Field label="Penanggung Jawab WO (PIC Wedding Planner)" hint={errors.picStaffId}>
+          {picLocked ? (
+            <Input value={staffList.find((s) => s.id === values.picStaffId)?.name ?? "..."} disabled />
+          ) : (
+            <Select value={values.picStaffId} onChange={(e) => set("picStaffId", e.target.value)}>
+              <option value="">Belum ditugaskan</option>
+              {staffList.map((s) => (
+                <option key={s.id} value={s.id}>{s.name} — {s.title}</option>
+              ))}
+            </Select>
+          )}
+        </Field>
+        <Field label="PIC Sales" hint={errors.picSalesStaffId}>
+          {picSalesLocked ? (
+            <Input value={staffList.find((s) => s.id === values.picSalesStaffId)?.name ?? "..."} disabled />
+          ) : (
+            <Select value={values.picSalesStaffId} onChange={(e) => set("picSalesStaffId", e.target.value)}>
+              <option value="">Belum ditugaskan</option>
+              {staffList.map((s) => (
+                <option key={s.id} value={s.id}>{s.name} — {s.title}</option>
+              ))}
+            </Select>
+          )}
+        </Field>
+        <div className="sm:col-span-2">
+          <Field label="Deskripsi / Catatan Project">
+            <Textarea rows={3} value={values.description} onChange={(e) => set("description", e.target.value)} />
+          </Field>
+        </div>
+      </div>
+    </Modal>
+  );
+}

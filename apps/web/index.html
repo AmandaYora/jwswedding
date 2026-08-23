@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&display=swap"
+      rel="stylesheet"
+    />
+    <title>ElProof — Client Transparency Portal</title>
+    <!-- Platform defaults -- swapped server-side per tenant custom domain,
+         see cmd/server/main.go's injectTenantSiteMeta (exact-string match). -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="ElProof" />
+    <meta property="og:title" content="ElProof — Client Transparency Portal" />
+    <meta property="og:description" content="Transparansi persiapan pernikahan Anda, dari WO hingga hari H." />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,14 @@
+import { Badge } from "@/shared/components/ui/Badge";
+import type { BadgeTone } from "@/shared/components/ui/Badge";
+import { ROLE_LABELS, type StaffRole } from "@/modules/users/types";
+
+const ROLE_TONE: Record<StaffRole, BadgeTone> = {
+  Owner: "navy",
+  Admin: "info",
+  Staff: "neutral",
+  Sales: "success",
+};
+
+export function UserRoleBadge({ role }: { role: StaffRole }) {
+  return <Badge tone={ROLE_TONE[role]}>{ROLE_LABELS[role]}</Badge>;
+}

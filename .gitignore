@@ -1,0 +1,25 @@
+node_modules/
+dist/
+build/
+tmp/
+.env
+*.local
+.DS_Store
+coverage/
+# Go
+/dist/api
+apps/api/tmp/
+apps/api/*.exe
+apps/api/air-console.log
+# apps/web/dist copied here for local prod-style testing of spaFileServer
+# (mirrors infra/docker/Dockerfile's COPY step) -- never committed.
+apps/api/public/
+# Prisma
+apps/api/prisma/*.db
+
+# One-off source photos for `api upload-login-slides` — uploaded to object
+# storage, never shipped in the repo/frontend bundle.
+kebutuhan_login_jws/
+
+# Claude Code local (personal) settings
+.claude/settings.local.json
