@@ -46,5 +46,5 @@ func (s *ElProofPlanSource) FindByID(ctx context.Context, id int64) (*domain.Pla
 }
 
 func toDomainPlan(p elproofpay.Plan) domain.Plan {
-	return domain.Plan{ID: p.ID, Name: p.Name, DurationMonths: p.DurationMonths, Price: p.Price, IsActive: p.Active}
+	return domain.Plan{ID: p.ID, Name: p.Name, DurationMonths: p.DurationMonths, Price: p.Price, IsActive: p.Active, Features: p.Features}
 }

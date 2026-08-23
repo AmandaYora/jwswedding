@@ -74,13 +74,15 @@ type ChargeResult struct {
 }
 
 // Plan is one row of ElProof's subscription-plan catalog for this appId
-// (PLAN.md §5.2).
+// (PLAN.md §5.2). Features is the plan's feature list, shown on
+// SubscriptionPage's plan cards; may be empty.
 type Plan struct {
 	ID             int64
 	Name           string
 	DurationMonths int
 	Price          int64
 	Active         bool
+	Features       []string
 }
 
 type tokenResponse struct {
@@ -110,11 +112,12 @@ type chargeResponse struct {
 type planListResponse struct {
 	Success bool `json:"success"`
 	Data    []struct {
-		ID             int64  `json:"id"`
-		Name           string `json:"name"`
-		DurationMonths int    `json:"durationMonths"`
-		Price          int64  `json:"price"`
-		Active         bool   `json:"active"`
+		ID             int64    `json:"id"`
+		Name           string   `json:"name"`
+		DurationMonths int      `json:"durationMonths"`
+		Price          int64    `json:"price"`
+		Active         bool     `json:"active"`
+		Features       []string `json:"features"`
 	} `json:"data"`
 }
 
@@ -240,12 +243,18 @@ func (c *Client) do(ctx context.Context, method, path string, body any) (int, []
 	return status, raw, nil
 }
 
-// CreateCharge creates a charge at ElProof with the default channel (QRIS) —
-// mirrors payment's own CreateCharge default (T4).
-func (c *Client) CreateCharge(ctx context.Context, orderRef string, amount int64) (*ChargeResult, error) {
-	status, raw, err := c.do(ctx, http.MethodPost, "/external/payments/charges", map[string]any{
-		"orderRef": orderRef,
-		"amount":   amount,
+// CreateSubscriptionCharge creates a charge for jwswedding's own ElProof
+// subscription via the dedicated subscription-charge endpoint — the amount
+// is derived by ElProof from planID's own catalog price, never sent by the
+// caller (unlike the generic /external/payments/charges endpoint). Customer
+// identity is forwarded to ElProof's checkout page (Tripay).
+func (c *Client) CreateSubscriptionCharge(ctx context.Context, orderRef string, planID int64, customerName, customerEmail, customerPhone string) (*ChargeResult, error) {
+	status, raw, err := c.do(ctx, http.MethodPost, "/external/subscriptions/charges", map[string]any{
+		"orderRef":      orderRef,
+		"planId":        planID,
+		"customerName":  customerName,
+		"customerEmail": customerEmail,
+		"customerPhone": customerPhone,
 	})
 	if err != nil {
 		return nil, err
@@ -320,7 +329,7 @@ func (c *Client) ListPlans(ctx context.Context) ([]Plan, error) {
 	}
 	plans := make([]Plan, 0, len(parsed.Data))
 	for _, p := range parsed.Data {
-		plans = append(plans, Plan{ID: p.ID, Name: p.Name, DurationMonths: p.DurationMonths, Price: p.Price, Active: p.Active})
+		plans = append(plans, Plan{ID: p.ID, Name: p.Name, DurationMonths: p.DurationMonths, Price: p.Price, Active: p.Active, Features: p.Features})
 	}
 
 	c.plansMu.Lock()

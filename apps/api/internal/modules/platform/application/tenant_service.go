@@ -38,14 +38,13 @@ type WebhookEvent struct {
 }
 
 // ChargeCreator is the narrow slice of elproofpay.Client this service needs
-// to create/check a charge at ElProof — exactly the 2 methods `platform` ever
-// called on the old payment module's Client (T4). Declared locally (like
-// ObjectStorage below) so this module never imports another module's
-// infrastructure; the concrete implementation
+// to create/check a charge at ElProof — exactly the 2 methods `platform`
+// ever calls. Declared locally (like ObjectStorage below) so this module
+// never imports another module's infrastructure; the concrete implementation
 // (platform/infrastructure.ElProofChargeClient) just delegates to
 // elproofpay.Client.
 type ChargeCreator interface {
-	CreateCharge(ctx context.Context, orderRef string, amount int64) (*ChargeResult, error)
+	CreateSubscriptionCharge(ctx context.Context, orderRef string, planID int64, customerName, customerEmail, customerPhone string) (*ChargeResult, error)
 	ChargeStatus(ctx context.Context, orderRef string) (*ChargeResult, error)
 }
 
@@ -216,11 +215,12 @@ func (s *TenantService) ActivateSubscription(ctx context.Context, tenantID int64
 }
 
 // Pay is the tenant Owner's own self-service "Bayar Sekarang" action —
-// creates a real charge at ElProof (QRIS by default) and returns it for the
-// frontend to render; the subscription is NOT activated here. Activation
-// only happens once ElProof's webhook confirms payment (see
-// ApplyWebhookEvent below) or the reconciler catches up (T1) — this
-// function only ever gets the charge started.
+// creates a real charge at ElProof's subscription-charge endpoint (QRIS by
+// default; amount is derived by ElProof from planID's own catalog price)
+// and returns it for the frontend to render; the subscription is NOT
+// activated here. Activation only happens once ElProof's webhook confirms
+// payment (see ApplyWebhookEvent below) or the reconciler catches up (T1) —
+// this function only ever gets the charge started.
 //
 // Guard: rejects a second charge while one is already pending for this
 // tenant (409), instead of silently starting a second, independent charge —
@@ -235,9 +235,9 @@ func (s *TenantService) ActivateSubscription(ctx context.Context, tenantID int64
 // (D16/T7): the local pendingCharges row is written BEFORE calling ElProof.
 // It is now the only local record of this charge and the reconciler's only
 // input, so a process death between the two calls must never leave a charge
-// at ElProof with zero local trace. If CreateCharge itself fails (network,
-// or a 409 from a duplicate orderRef), the just-written row is deleted so a
-// retried Pay never gets stuck behind its own failed attempt.
+// at ElProof with zero local trace. If CreateSubscriptionCharge itself fails
+// (network, or a 409 from a duplicate orderRef), the just-written row is
+// deleted so a retried Pay never gets stuck behind its own failed attempt.
 func (s *TenantService) Pay(ctx context.Context, tenantID int64, planID int64) (*ChargeResult, error) {
 	tenant, err := s.Get(ctx, tenantID)
 	if err != nil {
@@ -261,10 +261,10 @@ func (s *TenantService) Pay(ctx context.Context, tenantID int64, planID int64) (
 		return nil, err
 	}
 
-	charge, err := s.charges.CreateCharge(ctx, orderRef, plan.Price)
+	charge, err := s.charges.CreateSubscriptionCharge(ctx, orderRef, planID, tenant.OwnerName, tenant.Email, tenant.Phone)
 	if err != nil {
 		if delErr := s.pendingCharges.Delete(ctx, orderRef); delErr != nil {
-			logger.Error("gagal membersihkan baris pending %s setelah CreateCharge gagal: %v", orderRef, delErr)
+			logger.Error("gagal membersihkan baris pending %s setelah CreateSubscriptionCharge gagal: %v", orderRef, delErr)
 		}
 		return nil, err
 	}

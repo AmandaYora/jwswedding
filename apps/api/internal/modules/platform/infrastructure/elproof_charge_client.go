@@ -19,8 +19,8 @@ func NewElProofChargeClient(client *elproofpay.Client) *ElProofChargeClient {
 	return &ElProofChargeClient{client: client}
 }
 
-func (c *ElProofChargeClient) CreateCharge(ctx context.Context, orderRef string, amount int64) (*application.ChargeResult, error) {
-	result, err := c.client.CreateCharge(ctx, orderRef, amount)
+func (c *ElProofChargeClient) CreateSubscriptionCharge(ctx context.Context, orderRef string, planID int64, customerName, customerEmail, customerPhone string) (*application.ChargeResult, error) {
+	result, err := c.client.CreateSubscriptionCharge(ctx, orderRef, planID, customerName, customerEmail, customerPhone)
 	if err != nil {
 		return nil, err
 	}

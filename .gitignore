@@ -23,3 +23,10 @@ kebutuhan_login_jws/
 
 # Claude Code local (personal) settings
 .claude/settings.local.json
+
+# Dev-only documentation/knowledge base — never shipped to GitHub or
+# production; kept locally only for development/analysis reference.
+/docs/
+/knowledge/
+/CLAUDE.md
+/PLAN-backup.md

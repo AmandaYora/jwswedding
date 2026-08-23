@@ -18,16 +18,22 @@ func NewPlanHandler(plans *application.PlanService) *PlanHandler {
 }
 
 type planResponse struct {
-	ID             int64  `json:"id"`
-	Name           string `json:"name"`
-	DurationMonths int    `json:"durationMonths"`
-	Price          int64  `json:"price"`
-	IsActive       bool   `json:"isActive"`
+	ID             int64    `json:"id"`
+	Name           string   `json:"name"`
+	DurationMonths int      `json:"durationMonths"`
+	Price          int64    `json:"price"`
+	IsActive       bool     `json:"isActive"`
+	Features       []string `json:"features"`
 }
 
 func toPlanResponseValue(p domain.Plan) planResponse {
+	features := p.Features
+	if features == nil {
+		features = make([]string, 0)
+	}
 	return planResponse{
 		ID: p.ID, Name: p.Name, DurationMonths: p.DurationMonths, Price: p.Price, IsActive: p.IsActive,
+		Features: features,
 	}
 }
 

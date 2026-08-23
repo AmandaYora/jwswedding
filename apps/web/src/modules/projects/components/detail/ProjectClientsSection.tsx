@@ -41,9 +41,13 @@ const EMPTY_CLIENTS: Client[] = [];
 
 export function ProjectClientsSection({ projectId }: { projectId: string }) {
   // Wedding Planner reads client data for their own project fine (backend
-  // already scopes it), but every write action here is Owner/Admin only
-  // (see PLAN.md's RBAC section) — hide the buttons for that role instead of
-  // letting them click through to a 403.
+  // already scopes it), but every write action here is Owner/Admin/Sales
+  // only (see PLAN.md revisi-timeline-vendor-role-sales's RBAC section) —
+  // hide the buttons for that role instead of letting them click through to
+  // a 403. Sales isn't scoped to "their own project" here specifically
+  // because they can only ever reach this component for a project they
+  // already own — resolveProjectAccess (backend) rejects the project fetch
+  // itself otherwise, same pattern as canDuplicate/canSeeMargin above.
   const canManage = useAuthStore((s) => s.session?.role) !== "Staff";
   const clients = useClientStore((s) => s.clientsByProject[projectId] ?? EMPTY_CLIENTS);
   const fetchClients = useClientStore((s) => s.fetchClients);

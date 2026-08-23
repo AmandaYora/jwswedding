@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -118,7 +119,7 @@ func TestClient_409DipetakanJadiKonflik(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "app_1", "secret")
-	_, err := client.CreateCharge(context.Background(), "X", 100000)
+	_, err := client.CreateSubscriptionCharge(context.Background(), "X", 5, "Budi", "budi@example.com", "081234567890")
 	if err == nil {
 		t.Fatal("expected an error for a 409 response")
 	}
@@ -128,6 +129,46 @@ func TestClient_409DipetakanJadiKonflik(t *testing.T) {
 	}
 	if appErr.Kind != apperror.KindConflict {
 		t.Errorf("expected KindConflict, got %v", appErr.Kind)
+	}
+}
+
+func TestClient_CreateSubscriptionCharge_MengirimPlanIdSebagaiAngka(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/auth/app/token" {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": true, "message": "ok",
+				"data": map[string]any{"accessToken": "tok", "tokenType": "Bearer", "expiresIn": 3600},
+			})
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("gagal membaca body: %v", err)
+		}
+		capturedBody = body
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"success": true, "message": "ok",
+			"data": map[string]any{"orderRef": "X", "status": "unpaid"},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "app_1", "secret")
+	if _, err := client.CreateSubscriptionCharge(context.Background(), "X", 5, "Budi", "budi@example.com", "081234567890"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(capturedBody, &decoded); err != nil {
+		t.Fatalf("body bukan JSON valid: %v", err)
+	}
+	planIDRaw := string(decoded["planId"])
+	if planIDRaw == "" || planIDRaw[0] == '"' {
+		t.Errorf("expected planId to be a JSON number, got raw value %q", planIDRaw)
+	}
+	if planIDRaw != "5" {
+		t.Errorf("expected planId 5, got %q", planIDRaw)
 	}
 }
 
@@ -185,6 +226,62 @@ func TestClient_ListPlans_ScopedResponse(t *testing.T) {
 	}
 	if len(plans) != 1 || plans[0].ID != 3 || plans[0].DurationMonths != 12 || plans[0].Price != 2_400_000 {
 		t.Errorf("unexpected plans: %+v", plans)
+	}
+}
+
+func TestClient_ListPlans_MembawaFeatures(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/auth/app/token" {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": true, "message": "ok",
+				"data": map[string]any{"accessToken": "tok", "tokenType": "Bearer", "expiresIn": 3600},
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": true, "message": "ok",
+			"data": []map[string]any{
+				{"id": 2, "name": "Paket JWS", "durationMonths": 12, "price": 2_400_000, "active": true, "features": []string{"A", "B"}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "app_1", "secret")
+	plans, err := client.ListPlans(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plans) != 1 || len(plans[0].Features) != 2 || plans[0].Features[0] != "A" || plans[0].Features[1] != "B" {
+		t.Errorf("unexpected features: %+v", plans)
+	}
+}
+
+func TestClient_ListPlans_TanpaFeaturesTidakPanik(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/auth/app/token" {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": true, "message": "ok",
+				"data": map[string]any{"accessToken": "tok", "tokenType": "Bearer", "expiresIn": 3600},
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": true, "message": "ok",
+			"data": []map[string]any{
+				{"id": 2, "name": "Paket JWS", "durationMonths": 12, "price": 2_400_000, "active": true},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "app_1", "secret")
+	plans, err := client.ListPlans(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plans) != 1 || len(plans[0].Features) != 0 {
+		t.Errorf("expected empty/nil features without panicking, got: %+v", plans)
 	}
 }
 

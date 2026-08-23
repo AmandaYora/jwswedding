@@ -195,12 +195,12 @@ func (b *fakeBilling) UpdateTransactionStatus(ctx context.Context, paymentRefere
 // fakeCharges implements ChargeCreator with fully overridable behavior per
 // test case.
 type fakeCharges struct {
-	createCharge func(ctx context.Context, orderRef string, amount int64) (*ChargeResult, error)
-	chargeStatus func(ctx context.Context, orderRef string) (*ChargeResult, error)
+	createSubscriptionCharge func(ctx context.Context, orderRef string, planID int64, customerName, customerEmail, customerPhone string) (*ChargeResult, error)
+	chargeStatus             func(ctx context.Context, orderRef string) (*ChargeResult, error)
 }
 
-func (f *fakeCharges) CreateCharge(ctx context.Context, orderRef string, amount int64) (*ChargeResult, error) {
-	return f.createCharge(ctx, orderRef, amount)
+func (f *fakeCharges) CreateSubscriptionCharge(ctx context.Context, orderRef string, planID int64, customerName, customerEmail, customerPhone string) (*ChargeResult, error) {
+	return f.createSubscriptionCharge(ctx, orderRef, planID, customerName, customerEmail, customerPhone)
 }
 
 func (f *fakeCharges) ChargeStatus(ctx context.Context, orderRef string) (*ChargeResult, error) {
@@ -290,8 +290,8 @@ func TestPay_MenyimpanSnapshotPaket(t *testing.T) {
 	pending := newFakePendingChargeRepo()
 	billing := newFakeBilling(billingcontracts.Plan{ID: 10, Name: "Paket Tahunan", DurationMonths: 12, Price: 2_400_000})
 	charges := &fakeCharges{
-		createCharge: func(ctx context.Context, orderRef string, amount int64) (*ChargeResult, error) {
-			return &ChargeResult{OrderRef: orderRef, Channel: "QRIS", Amount: amount, Status: "unpaid"}, nil
+		createSubscriptionCharge: func(ctx context.Context, orderRef string, planID int64, customerName, customerEmail, customerPhone string) (*ChargeResult, error) {
+			return &ChargeResult{OrderRef: orderRef, Channel: "QRIS", Amount: 2_400_000, Status: "unpaid"}, nil
 		},
 	}
 	svc := newTestService(repo, pending, billing, charges)
@@ -307,6 +307,32 @@ func TestPay_MenyimpanSnapshotPaket(t *testing.T) {
 	}
 	if stored.PlanName != "Paket Tahunan" || stored.PlanPrice != 2_400_000 || stored.PlanDurationMonths != 12 {
 		t.Errorf("unexpected snapshot: %+v", stored)
+	}
+}
+
+func TestPay_MengirimIdentitasTenantKeCharge(t *testing.T) {
+	tenant := &domain.Tenant{
+		ID: 1, SubscriptionStatus: domain.StatusPendingPayment,
+		OwnerName: "Budi Santoso", Email: "budi@example.com", Phone: "081234567890",
+	}
+	repo := newFakeTenantRepo(tenant)
+	pending := newFakePendingChargeRepo()
+	billing := newFakeBilling(billingcontracts.Plan{ID: 10, Name: "Paket Tahunan", DurationMonths: 12, Price: 2_400_000})
+	var gotName, gotEmail, gotPhone string
+	charges := &fakeCharges{
+		createSubscriptionCharge: func(ctx context.Context, orderRef string, planID int64, customerName, customerEmail, customerPhone string) (*ChargeResult, error) {
+			gotName, gotEmail, gotPhone = customerName, customerEmail, customerPhone
+			return &ChargeResult{OrderRef: orderRef, Channel: "QRIS", Amount: 2_400_000, Status: "unpaid"}, nil
+		},
+	}
+	svc := newTestService(repo, pending, billing, charges)
+
+	if _, err := svc.Pay(context.Background(), 1, 10); err != nil {
+		t.Fatalf("Pay: %v", err)
+	}
+	if gotName != tenant.OwnerName || gotEmail != tenant.Email || gotPhone != tenant.Phone {
+		t.Errorf("expected tenant identity (%q, %q, %q), got (%q, %q, %q)",
+			tenant.OwnerName, tenant.Email, tenant.Phone, gotName, gotEmail, gotPhone)
 	}
 }
 
@@ -391,10 +417,10 @@ func TestPay_BarisPendingDitulisSebelumCharge(t *testing.T) {
 	var existedBeforeCreateCharge bool
 	var orderRefSeen string
 	charges := &fakeCharges{
-		createCharge: func(ctx context.Context, orderRef string, amount int64) (*ChargeResult, error) {
+		createSubscriptionCharge: func(ctx context.Context, orderRef string, planID int64, customerName, customerEmail, customerPhone string) (*ChargeResult, error) {
 			orderRefSeen = orderRef
 			existedBeforeCreateCharge = pending.has(orderRef)
-			return &ChargeResult{OrderRef: orderRef, Channel: "QRIS", Amount: amount, Status: "unpaid"}, nil
+			return &ChargeResult{OrderRef: orderRef, Channel: "QRIS", Amount: 100, Status: "unpaid"}, nil
 		},
 	}
 	svc := newTestService(repo, pending, billing, charges)
@@ -403,10 +429,10 @@ func TestPay_BarisPendingDitulisSebelumCharge(t *testing.T) {
 		t.Fatalf("Pay: %v", err)
 	}
 	if orderRefSeen == "" {
-		t.Fatal("CreateCharge was never called")
+		t.Fatal("CreateSubscriptionCharge was never called")
 	}
 	if !existedBeforeCreateCharge {
-		t.Error("expected the pending row to already exist before CreateCharge was invoked (D16)")
+		t.Error("expected the pending row to already exist before CreateSubscriptionCharge was invoked (D16)")
 	}
 }
 
@@ -416,14 +442,14 @@ func TestPay_ChargeGagalMembersihkanBarisPending(t *testing.T) {
 	pending := newFakePendingChargeRepo()
 	billing := newFakeBilling(billingcontracts.Plan{ID: 10, Name: "P", DurationMonths: 1, Price: 100})
 	charges := &fakeCharges{
-		createCharge: func(ctx context.Context, orderRef string, amount int64) (*ChargeResult, error) {
+		createSubscriptionCharge: func(ctx context.Context, orderRef string, planID int64, customerName, customerEmail, customerPhone string) (*ChargeResult, error) {
 			return nil, apperror.Internal("gagal terhubung ke ElProof")
 		},
 	}
 	svc := newTestService(repo, pending, billing, charges)
 
 	if _, err := svc.Pay(context.Background(), 1, 10); err == nil {
-		t.Fatal("expected Pay to propagate the CreateCharge error")
+		t.Fatal("expected Pay to propagate the CreateSubscriptionCharge error")
 	}
 
 	if len(pending.charges) != 0 {
@@ -431,8 +457,8 @@ func TestPay_ChargeGagalMembersihkanBarisPending(t *testing.T) {
 	}
 
 	// A retried Pay must not be blocked by the cleaned-up row.
-	charges.createCharge = func(ctx context.Context, orderRef string, amount int64) (*ChargeResult, error) {
-		return &ChargeResult{OrderRef: orderRef, Channel: "QRIS", Amount: amount, Status: "unpaid"}, nil
+	charges.createSubscriptionCharge = func(ctx context.Context, orderRef string, planID int64, customerName, customerEmail, customerPhone string) (*ChargeResult, error) {
+		return &ChargeResult{OrderRef: orderRef, Channel: "QRIS", Amount: 100, Status: "unpaid"}, nil
 	}
 	if _, err := svc.Pay(context.Background(), 1, 10); err != nil {
 		t.Fatalf("expected retried Pay to succeed, got %v", err)
@@ -445,7 +471,7 @@ func TestPay_Charge409MembersihkanBarisPending(t *testing.T) {
 	pending := newFakePendingChargeRepo()
 	billing := newFakeBilling(billingcontracts.Plan{ID: 10, Name: "P", DurationMonths: 1, Price: 100})
 	charges := &fakeCharges{
-		createCharge: func(ctx context.Context, orderRef string, amount int64) (*ChargeResult, error) {
+		createSubscriptionCharge: func(ctx context.Context, orderRef string, planID int64, customerName, customerEmail, customerPhone string) (*ChargeResult, error) {
 			return nil, apperror.Conflict("order_ref sudah dipakai")
 		},
 	}
