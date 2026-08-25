@@ -1,5 +1,7 @@
 package domain
 
+import "strings"
+
 // AllowedCities is the fixed set of 128 official kota/kabupaten across Java's six provinces
 // (DKI Jakarta, Banten, Jawa Barat, Jawa Tengah, DI Yogyakarta, Jawa Timur) plus Bali — the only
 // two islands this feature covers (ADR-0016). Deliberately kota AND kabupaten, not kota alone:
@@ -71,4 +73,61 @@ func buildCitySet() map[string]struct{} {
 func IsValidCity(city string) bool {
 	_, ok := allowedCitySet[city]
 	return ok
+}
+
+// lowercaseCityIndex maps a lowercased AllowedCities entry back to its
+// canonical form, built once at package load -- the lookup table
+// ResolveCity needs for its case-insensitive pass.
+var lowercaseCityIndex = buildLowercaseCityIndex()
+
+func buildLowercaseCityIndex() map[string]string {
+	idx := make(map[string]string, len(AllowedCities))
+	for _, c := range AllowedCities {
+		idx[strings.ToLower(c)] = c
+	}
+	return idx
+}
+
+// ResolveCity turns free-text a user typed into an Import spreadsheet cell
+// into one of AllowedCities' canonical forms, for the import path only --
+// IsValidCity (used by Create/Update) stays exact-match and untouched.
+// Bulk-typed Excel data routinely differs from the official list only in
+// case ("kota bogor") or by omitting the "Kota"/"Kabupaten" prefix
+// ("Tangerang Selatan" for "Kota Tangerang Selatan") -- proven against real
+// import files (see PLAN.md "perbaikan-import-bulk-vendor" S2).
+//
+// Matching order: exact match, then case-insensitive match, then
+// case-insensitive match with a "Kota "/"Kabupaten " prefix prepended.
+// Exactly one candidate resolves to that candidate; zero candidates returns
+// ("", nil); more than one (e.g. "Tangerang" -- both "Kota Tangerang" and
+// "Kabupaten Tangerang" exist) is genuinely ambiguous and is left for the
+// caller to reject with the candidate list, never guessed.
+func ResolveCity(raw string) (canonical string, candidates []string) {
+	trimmed := strings.Join(strings.Fields(raw), " ")
+	if trimmed == "" {
+		return "", nil
+	}
+	if IsValidCity(trimmed) {
+		return trimmed, nil
+	}
+
+	lower := strings.ToLower(trimmed)
+	if c, ok := lowercaseCityIndex[lower]; ok {
+		return c, nil
+	}
+
+	seen := make(map[string]struct{}, 2)
+	var found []string
+	for _, prefix := range []string{"kota ", "kabupaten "} {
+		if c, ok := lowercaseCityIndex[prefix+lower]; ok {
+			if _, dup := seen[c]; !dup {
+				seen[c] = struct{}{}
+				found = append(found, c)
+			}
+		}
+	}
+	if len(found) == 1 {
+		return found[0], nil
+	}
+	return "", found
 }

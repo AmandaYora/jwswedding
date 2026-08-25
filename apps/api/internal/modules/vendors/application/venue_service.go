@@ -310,6 +310,11 @@ type VenueImportRow struct {
 	Facilities  string
 	SocialMedia string
 	Notes       string
+	// ParseIssues mirrors VendorImportRow.ParseIssues -- a cell the
+	// presentation layer's spreadsheet parser couldn't read as its column's
+	// expected type, reported verbatim as this row's error instead of
+	// falling through to the generic required-fields message.
+	ParseIssues []string
 }
 
 type VenueImportRowError struct {
@@ -332,6 +337,28 @@ func venueImportKey(name, city string) string {
 type venueImportUpdateItem struct {
 	rowNum int
 	venue  domain.Venue
+}
+
+// missingVenueImportFields names every mandatory Import column that's blank
+// on this row -- Venue's mandatory set (name/picName/phonePic/city) is
+// smaller than Vendor's, price/charge/capacity stay optional here, matching
+// the pre-existing rule this replaces one-for-one (see PLAN.md
+// "perbaikan-import-bulk-vendor" S6.5).
+func missingVenueImportFields(row VenueImportRow) []string {
+	var missing []string
+	if row.Name == "" {
+		missing = append(missing, "Nama Venue")
+	}
+	if row.PICName == "" {
+		missing = append(missing, "Nama PIC")
+	}
+	if row.PhonePIC == "" {
+		missing = append(missing, "No Tlp PIC")
+	}
+	if row.City == "" {
+		missing = append(missing, "Kota")
+	}
+	return missing
 }
 
 // ImportVenues implements PLAN.md §7's O(1)-round-trip bulk upsert: one
@@ -374,25 +401,34 @@ func (s *VenueService) ImportVenues(ctx context.Context, tenantID int64, rows []
 
 	for i, row := range rows {
 		rowNum := i + 2 // header occupies row 1
-		if row.Name == "" || row.PICName == "" || row.PhonePIC == "" || row.City == "" {
-			result.Errors = append(result.Errors, VenueImportRowError{Row: rowNum, Message: "Nama Venue, Nama PIC, No Tlp PIC, dan Kota wajib diisi"})
+		if len(row.ParseIssues) > 0 {
+			result.Errors = append(result.Errors, VenueImportRowError{Row: rowNum, Message: strings.Join(row.ParseIssues, "; ")})
 			continue
 		}
-		if !domain.IsValidCity(row.City) {
-			result.Errors = append(result.Errors, VenueImportRowError{Row: rowNum, Message: "Kota tidak valid: " + row.City})
+		if missing := missingVenueImportFields(row); len(missing) > 0 {
+			result.Errors = append(result.Errors, VenueImportRowError{Row: rowNum, Message: "Kolom wajib belum terisi: " + strings.Join(missing, ", ")})
+			continue
+		}
+		city, candidates := domain.ResolveCity(row.City)
+		if city == "" {
+			if len(candidates) > 1 {
+				result.Errors = append(result.Errors, VenueImportRowError{Row: rowNum, Message: "Kota ambigu: \"" + row.City + "\" - gunakan salah satu: " + strings.Join(candidates, " atau ")})
+			} else {
+				result.Errors = append(result.Errors, VenueImportRowError{Row: rowNum, Message: "Kota tidak dikenal: \"" + row.City + "\" - pilih dari dropdown Kota di template"})
+			}
 			continue
 		}
 
 		venue := domain.Venue{
 			TenantID: tenantID, Name: row.Name, PICName: row.PICName, PhonePIC: row.PhonePIC,
 			PhoneVenue: stringPtrOrNil(row.PhoneVenue), Email: stringPtrOrNil(row.Email),
-			Address: stringPtrOrNil(row.Address), City: stringPtrOrNil(row.City),
+			Address: stringPtrOrNil(row.Address), City: stringPtrOrNil(city),
 			RentalPrice: row.RentalPrice, Charge: row.Charge, Capacity: row.Capacity,
 			Facilities: stringPtrOrNil(row.Facilities), SocialMedia: stringPtrOrNil(row.SocialMedia),
 			Notes: row.Notes, IsActive: true,
 		}
 
-		key := venueImportKey(row.Name, row.City)
+		key := venueImportKey(row.Name, city)
 		if match, ok := byKey[key]; ok {
 			// attachment_path/attachment_mime_type/is_active are never
 			// touched by an import-triggered update -- the row has no

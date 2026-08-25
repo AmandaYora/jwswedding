@@ -1,6 +1,6 @@
 import type { DragEvent, KeyboardEvent } from "react";
 import { useEffect, useRef, useState } from "react";
-import { Download, UploadCloud, FileSpreadsheet, X } from "lucide-react";
+import { Download, UploadCloud, FileSpreadsheet, X, AlertTriangle } from "lucide-react";
 import { Modal } from "@/shared/components/ui/Modal";
 import { Button } from "@/shared/components/ui/Button";
 import { cn } from "@/shared/lib/cn";
@@ -32,6 +32,11 @@ interface ImportBulkModalProps {
 type Stage = "idle" | "selected" | "importing" | "result";
 
 const ACCEPTED_EXTENSION = ".xlsx";
+// How long the "Ya, mengerti" button in the template warning panel stays
+// disabled -- forces the user to actually sit with the warning instead of
+// reflexively clicking through it (see PLAN.md
+// "perbaikan-import-bulk-vendor" K4/S6.6).
+const TEMPLATE_WARNING_SECONDS = 5;
 
 // Consolidates the "Download Template" + "Import Excel" button pair (used
 // identically by Vendor and Venue list pages) into one modal: download the
@@ -56,7 +61,18 @@ export function ImportBulkModal({
   const [result, setResult] = useState<BulkImportResult | null>(null);
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [templateWarningOpen, setTemplateWarningOpen] = useState(false);
+  const [confirmCountdown, setConfirmCountdown] = useState(TEMPLATE_WARNING_SECONDS);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Ticks confirmCountdown down to 0 once per second while the template
+  // warning panel is open -- cleaned up whenever the panel closes (countdown
+  // reaches 0, user cancels, modal closes) so no stray interval outlives it.
+  useEffect(() => {
+    if (!templateWarningOpen || confirmCountdown <= 0) return;
+    const timer = setTimeout(() => setConfirmCountdown((n) => n - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [templateWarningOpen, confirmCountdown]);
 
   // A drop anywhere on the page that isn't handled (e.g. just outside the
   // dropzone but still inside the modal, or on the backdrop) defaults to the
@@ -81,6 +97,8 @@ export function ImportBulkModal({
     setImportError(null);
     setResult(null);
     setIsDragging(false);
+    setTemplateWarningOpen(false);
+    setConfirmCountdown(TEMPLATE_WARNING_SECONDS);
   }
 
   function handleClose() {
@@ -117,7 +135,18 @@ export function ImportBulkModal({
     if (inputRef.current) inputRef.current.value = "";
   }
 
-  async function handleDownloadTemplate() {
+  function handleOpenTemplateWarning() {
+    setFileError(null);
+    setConfirmCountdown(TEMPLATE_WARNING_SECONDS);
+    setTemplateWarningOpen(true);
+  }
+
+  function handleCancelTemplateWarning() {
+    setTemplateWarningOpen(false);
+    setConfirmCountdown(TEMPLATE_WARNING_SECONDS);
+  }
+
+  async function handleConfirmTemplateWarning() {
     setDownloadingTemplate(true);
     setFileError(null);
     try {
@@ -132,6 +161,12 @@ export function ImportBulkModal({
       setFileError(getApiErrorMessage(err, "Gagal mengunduh template"));
     } finally {
       setDownloadingTemplate(false);
+      // Closed only after the download promise settles -- while it's
+      // pending the panel's own "Mengunduh..." label stays visible, and if
+      // it fails, fileError renders in its usual spot instead of vanishing
+      // along with a panel that closed too early.
+      setTemplateWarningOpen(false);
+      setConfirmCountdown(TEMPLATE_WARNING_SECONDS);
     }
   }
 
@@ -162,7 +197,19 @@ export function ImportBulkModal({
       title={title}
       description={description}
       footer={
-        stage === "result" ? (
+        templateWarningOpen ? (
+          <>
+            <Button variant="secondary" onClick={handleCancelTemplateWarning} disabled={downloadingTemplate}>
+              Batal
+            </Button>
+            <Button
+              onClick={() => void handleConfirmTemplateWarning()}
+              disabled={confirmCountdown > 0 || downloadingTemplate}
+            >
+              {downloadingTemplate ? "Mengunduh..." : confirmCountdown > 0 ? `Ya, mengerti (${confirmCountdown})` : "Ya, mengerti"}
+            </Button>
+          </>
+        ) : stage === "result" ? (
           <>
             <Button variant="secondary" onClick={reset}>Import Berkas Lain</Button>
             <Button onClick={handleClose}>Selesai</Button>
@@ -179,10 +226,19 @@ export function ImportBulkModal({
         )
       }
     >
+      {templateWarningOpen ? (
+        <div className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning-soft/50 px-4 py-4">
+          <AlertTriangle className="h-5 w-5 shrink-0 text-warning" />
+          <p className="text-[13.5px] font-medium text-text-primary">
+            Kolom, desain, dan semua format dalam file excel ini dilarang keras untuk diubah karena dapat menyebabkan
+            kegagalan pada saat import data
+          </p>
+        </div>
+      ) : (
       <div className="flex flex-col gap-4">
         <button
           type="button"
-          onClick={() => void handleDownloadTemplate()}
+          onClick={handleOpenTemplateWarning}
           disabled={downloadingTemplate}
           className="flex items-center gap-1.5 self-start text-[13px] font-semibold text-navy-900 hover:underline disabled:opacity-60"
         >
@@ -269,6 +325,7 @@ export function ImportBulkModal({
           </div>
         )}
       </div>
+      )}
     </Modal>
   );
 }

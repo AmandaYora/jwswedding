@@ -468,11 +468,24 @@ func (h *VendorHandler) Summary(w http.ResponseWriter, r *http.Request) {
 // --- Bulk import (Excel) ---
 
 // vendorTemplateHeaders is both the template's header row (Template) and the
-// authoritative column order the import parser (Import) reads by index.
+// authoritative column order the import parser (Import) reads by index --
+// never edit these strings themselves; templateHeaderLabel appends the
+// required-column marker separately when writing the printed header cell.
 var vendorTemplateHeaders = []string{
 	"Nama Vendor", "Kategori", "Nama PIC", "No Tlp Vendor", "Email",
 	"Sosial Media", "Kota", "Alamat", "Harga Akad", "Harga Akad+Resepsi", "Catatan",
 }
+
+// vendorRequiredImportHeaders/vendorTextImportHeaders feed styleTemplateSheet's
+// templateSheetSpec -- required columns get the " *" header marker plus a
+// visually distinct style, and No Tlp Vendor is locked to Excel's Text
+// format so a typed "08..." doesn't lose its leading zero (proven to happen
+// silently against real import files -- see PLAN.md
+// "perbaikan-import-bulk-vendor" S2).
+var (
+	vendorRequiredImportHeaders = []string{"Nama Vendor", "Kategori", "Nama PIC", "No Tlp Vendor", "Kota", "Harga Akad", "Harga Akad+Resepsi"}
+	vendorTextImportHeaders     = []string{"No Tlp Vendor"}
+)
 
 func (h *VendorHandler) Template(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := requireStaffTenant(w, r)
@@ -497,12 +510,18 @@ func (h *VendorHandler) Template(w http.ResponseWriter, r *http.Request) {
 		categoryNames = append(categoryNames, c.Name)
 	}
 
+	requiredSet := make(map[string]struct{}, len(vendorRequiredImportHeaders))
+	for _, h := range vendorRequiredImportHeaders {
+		requiredSet[h] = struct{}{}
+	}
+
 	f := excelize.NewFile()
 	defer f.Close()
 	sheet := f.GetSheetName(0)
 	for i, header := range vendorTemplateHeaders {
+		_, required := requiredSet[header]
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
-		f.SetCellValue(sheet, cell, header)
+		f.SetCellValue(sheet, cell, templateHeaderLabel(header, required))
 	}
 	// Kategori must be one of this tenant's own registered categories (an
 	// import row otherwise fails with "Kategori tidak ditemukan"); Kota must
@@ -516,7 +535,12 @@ func (h *VendorHandler) Template(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusInternalServerError, "Gagal membuat berkas template", nil)
 		return
 	}
-	if err := styleTemplateSheet(f, sheet, vendorTemplateHeaders, []string{"Harga Akad", "Harga Akad+Resepsi"}); err != nil {
+	spec := templateSheetSpec{
+		currencyHeaders: []string{"Harga Akad", "Harga Akad+Resepsi"},
+		textHeaders:     vendorTextImportHeaders,
+		requiredHeaders: vendorRequiredImportHeaders,
+	}
+	if err := styleTemplateSheet(f, sheet, vendorTemplateHeaders, spec); err != nil {
 		response.Error(w, http.StatusInternalServerError, "Gagal membuat berkas template", nil)
 		return
 	}
@@ -552,9 +576,13 @@ func toVendorImportResultBody(result application.VendorImportResult) vendorImpor
 }
 
 // parseVendorImportRow reads one spreadsheet row's cells in
-// vendorTemplateHeaders' exact column order. Optional numeric cells that
-// don't parse as an integer are treated as blank rather than a hard row
-// failure — the service layer's own required-field check is the real gate.
+// vendorTemplateHeaders' exact column order. A price cell that doesn't parse
+// (parseNumberCell) is recorded into ParseIssues naming the column and the
+// raw text, rather than silently becoming nil -- that used to make every
+// currency-formatted template cell look like a missing required field (see
+// PLAN.md "perbaikan-import-bulk-vendor" S2). Phone is restored via
+// normalizePhoneCell since Excel's default General format drops the leading
+// "0" from an all-digit cell.
 func parseVendorImportRow(cells []string) application.VendorImportRow {
 	get := func(i int) string {
 		if i < len(cells) {
@@ -562,20 +590,24 @@ func parseVendorImportRow(cells []string) application.VendorImportRow {
 		}
 		return ""
 	}
-	parseIntPtr := func(s string) *int64 {
-		if s == "" {
-			return nil
-		}
-		n, err := strconv.ParseInt(stripThousandsSeparators(s), 10, 64)
+	var issues []string
+	parsePrice := func(column string, i int) *int64 {
+		raw := get(i)
+		n, err := parseNumberCell(raw)
 		if err != nil {
+			issues = append(issues, column+": "+err.Error())
 			return nil
 		}
-		return &n
+		return n
 	}
+
+	priceAkad := parsePrice("Harga Akad", 8)
+	priceAkadResepsi := parsePrice("Harga Akad+Resepsi", 9)
+
 	return application.VendorImportRow{
-		Name: get(0), CategoryName: get(1), PICName: get(2), Phone: get(3), Email: get(4),
-		SocialMedia: get(5), City: get(6), Address: get(7), PriceAkad: parseIntPtr(get(8)),
-		PriceAkadResepsi: parseIntPtr(get(9)), Notes: get(10),
+		Name: get(0), CategoryName: get(1), PICName: get(2), Phone: normalizePhoneCell(get(3)), Email: get(4),
+		SocialMedia: get(5), City: get(6), Address: get(7), PriceAkad: priceAkad,
+		PriceAkadResepsi: priceAkadResepsi, Notes: get(10), ParseIssues: issues,
 	}
 }
 

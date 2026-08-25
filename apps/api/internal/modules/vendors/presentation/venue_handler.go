@@ -3,7 +3,9 @@ package presentation
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -418,11 +420,22 @@ func (h *VenueHandler) downloadAttachment(w http.ResponseWriter, r *http.Request
 
 // venueTemplateHeaders is both the template's header row (Template) and the
 // authoritative column order the import parser (Import) reads by index --
-// keeping them as one slice means the two can never drift apart.
+// keeping them as one slice means the two can never drift apart. Never edit
+// these strings themselves; templateHeaderLabel appends the required-column
+// marker separately when writing the printed header cell.
 var venueTemplateHeaders = []string{
 	"Nama Venue", "Nama PIC", "No Tlp PIC", "No Tlp Venue", "Email",
 	"Alamat", "Kota", "Harga Sewa", "Charge", "Kapasitas", "Fasilitas", "Sosial Media", "Catatan",
 }
+
+// venueRequiredImportHeaders/venueTextImportHeaders feed styleTemplateSheet's
+// templateSheetSpec -- see vendorRequiredImportHeaders/vendorTextImportHeaders
+// in vendor_handler.go for the same pattern. Both phone columns are locked
+// to Text format since either can be typed as an all-digit cell.
+var (
+	venueRequiredImportHeaders = []string{"Nama Venue", "Nama PIC", "No Tlp PIC", "Kota"}
+	venueTextImportHeaders     = []string{"No Tlp PIC", "No Tlp Venue"}
+)
 
 func (h *VenueHandler) Template(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireStaffTenant(w, r); !ok {
@@ -436,12 +449,18 @@ func (h *VenueHandler) Template(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	requiredSet := make(map[string]struct{}, len(venueRequiredImportHeaders))
+	for _, h := range venueRequiredImportHeaders {
+		requiredSet[h] = struct{}{}
+	}
+
 	f := excelize.NewFile()
 	defer f.Close()
 	sheet := f.GetSheetName(0)
 	for i, header := range venueTemplateHeaders {
+		_, required := requiredSet[header]
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
-		f.SetCellValue(sheet, cell, header)
+		f.SetCellValue(sheet, cell, templateHeaderLabel(header, required))
 	}
 	// Kota must be one of domain.AllowedCities (same rule Create/Update
 	// enforce via domain.IsValidCity) -- a dropdown here catches that in
@@ -452,7 +471,12 @@ func (h *VenueHandler) Template(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusInternalServerError, "Gagal membuat berkas template", nil)
 		return
 	}
-	if err := styleTemplateSheet(f, sheet, venueTemplateHeaders, []string{"Harga Sewa", "Charge"}); err != nil {
+	spec := templateSheetSpec{
+		currencyHeaders: []string{"Harga Sewa", "Charge"},
+		textHeaders:     venueTextImportHeaders,
+		requiredHeaders: venueRequiredImportHeaders,
+	}
+	if err := styleTemplateSheet(f, sheet, venueTemplateHeaders, spec); err != nil {
 		response.Error(w, http.StatusInternalServerError, "Gagal membuat berkas template", nil)
 		return
 	}
@@ -488,9 +512,13 @@ func toVenueImportResultBody(result application.VenueImportResult) venueImportRe
 }
 
 // parseVenueImportRow reads one spreadsheet row's cells in venueTemplateHeaders'
-// exact column order. Optional numeric cells that don't parse as an integer
-// are treated as blank rather than a hard row failure -- the service layer's
-// own required-field check (name/picName/phonePic/city) is the real gate.
+// exact column order. A numeric cell that doesn't parse (parseNumberCell) is
+// recorded into ParseIssues naming the column and the raw text, rather than
+// silently becoming nil -- the service layer's required-field check
+// (name/picName/phonePic/city) still gates which columns must be non-empty,
+// but a parse failure on an optional column must still surface as an error,
+// not disappear. PhonePIC/PhoneVenue are restored via normalizePhoneCell
+// since Excel's default General format drops a leading "0".
 func parseVenueImportRow(cells []string) application.VenueImportRow {
 	get := func(i int) string {
 		if i < len(cells) {
@@ -498,30 +526,42 @@ func parseVenueImportRow(cells []string) application.VenueImportRow {
 		}
 		return ""
 	}
-	parseIntPtr := func(s string) *int64 {
-		if s == "" {
-			return nil
-		}
-		n, err := strconv.ParseInt(stripThousandsSeparators(s), 10, 64)
+	var issues []string
+	parsePrice := func(column string, i int) *int64 {
+		raw := get(i)
+		n, err := parseNumberCell(raw)
 		if err != nil {
+			issues = append(issues, column+": "+err.Error())
 			return nil
 		}
-		return &n
+		return n
 	}
-	parseIntPtrSmall := func(s string) *int {
-		if s == "" {
-			return nil
-		}
-		n, err := strconv.Atoi(s)
+	parseCapacity := func(i int) *int {
+		raw := get(i)
+		n, err := parseNumberCell(raw)
 		if err != nil {
+			issues = append(issues, "Kapasitas: "+err.Error())
 			return nil
 		}
-		return &n
+		if n == nil {
+			return nil
+		}
+		if *n > math.MaxInt32 {
+			issues = append(issues, fmt.Sprintf("Kapasitas: nilai %q terlalu besar", raw))
+			return nil
+		}
+		capacity := int(*n)
+		return &capacity
 	}
+
+	rentalPrice := parsePrice("Harga Sewa", 7)
+	charge := parsePrice("Charge", 8)
+	capacity := parseCapacity(9)
+
 	return application.VenueImportRow{
-		Name: get(0), PICName: get(1), PhonePIC: get(2), PhoneVenue: get(3), Email: get(4),
-		Address: get(5), City: get(6), RentalPrice: parseIntPtr(get(7)), Charge: parseIntPtr(get(8)),
-		Capacity: parseIntPtrSmall(get(9)), Facilities: get(10), SocialMedia: get(11), Notes: get(12),
+		Name: get(0), PICName: get(1), PhonePIC: normalizePhoneCell(get(2)), PhoneVenue: normalizePhoneCell(get(3)), Email: get(4),
+		Address: get(5), City: get(6), RentalPrice: rentalPrice, Charge: charge,
+		Capacity: capacity, Facilities: get(10), SocialMedia: get(11), Notes: get(12), ParseIssues: issues,
 	}
 }
 

@@ -2,20 +2,33 @@ package presentation
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/xuri/excelize/v2"
 )
 
+// templateSheetSpec tells styleTemplateSheet which of an Import template's
+// columns need special handling beyond the plain-text default: currency
+// columns get thousand-separated display, text columns are locked to Excel's
+// Text format so an all-digit phone number keeps its leading zero instead of
+// being read as a number, and required columns get a visually distinct
+// header (see PLAN.md "perbaikan-import-bulk-vendor" S6.3) so a user can see
+// at a glance which cells Import will actually reject if left blank.
+type templateSheetSpec struct {
+	currencyHeaders []string
+	textHeaders     []string
+	requiredHeaders []string
+}
+
 // styleTemplateSheet gives an Import template a clean, professional look
 // without going past what a spreadsheet user already expects from one: a
 // bold header row that stays pinned while scrolling, columns wide enough
-// that a real value doesn't get clipped, and thousand-separated formatting
-// on the currency columns so a typed price reads back clearly. No borders on
-// data rows, no alternating row banding, no instructions sheet -- there's no
-// data yet for any of that to describe.
-func styleTemplateSheet(f *excelize.File, sheet string, headers []string, currencyHeaders []string) error {
-	headerStyle, err := f.NewStyle(&excelize.Style{
+// that a real value doesn't get clipped, thousand-separated formatting on
+// the currency columns so a typed price reads back clearly, and Text format
+// on phone columns so a leading "0" survives. No borders on data rows, no
+// alternating row banding, no instructions sheet -- there's no data yet for
+// any of that to describe.
+func styleTemplateSheet(f *excelize.File, sheet string, headers []string, spec templateSheetSpec) error {
+	requiredHeaderStyle, err := f.NewStyle(&excelize.Style{
 		Font:      &excelize.Font{Bold: true, Color: "FFFFFF", Size: 11},
 		Fill:      excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"1E3A5F"}},
 		Alignment: &excelize.Alignment{Vertical: "center", Horizontal: "left"},
@@ -24,14 +37,38 @@ func styleTemplateSheet(f *excelize.File, sheet string, headers []string, curren
 	if err != nil {
 		return err
 	}
+	// Optional columns keep a visibly lighter header than required ones, so
+	// the mandatory set (also marked with the " *" templateHeaderLabel adds
+	// to the printed text) reads as mandatory at a glance, not just in text.
+	optionalHeaderStyle, err := f.NewStyle(&excelize.Style{
+		Font:      &excelize.Font{Bold: true, Color: "FFFFFF", Size: 11},
+		Fill:      excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"6B7280"}},
+		Alignment: &excelize.Alignment{Vertical: "center", Horizontal: "left"},
+		Border:    []excelize.Border{{Type: "bottom", Color: "4B5563", Style: 1}},
+	})
+	if err != nil {
+		return err
+	}
 	currencyStyle, err := f.NewStyle(&excelize.Style{NumFmt: 3}) // built-in "#,##0"
 	if err != nil {
 		return err
 	}
+	textStyle, err := f.NewStyle(&excelize.Style{NumFmt: 49}) // built-in "@" (Text)
+	if err != nil {
+		return err
+	}
 
-	currencySet := make(map[string]struct{}, len(currencyHeaders))
-	for _, h := range currencyHeaders {
+	currencySet := make(map[string]struct{}, len(spec.currencyHeaders))
+	for _, h := range spec.currencyHeaders {
 		currencySet[h] = struct{}{}
+	}
+	textSet := make(map[string]struct{}, len(spec.textHeaders))
+	for _, h := range spec.textHeaders {
+		textSet[h] = struct{}{}
+	}
+	requiredSet := make(map[string]struct{}, len(spec.requiredHeaders))
+	for _, h := range spec.requiredHeaders {
+		requiredSet[h] = struct{}{}
 	}
 
 	for i, header := range headers {
@@ -43,13 +80,22 @@ func styleTemplateSheet(f *excelize.File, sheet string, headers []string, curren
 			return err
 		}
 		headerCell := fmt.Sprintf("%s1", col)
+		_, required := requiredSet[header]
+		headerStyle := optionalHeaderStyle
+		if required {
+			headerStyle = requiredHeaderStyle
+		}
 		if err := f.SetCellStyle(sheet, headerCell, headerCell, headerStyle); err != nil {
 			return err
 		}
+		rangeStart := fmt.Sprintf("%s2", col)
+		rangeEnd := fmt.Sprintf("%s%d", col, templateDropdownRows+1)
 		if _, ok := currencySet[header]; ok {
-			rangeStart := fmt.Sprintf("%s2", col)
-			rangeEnd := fmt.Sprintf("%s%d", col, templateDropdownRows+1)
 			if err := f.SetCellStyle(sheet, rangeStart, rangeEnd, currencyStyle); err != nil {
+				return err
+			}
+		} else if _, ok := textSet[header]; ok {
+			if err := f.SetCellStyle(sheet, rangeStart, rangeEnd, textStyle); err != nil {
 				return err
 			}
 		}
@@ -66,18 +112,18 @@ func styleTemplateSheet(f *excelize.File, sheet string, headers []string, curren
 	})
 }
 
-// stripThousandsSeparators undoes styleTemplateSheet's own "#,##0" display
-// formatting on a currency cell -- excelize's row reader (Import uses
-// f.Rows()/Columns()) returns a numeric cell's *formatted* display string,
-// not its raw value, so a currency cell showing "5,000,000" reads back as
-// that exact string, commas included, not "5000000". Every numeric import
-// column that styleTemplateSheet ever applies a number format to must run
-// its cell text through this before strconv.ParseInt/Atoi. A plain comma is
-// the only separator stripped -- id-ID's period-as-thousands convention was
-// deliberately not chosen for the template's format, so callers reading a
-// price field are never ambiguous with a decimal point.
-func stripThousandsSeparators(s string) string {
-	return strings.ReplaceAll(s, ",", "")
+// templateHeaderLabel returns the text actually written into an Import
+// template's header cell: required columns get a trailing " *" so a user
+// sees which cells Import will reject if left blank, without changing the
+// column's real name -- vendorTemplateHeaders/venueTemplateHeaders (the
+// index every parser matches against) are never touched. Only Template()
+// calls this; Export() keeps plain headers so an exported file re-uploads
+// cleanly as Import input.
+func templateHeaderLabel(header string, required bool) string {
+	if required {
+		return header + " *"
+	}
+	return header
 }
 
 // columnWidthFor sizes a column for the value it actually holds, not just its

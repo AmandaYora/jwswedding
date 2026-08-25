@@ -301,6 +301,14 @@ type VendorImportRow struct {
 	PriceAkad        *int64
 	PriceAkadResepsi *int64
 	Notes            string
+	// ParseIssues carries a cell the presentation layer's spreadsheet parser
+	// (excelize-specific, so kept out of this format-agnostic layer) could
+	// not read as the type its column expects -- e.g. a price cell reading
+	// "nego". A non-empty ParseIssues is reported as this row's error
+	// verbatim instead of falling through to the generic required-fields
+	// check, so the real cause (one bad cell) isn't masked by a message
+	// listing every mandatory column.
+	ParseIssues []string
 }
 
 type VendorImportRowError struct {
@@ -325,6 +333,39 @@ func vendorImportKey(name, city string, categoryID int64) string {
 type vendorImportUpdateItem struct {
 	rowNum int
 	vendor domain.Vendor
+}
+
+// missingVendorImportFields names every mandatory Import column that's
+// blank on this row, replacing the single giant "field A, B, C, ... wajib
+// diisi" condition that used to fire on ANY one of these being wrong --
+// which made a single bad cell (e.g. an unparseable price) look
+// indistinguishable from an entirely blank row (see PLAN.md
+// "perbaikan-import-bulk-vendor" S2/S6.5). A price of exactly 0 counts as
+// missing, matching VendorInput's own >=1 rule enforced on the manual form.
+func missingVendorImportFields(row VendorImportRow) []string {
+	var missing []string
+	if row.Name == "" {
+		missing = append(missing, "Nama Vendor")
+	}
+	if row.CategoryName == "" {
+		missing = append(missing, "Kategori")
+	}
+	if row.PICName == "" {
+		missing = append(missing, "Nama PIC")
+	}
+	if row.Phone == "" {
+		missing = append(missing, "No Tlp Vendor")
+	}
+	if row.City == "" {
+		missing = append(missing, "Kota")
+	}
+	if row.PriceAkad == nil || *row.PriceAkad < 1 {
+		missing = append(missing, "Harga Akad")
+	}
+	if row.PriceAkadResepsi == nil || *row.PriceAkadResepsi < 1 {
+		missing = append(missing, "Harga Akad+Resepsi")
+	}
+	return missing
 }
 
 // ImportVendors mirrors Venue's ImportVenues exactly (one prefetch of the
@@ -367,13 +408,21 @@ func (s *VendorService) ImportVendors(ctx context.Context, tenantID int64, rows 
 
 	for i, row := range rows {
 		rowNum := i + 2 // header occupies row 1
-		if row.Name == "" || row.PICName == "" || row.Phone == "" || row.City == "" || row.CategoryName == "" ||
-			row.PriceAkad == nil || *row.PriceAkad < 1 || row.PriceAkadResepsi == nil || *row.PriceAkadResepsi < 1 {
-			result.Errors = append(result.Errors, VendorImportRowError{Row: rowNum, Message: "Nama Vendor, Kategori, Nama PIC, No Tlp Vendor, Kota, Harga Akad, dan Harga Akad+Resepsi wajib diisi dengan nilai yang valid"})
+		if len(row.ParseIssues) > 0 {
+			result.Errors = append(result.Errors, VendorImportRowError{Row: rowNum, Message: strings.Join(row.ParseIssues, "; ")})
 			continue
 		}
-		if !domain.IsValidCity(row.City) {
-			result.Errors = append(result.Errors, VendorImportRowError{Row: rowNum, Message: "Kota tidak valid: " + row.City})
+		if missing := missingVendorImportFields(row); len(missing) > 0 {
+			result.Errors = append(result.Errors, VendorImportRowError{Row: rowNum, Message: "Kolom wajib belum terisi: " + strings.Join(missing, ", ")})
+			continue
+		}
+		city, candidates := domain.ResolveCity(row.City)
+		if city == "" {
+			if len(candidates) > 1 {
+				result.Errors = append(result.Errors, VendorImportRowError{Row: rowNum, Message: "Kota ambigu: \"" + row.City + "\" - gunakan salah satu: " + strings.Join(candidates, " atau ")})
+			} else {
+				result.Errors = append(result.Errors, VendorImportRowError{Row: rowNum, Message: "Kota tidak dikenal: \"" + row.City + "\" - pilih dari dropdown Kota di template"})
+			}
 			continue
 		}
 		categoryID, ok := categoryByName[strings.ToLower(row.CategoryName)]
@@ -384,12 +433,12 @@ func (s *VendorService) ImportVendors(ctx context.Context, tenantID int64, rows 
 
 		vendor := domain.Vendor{
 			TenantID: tenantID, CategoryID: categoryID, Name: row.Name, PICName: row.PICName, Phone: row.Phone,
-			Email: stringPtrOrNil(row.Email), SocialMedia: stringPtrOrNil(row.SocialMedia), City: stringPtrOrNil(row.City),
+			Email: stringPtrOrNil(row.Email), SocialMedia: stringPtrOrNil(row.SocialMedia), City: stringPtrOrNil(city),
 			Address: stringPtrOrNil(row.Address), PriceAkad: row.PriceAkad, PriceAkadResepsi: row.PriceAkadResepsi,
 			Notes: row.Notes, IsActive: true,
 		}
 
-		key := vendorImportKey(row.Name, row.City, categoryID)
+		key := vendorImportKey(row.Name, city, categoryID)
 		if match, ok := byKey[key]; ok {
 			// attachment_path/attachment_mime_type/is_active are never
 			// touched by an import-triggered update -- same reasoning as
