@@ -14,6 +14,8 @@ import { Pagination } from "@/shared/components/ui/Pagination";
 import { usePagination } from "@/shared/hooks/usePagination";
 import { useProjectStore, ClientPaymentEvidenceError } from "@/modules/projects/stores/useProjectStore";
 import { useAuthStore } from "@/shared/stores/useAuthStore";
+import { useTenantBrandingStore } from "@/shared/stores/useTenantBrandingStore";
+import { IncompleteProfileDialog } from "@/shared/components/IncompleteProfileDialog";
 import {
   clientPaymentSchema,
   clientPaymentUpdateSchema,
@@ -24,7 +26,7 @@ import {
 import { PAYMENT_METHOD_OPTIONS } from "@/modules/projects/schemas/payment.schema";
 import type { ClientPayment } from "@/modules/projects/types";
 import { todayISO } from "@/modules/projects/lib/dates";
-import { getApiErrorMessage } from "@/shared/lib/api-error";
+import { getApiErrorMessage, getApiErrorMessageFromBlob } from "@/shared/lib/api-error";
 import { formatCurrency, formatDate } from "@/shared/lib/formatters";
 
 // Simpler sibling of ProjectPaymentsSection (PLAN.md "Uang Masuk dari
@@ -48,6 +50,8 @@ export function ClientPaymentsSection({ projectId }: { projectId: string }) {
   // for the same Owner-or-Admin bar, since those are the only 3 roles. Edit
   // has no role restriction at all.
   const canDelete = useAuthStore((s) => s.session?.role) !== "Staff";
+  const profileComplete = useTenantBrandingStore((s) => s.profileComplete);
+  const missingProfileFields = useTenantBrandingStore((s) => s.missingProfileFields);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -56,6 +60,7 @@ export function ClientPaymentsSection({ projectId }: { projectId: string }) {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [viewingEvidencePayment, setViewingEvidencePayment] = useState<ClientPayment | null>(null);
+  const [profileGateOpen, setProfileGateOpen] = useState(false);
 
   useEffect(() => {
     void fetchClientPayments(projectId);
@@ -99,11 +104,15 @@ export function ClientPaymentsSection({ projectId }: { projectId: string }) {
   // uangnya berlawanan, "Telah terima dari <client>" akan salah.
   async function handlePrintReceipt(payment: ClientPayment) {
     setActionError(null);
+    if (!profileComplete) {
+      setProfileGateOpen(true);
+      return;
+    }
     try {
       const blob = await downloadClientPaymentReceipt(projectId, payment.id);
       window.open(URL.createObjectURL(blob), "_blank");
     } catch (err) {
-      setActionError(getApiErrorMessage(err, "Gagal membuat PDF Kwitansi"));
+      setActionError(await getApiErrorMessageFromBlob(err, "Gagal membuat PDF Kwitansi"));
     }
   }
 
@@ -293,6 +302,13 @@ export function ClientPaymentsSection({ projectId }: { projectId: string }) {
           onClose={() => setViewingEvidencePayment(null)}
         />
       )}
+
+      <IncompleteProfileDialog
+        open={profileGateOpen}
+        onClose={() => setProfileGateOpen(false)}
+        missingFields={missingProfileFields}
+        docLabel="Kwitansi"
+      />
     </div>
   );
 }

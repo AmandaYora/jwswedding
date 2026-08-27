@@ -13,6 +13,8 @@ interface RawBranding {
   businessName: string;
   brandColorPreset: string;
   hasLogo: boolean;
+  profileComplete: boolean;
+  missingProfileFields: string[];
 }
 
 interface TenantBrandingState {
@@ -33,6 +35,17 @@ interface TenantBrandingState {
    * AppLayout, ClientPortalLayout) so only the final color is ever
    * painted. */
   hydrated: boolean;
+  /** Whether the tenant's business profile has every field the Invoice/
+   * Kwitansi PDF gate requires (PLAN.md redesain-pdf-invoice-kwitansi-v2
+   * §6.1/§6.3) — gates the "Cetak PDF"/"Cetak Kwitansi"/"Unduh Kwitansi"
+   * actions client-side (the backend enforces the same rule with a 422, see
+   * T5's getApiErrorMessageFromBlob). Defaults to `true` (A3): a transient
+   * hydrate() failure must never lock an Owner out of their own working
+   * feature, and the backend gate is the real enforcement point regardless. */
+  profileComplete: boolean;
+  /** Which profile fields are still missing, in the fixed order the backend
+   * returns them — shown verbatim inside IncompleteProfileDialog. */
+  missingProfileFields: string[];
   /** Fetches the caller's own tenant's branding (GET /tenants/me/branding,
    * self-service — open to any staff role or client, unlike GET /tenants/me
    * which stays Owner-only) and applies it by overriding the app's brand CSS
@@ -60,6 +73,8 @@ export const useTenantBrandingStore = create<TenantBrandingState>((set, get) => 
   logoUrl: null,
   businessName: null,
   hydrated: false,
+  profileComplete: true,
+  missingProfileFields: [],
 
   hydrate: async (consoleLabel) => {
     const token = ++hydrateToken;
@@ -79,14 +94,20 @@ export const useTenantBrandingStore = create<TenantBrandingState>((set, get) => 
       applyBrandColorPreset(colorPreset);
       applyTabIdentity(raw.businessName, logoUrl, consoleLabel);
       const previousLogoUrl = get().logoUrl;
-      set({ colorPreset, logoUrl, businessName: raw.businessName, hydrated: true });
+      set({
+        colorPreset, logoUrl, businessName: raw.businessName, hydrated: true,
+        profileComplete: raw.profileComplete, missingProfileFields: raw.missingProfileFields,
+      });
       if (previousLogoUrl) URL.revokeObjectURL(previousLogoUrl);
     } catch {
       // A transient failure — the app keeps rendering with its default navy
       // look. Still unblocks
       // whichever layout is waiting on `hydrated` (AppLayout/
       // ClientPortalLayout) -- a real failure here must never hang the app
-      // on its loading screen forever.
+      // on its loading screen forever. profileComplete/missingProfileFields
+      // are deliberately left untouched here (A3) — the backend's own 422
+      // gate is the real enforcement point, so a transient network blip must
+      // never lock an Owner out of a feature that actually still works.
       if (token === hydrateToken) set({ hydrated: true });
     }
   },
@@ -97,6 +118,9 @@ export const useTenantBrandingStore = create<TenantBrandingState>((set, get) => 
     resetTabIdentity();
     const previousLogoUrl = get().logoUrl;
     if (previousLogoUrl) URL.revokeObjectURL(previousLogoUrl);
-    set({ colorPreset: "navy", logoUrl: null, businessName: null, hydrated: false });
+    set({
+      colorPreset: "navy", logoUrl: null, businessName: null, hydrated: false,
+      profileComplete: true, missingProfileFields: [],
+    });
   },
 }));

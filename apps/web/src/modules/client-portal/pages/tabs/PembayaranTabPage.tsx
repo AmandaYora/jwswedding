@@ -3,9 +3,10 @@ import { useOutletContext } from "react-router-dom";
 import { Wallet, FileText, Receipt } from "lucide-react";
 import { EvidenceViewerModal } from "@/shared/components/ui/EvidenceViewerModal";
 import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
+import { useTenantBrandingStore } from "@/shared/stores/useTenantBrandingStore";
 import type { Evidence } from "@/modules/projects/types";
 import { formatCurrency, formatDate } from "@/shared/lib/formatters";
-import { getApiErrorMessage } from "@/shared/lib/api-error";
+import { getApiErrorMessageFromBlob } from "@/shared/lib/api-error";
 import type { ClientPortalContext } from "@/modules/client-portal/layouts/ClientPortalLayout";
 
 // Repurposed (PLAN.md "Uang Masuk dari Client", §3.8) — shows the client's
@@ -24,6 +25,12 @@ export default function PembayaranTabPage() {
   const fetchClientPayments = useProjectStore((s) => s.fetchClientPayments);
   const fetchEvidence = useProjectStore((s) => s.fetchEvidence);
   const downloadClientPaymentReceipt = useProjectStore((s) => s.downloadClientPaymentReceipt);
+  // Kwitansi print is gated on the WO tenant's own business-profile
+  // completeness (PLAN.md redesain-pdf-invoice-kwitansi-v2 §6.3.4/K6) — a
+  // client has no way to fix that, and no business seeing an internal
+  // dialog about the WO's own profile, so the button is hidden entirely
+  // rather than shown and then failing.
+  const profileComplete = useTenantBrandingStore((s) => s.profileComplete);
   const [viewingEvidence, setViewingEvidence] = useState<Evidence | null>(null);
   const [receiptError, setReceiptError] = useState<string | null>(null);
 
@@ -33,7 +40,7 @@ export default function PembayaranTabPage() {
       const blob = await downloadClientPaymentReceipt(projectId, paymentId);
       window.open(URL.createObjectURL(blob), "_blank");
     } catch (err) {
-      setReceiptError(getApiErrorMessage(err, "Gagal membuka Kwitansi"));
+      setReceiptError(await getApiErrorMessageFromBlob(err, "Gagal membuka Kwitansi"));
     }
   }
 
@@ -117,12 +124,16 @@ export default function PembayaranTabPage() {
                         </span>
                       )}
                       {payment.type !== "Refund" && (
-                        <button
-                          onClick={() => void handleDownloadReceipt(payment.id)}
-                          className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-navy-900 hover:bg-navy-50 hover:border-navy-200 transition-colors shadow-sm"
-                        >
-                          <Receipt className="h-3.5 w-3.5" /> Unduh Kwitansi
-                        </button>
+                        profileComplete ? (
+                          <button
+                            onClick={() => void handleDownloadReceipt(payment.id)}
+                            className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-navy-900 hover:bg-navy-50 hover:border-navy-200 transition-colors shadow-sm"
+                          >
+                            <Receipt className="h-3.5 w-3.5" /> Unduh Kwitansi
+                          </button>
+                        ) : (
+                          <span className="text-[12px] font-medium text-text-secondary">Kwitansi belum tersedia</span>
+                        )
                       )}
                     </div>
                   </div>

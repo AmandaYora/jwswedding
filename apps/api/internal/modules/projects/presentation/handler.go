@@ -326,6 +326,35 @@ func (h *Handler) resolveProjectAccess(w http.ResponseWriter, r *http.Request, p
 	}
 }
 
+// requireCompleteProfile fetches the caller's tenant profile and enforces
+// the Invoice/Kwitansi PDF completeness gate (PLAN.md
+// redesain-pdf-invoice-kwitansi-v2 §6.2) — shared by both PDF-download
+// endpoints (downloadClientInvoicePDF, downloadClientPaymentReceiptPDF) so
+// the gate's message, status code, and response shape can never drift
+// between them. On success, returns the profile and true. On any failure —
+// a real error, or a profile that isn't complete enough to print — it has
+// already written the response, and the caller must return immediately
+// without proceeding to fetch logo/signature or build a PDF.
+func (h *Handler) requireCompleteProfile(w http.ResponseWriter, r *http.Request, tenantID int64) (platformcontracts.TenantProfile, bool) {
+	profile, err := h.platform.GetTenantProfile(r.Context(), tenantID)
+	if err != nil {
+		writeAppError(w, err)
+		return platformcontracts.TenantProfile{}, false
+	}
+	missing, err := h.platform.ProfileMissingFields(r.Context(), tenantID)
+	if err != nil {
+		writeAppError(w, err)
+		return platformcontracts.TenantProfile{}, false
+	}
+	if len(missing) > 0 {
+		response.Error(w, http.StatusUnprocessableEntity,
+			"Profil usaha belum lengkap. Lengkapi Profil Usaha sebelum mencetak dokumen.",
+			map[string][]string{"profile": missing})
+		return platformcontracts.TenantProfile{}, false
+	}
+	return profile, true
+}
+
 func writeAppError(w http.ResponseWriter, err error) {
 	status := apperror.HTTPStatus(err)
 	if appErr, ok := apperror.As(err); ok {

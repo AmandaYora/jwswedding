@@ -13,6 +13,8 @@ import { Pagination } from "@/shared/components/ui/Pagination";
 import { usePagination } from "@/shared/hooks/usePagination";
 import { useProjectStore, ClientPaymentEvidenceError } from "@/modules/projects/stores/useProjectStore";
 import { useAuthStore } from "@/shared/stores/useAuthStore";
+import { useTenantBrandingStore } from "@/shared/stores/useTenantBrandingStore";
+import { IncompleteProfileDialog } from "@/shared/components/IncompleteProfileDialog";
 import {
   clientInvoiceSchema,
   markInvoicePaidSchema,
@@ -23,7 +25,7 @@ import {
 import { PAYMENT_METHOD_OPTIONS } from "@/modules/projects/schemas/payment.schema";
 import type { ClientInvoice, InvoiceStatus } from "@/modules/projects/types";
 import { todayISO } from "@/modules/projects/lib/dates";
-import { getApiErrorMessage } from "@/shared/lib/api-error";
+import { getApiErrorMessage, getApiErrorMessageFromBlob } from "@/shared/lib/api-error";
 import { formatCurrency, formatDate } from "@/shared/lib/formatters";
 
 const STATUS_TONE: Record<InvoiceStatus, BadgeTone> = {
@@ -52,12 +54,15 @@ export function ClientInvoicesSection({ projectId }: { projectId: string }) {
   // PLAN.md §4.7's note).
   const role = useAuthStore((s) => s.session?.role);
   const canDelete = role === "Owner" || role === "Admin";
+  const profileComplete = useTenantBrandingStore((s) => s.profileComplete);
+  const missingProfileFields = useTenantBrandingStore((s) => s.missingProfileFields);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [editingInvoice, setEditingInvoice] = useState<ClientInvoice | null>(null);
   const [payingInvoice, setPayingInvoice] = useState<ClientInvoice | null>(null);
   const [unmarkingInvoice, setUnmarkingInvoice] = useState<ClientInvoice | null>(null);
+  const [profileGateOpen, setProfileGateOpen] = useState(false);
   const [unmarking, setUnmarking] = useState(false);
   const [unmarkError, setUnmarkError] = useState<string | null>(null);
   const [deletingInvoice, setDeletingInvoice] = useState<ClientInvoice | null>(null);
@@ -132,11 +137,15 @@ export function ClientInvoicesSection({ projectId }: { projectId: string }) {
 
   async function handlePrintPDF(invoice: ClientInvoice) {
     setActionError(null);
+    if (!profileComplete) {
+      setProfileGateOpen(true);
+      return;
+    }
     try {
       const blob = await downloadClientInvoicePDF(projectId, invoice.id);
       window.open(URL.createObjectURL(blob), "_blank");
     } catch (err) {
-      setActionError(getApiErrorMessage(err, "Gagal membuat PDF Tagihan"));
+      setActionError(await getApiErrorMessageFromBlob(err, "Gagal membuat PDF Tagihan"));
     }
   }
 
@@ -333,6 +342,13 @@ export function ClientInvoicesSection({ projectId }: { projectId: string }) {
           </div>
         </Modal>
       )}
+
+      <IncompleteProfileDialog
+        open={profileGateOpen}
+        onClose={() => setProfileGateOpen(false)}
+        missingFields={missingProfileFields}
+        docLabel="Tagihan"
+      />
     </div>
   );
 }

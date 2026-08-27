@@ -34,11 +34,16 @@ type TenantProfile struct {
 // subscription_expires_at directly, never subscription_status since no code
 // path ever writes StatusExpired/StatusExpiringSoon — T3); GetTenantProfile/
 // GetTenantLogo/GetTenantSignature back `projects`' Invoice/Kwitansi PDF.
+// ProfileMissingFields backs the PDF-download gate (PLAN.md
+// redesain-pdf-invoice-kwitansi-v2 §6.2) — this is the ONLY way `projects`
+// may learn whether a tenant's business profile is complete; it must never
+// import platform/domain directly (modular-monolith boundary).
 type Contracts interface {
 	WritesAllowed(ctx context.Context, tenantID int64) (bool, error)
 	GetTenantProfile(ctx context.Context, tenantID int64) (TenantProfile, error)
 	GetTenantLogo(ctx context.Context, tenantID int64) (data []byte, contentType string, ok bool, err error)
 	GetTenantSignature(ctx context.Context, tenantID int64) (data []byte, contentType string, ok bool, err error)
+	ProfileMissingFields(ctx context.Context, tenantID int64) ([]string, error)
 }
 
 type impl struct {
@@ -106,4 +111,8 @@ func (c *impl) GetTenantSignature(ctx context.Context, tenantID int64) (data []b
 		return nil, "", false, err
 	}
 	return data, "", true, nil
+}
+
+func (c *impl) ProfileMissingFields(ctx context.Context, tenantID int64) ([]string, error) {
+	return c.tenants.ProfileMissingFields(ctx, tenantID)
 }

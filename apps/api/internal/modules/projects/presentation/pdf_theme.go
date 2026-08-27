@@ -1,12 +1,30 @@
 package presentation
 
 import (
+	"bytes"
 	"embed"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-pdf/fpdf"
 
 	platformcontracts "jwswedding/internal/modules/platform/contracts"
+)
+
+// Shared content grid (PLAN.md redesain-pdf-invoice-kwitansi-v2 §5.1) —
+// every block in both documents is laid out against this one grid rather
+// than a per-block hardcoded width. The §3.1 bug this replaced (nama usaha
+// panjang menabrak judul) came from exactly that: two independently
+// hardcoded widths (leftW=105, rightX=123) that silently drifted apart.
+const (
+	pML = 15.0  // margin kiri / kanan konten
+	pMR = 195.0 // batas kanan konten
+	pCW = 180.0 // lebar konten (pMR - pML)
+	// contentBottom is the last y a fixed-height block may start drawing
+	// into before ensureSpace forces a new page — leaves room for the 14mm
+	// footer below it plus its own gap.
+	contentBottom = 277.0
 )
 
 //go:embed fonts/Inter-Regular.ttf fonts/Inter-SemiBold.ttf
@@ -161,48 +179,6 @@ func statusBadge(pdf *fpdf.Fpdf, theme pdfTheme, x, y float64, label string, bg,
 	return width
 }
 
-// moneyLine renders one bold, accent-colored amount at the given size and
-// alignment — the kwitansi nominal (§5.5.3, left-aligned inside its tinted
-// panel). The invoice total (§5.4.7) mixes two different text styles
-// (a 9pt secondary "TOTAL" label plus a differently-sized accent amount) on
-// one line, which doesn't fit this single-style primitive, so it's composed
-// directly in buildClientInvoicePDF instead.
-func moneyLine(pdf *fpdf.Fpdf, theme pdfTheme, x, y, w, size float64, alignStr, amount string) {
-	pdf.SetXY(x, y)
-	pdf.SetFont(theme.Family, "B", size)
-	pdf.SetTextColor(theme.Palette.Accent[0], theme.Palette.Accent[1], theme.Palette.Accent[2])
-	pdf.CellFormat(w, size/2+2, amount, "", 0, alignStr, false, 0, "")
-	pdf.SetTextColor(colorTextPrimary[0], colorTextPrimary[1], colorTextPrimary[2])
-}
-
-// sectionLabelRight is sectionLabel mirrored to align its right edge at
-// xRight instead of starting from a left x — used for the "Jumlah" table
-// header (§5.4.6), the only section label in either document that isn't
-// naturally left-drawn from its column's left edge.
-func sectionLabelRight(pdf *fpdf.Fpdf, theme pdfTheme, xRight, y float64, text string) {
-	pdf.SetFont(theme.Family, "", 7.5)
-	const letterSpacing = 0.3
-	runes := []rune(strings.ToUpper(text))
-	widths := make([]float64, len(runes))
-	total := 0.0
-	for i, r := range runes {
-		widths[i] = pdf.GetStringWidth(string(r))
-		total += widths[i]
-		if i < len(runes)-1 {
-			total += letterSpacing
-		}
-	}
-	cx := xRight - total
-	pdf.SetTextColor(colorTextSecondary[0], colorTextSecondary[1], colorTextSecondary[2])
-	for i, r := range runes {
-		s := string(r)
-		pdf.SetXY(cx, y)
-		pdf.CellFormat(widths[i], 4, s, "", 0, "L", false, 0, "")
-		cx += widths[i] + letterSpacing
-	}
-	pdf.SetTextColor(colorTextPrimary[0], colorTextPrimary[1], colorTextPrimary[2])
-}
-
 // fitImage scales (w, h) so the longer side fits within (maxW, maxH) without
 // exceeding either bound, preserving aspect ratio exactly — used to place
 // both the kop surat logo and the kwitansi signature without ever
@@ -218,4 +194,202 @@ func fitImage(srcW, srcH, maxW, maxH float64) (w, h float64) {
 		scale = alt
 	}
 	return srcW * scale, srcH * scale
+}
+
+// bulanIndonesia indexes 1 (Januari) .. 12 (Desember) — index 0 unused, kept
+// so int(time.Month()) can index directly without an off-by-one.
+var bulanIndonesia = [...]string{"", "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+	"Juli", "Agustus", "September", "Oktober", "November", "Desember"}
+
+// formatTanggalPDF renders a date the long Indonesian way ("20 Agustus
+// 2026") for PDF display (A4/§5.2.7) — never the short "2006-01-02"
+// dateLayout the JSON API uses (dto.go), which read as bare ISO dates on the
+// printed document (D1).
+func formatTanggalPDF(t time.Time) string {
+	return strconv.Itoa(t.Day()) + " " + bulanIndonesia[int(t.Month())] + " " + strconv.Itoa(t.Year())
+}
+
+// drawAccentBand paints the thin full-bleed accent strip along the very top
+// edge of the current page (§5.2.1) — called once per page, both by
+// newDocument's initial AddPage and by ensureSpace whenever it starts a new
+// one, so every page of a multi-page document carries it.
+func drawAccentBand(pdf *fpdf.Fpdf, theme pdfTheme) {
+	pdf.SetFillColor(theme.Palette.Accent[0], theme.Palette.Accent[1], theme.Palette.Accent[2])
+	pdf.Rect(0, 0, 210, 3, "F")
+}
+
+// ensureSpace (§5.2.9) is how this layout controls its own pagination now
+// that auto page-break is off (A6) — every fixed-height block calls this
+// before drawing itself. When the block would cross contentBottom, it starts
+// a fresh page (redrawing the accent band) and returns the new page's top
+// content y instead of the y the caller passed in. Without this, a long
+// invoice description reliably corrupted the rest of the document (§3.3):
+// fpdf's own auto page-break moved the cursor mid-MultiCell, but every block
+// after it was still positioned by arithmetic off the old y.
+func ensureSpace(pdf *fpdf.Fpdf, theme pdfTheme, y, h float64) float64 {
+	if y+h <= contentBottom {
+		return y
+	}
+	pdf.AddPage()
+	drawAccentBand(pdf, theme)
+	return 20.0
+}
+
+// badgeSpec bundles a status badge's label with its fixed color pair — the
+// shape infoCard needs to draw one inline as part of a card, sourced from
+// invoiceStatusBadge's existing 3 return values.
+type badgeSpec struct {
+	Label  string
+	Bg, Fg [3]int
+}
+
+// infoCard draws one bordered, titled card containing a stack of
+// label/value rows, with an optional status badge appended below the last
+// row (§5.2.3) — the shared building block behind Invoice's "Ditagihkan
+// Kepada"/"Detail Tagihan" pair and Kwitansi's "Diterima Dari"/"Detail
+// Kwitansi" pair. Returns the y just below the card, so the caller can pair
+// two cards side by side and continue from max(leftBottom, rightBottom).
+func infoCard(pdf *fpdf.Fpdf, theme pdfTheme, x, y, w float64, title string, rows [][2]string, badge *badgeSpec) float64 {
+	h := 8.0 + 2.5 + float64(len(rows))*8.0 + 3.5
+	if badge != nil {
+		h += 8
+	}
+	pdf.SetDrawColor(colorBorder[0], colorBorder[1], colorBorder[2])
+	pdf.SetLineWidth(0.25)
+	pdf.SetFillColor(252, 253, 254)
+	pdf.RoundedRect(x, y, w, h, 2, "1234", "FD")
+
+	pdf.SetFillColor(theme.Palette.AccentSoft[0], theme.Palette.AccentSoft[1], theme.Palette.AccentSoft[2])
+	pdf.RoundedRect(x, y, w, 8, 2, "12", "F")
+	sectionLabel(pdf, theme, x+4, y+2, title)
+
+	cy := y + 10.5
+	for _, row := range rows {
+		pdf.SetXY(x+4, cy)
+		pdf.SetFont(theme.Family, "", 7.5)
+		pdf.SetTextColor(colorTextSecondary[0], colorTextSecondary[1], colorTextSecondary[2])
+		pdf.CellFormat(w-8, 3.5, row[0], "", 2, "L", false, 0, "")
+		pdf.SetX(x + 4)
+		pdf.SetFont(theme.Family, "", 10)
+		pdf.SetTextColor(colorTextPrimary[0], colorTextPrimary[1], colorTextPrimary[2])
+		// Each row is a fixed 8mm vertical slot (single line, not MultiCell)
+		// — truncateToFit keeps a long value (e.g. a long Acara/project
+		// name) from overflowing past this card's own border into
+		// whichever card sits beside it, since CellFormat itself neither
+		// wraps nor clips.
+		pdf.CellFormat(w-8, 4.5, truncateToFit(pdf, row[1], w-8), "", 2, "L", false, 0, "")
+		cy += 8
+	}
+	if badge != nil {
+		statusBadge(pdf, theme, x+4, cy, badge.Label, badge.Bg, badge.Fg)
+	}
+	return y + h
+}
+
+// truncateToFit shortens s with a trailing "..." until its rendered width,
+// at the pdf's CURRENTLY ACTIVE font/size, fits within maxWidth — the
+// caller must SetFont before calling this, since GetStringWidth measures
+// against whatever font is active. ASCII "..." rather than a Unicode
+// ellipsis glyph, since the degrade-to-Arial path (registerFonts) isn't
+// guaranteed to carry one. Returns s unchanged when it already fits.
+func truncateToFit(pdf *fpdf.Fpdf, s string, maxWidth float64) string {
+	if pdf.GetStringWidth(s) <= maxWidth {
+		return s
+	}
+	const suffix = "..."
+	runes := []rune(s)
+	for len(runes) > 0 {
+		runes = runes[:len(runes)-1]
+		candidate := string(runes) + suffix
+		if pdf.GetStringWidth(candidate) <= maxWidth {
+			return candidate
+		}
+	}
+	return suffix
+}
+
+// summaryStrip draws the 3-cell Nilai Kontrak / Total Sudah Dibayar / Sisa
+// Tagihan strip shared by Invoice (§5.3) and Kwitansi (§5.4) — the ringkasan
+// keuangan proyek the user asked to add (K3). When paid exceeds contract,
+// the third cell relabels itself "Lebih Bayar" and shows a positive amount
+// rather than ever printing a negative Rupiah figure (A5). paid is floored
+// at 0 for display — nothing validates a Refund's Amount against a
+// project's prior payments (ClientPaymentService.Create/Update), so
+// ClientPaymentService.TotalReceived can legitimately return a negative
+// total; showing that as a negative "Total Sudah Dibayar" would read as
+// nonsensical on a customer-facing document, and the two other cells stay
+// arithmetically consistent with each other since both derive from this
+// same clamped value. Returns the y just below the strip.
+func summaryStrip(pdf *fpdf.Fpdf, theme pdfTheme, y float64, contract, paid int64) float64 {
+	if paid < 0 {
+		paid = 0
+	}
+	sisaLabel, sisaValue := "Sisa Tagihan", formatRupiah(contract-paid)
+	if contract-paid < 0 {
+		sisaLabel, sisaValue = "Lebih Bayar", formatRupiah(paid-contract)
+	}
+	cells := [3][2]string{
+		{"Nilai Kontrak", formatRupiah(contract)},
+		{"Total Sudah Dibayar", formatRupiah(paid)},
+		{sisaLabel, sisaValue},
+	}
+	pdf.SetDrawColor(colorBorder[0], colorBorder[1], colorBorder[2])
+	pdf.SetLineWidth(0.25)
+	pdf.SetFillColor(249, 250, 252)
+	pdf.RoundedRect(pML, y, pCW, 16, 2, "1234", "FD")
+	for i, c := range cells {
+		cx := pML + float64(i)*(pCW/3)
+		if i > 0 {
+			pdf.Line(cx, y+3, cx, y+13)
+		}
+		sectionLabel(pdf, theme, cx+5, y+3.5, c[0])
+		pdf.SetXY(cx+5, y+8)
+		pdf.SetFont(theme.Family, "B", 10.5)
+		if i == 2 {
+			pdf.SetTextColor(theme.Palette.Accent[0], theme.Palette.Accent[1], theme.Palette.Accent[2])
+		}
+		pdf.CellFormat(pCW/3-10, 5, c[1], "", 0, "L", false, 0, "")
+		pdf.SetTextColor(colorTextPrimary[0], colorTextPrimary[1], colorTextPrimary[2])
+	}
+	return y + 16
+}
+
+// signatureBlock draws the right-aligned "<Kota>, <tanggal>" / salutation /
+// signature image / underline / OwnerName stack shared by Invoice ("Hormat
+// kami,") and Kwitansi ("Diterima oleh,") — §5.2.5. A fixed 20mm image slot
+// is always reserved even when sign is nil (degrade-gracefully, same
+// contract fpdfImageType's other callers already follow), so a printed copy
+// still has room for a wet signature. Returns the y just below the block.
+func signatureBlock(pdf *fpdf.Fpdf, theme pdfTheme, x, y, w float64, profile platformcontracts.TenantProfile, sign []byte, date time.Time, salutation string) float64 {
+	place := formatTanggalPDF(date)
+	if profile.City != "" {
+		place = profile.City + ", " + place
+	}
+	pdf.SetXY(x, y)
+	pdf.SetFont(theme.Family, "", 9.5)
+	pdf.SetTextColor(colorTextPrimary[0], colorTextPrimary[1], colorTextPrimary[2])
+	pdf.CellFormat(w, 5, place, "", 2, "C", false, 0, "")
+	pdf.SetX(x)
+	pdf.SetFont(theme.Family, "", 9)
+	pdf.SetTextColor(colorTextSecondary[0], colorTextSecondary[1], colorTextSecondary[2])
+	pdf.CellFormat(w, 5, salutation, "", 2, "C", false, 0, "")
+	pdf.SetTextColor(colorTextPrimary[0], colorTextPrimary[1], colorTextPrimary[2])
+
+	const boxTop, boxH = 11.0, 20.0
+	boxY := y + 10 + boxTop
+	if tp, ok := fpdfImageType(sign); ok {
+		info := pdf.RegisterImageOptionsReader("signature", fpdf.ImageOptions{ImageType: tp}, bytes.NewReader(sign))
+		if pdf.Err() {
+			pdf.ClearError()
+		} else if info != nil {
+			iw, ih := fitImage(info.Width(), info.Height(), w-10, boxH)
+			pdf.ImageOptions("signature", x+(w-iw)/2, boxY+(boxH-ih)/2, iw, ih, false, fpdf.ImageOptions{ImageType: tp}, 0, "")
+		}
+	}
+	lineY := boxY + boxH + 1
+	hairline(pdf, x+6, x+w-6, lineY)
+	pdf.SetXY(x, lineY+1.5)
+	pdf.SetFont(theme.Family, "B", 10)
+	pdf.CellFormat(w, 5, profile.OwnerName, "", 2, "C", false, 0, "")
+	return pdf.GetY()
 }

@@ -328,6 +328,20 @@ func (s *TenantService) UploadSignature(ctx context.Context, tenantID int64, inp
 	return s.Get(ctx, tenantID)
 }
 
+// ProfileMissingFields reports which of the tenant's business-profile fields
+// are still blank (PLAN.md redesain-pdf-invoice-kwitansi-v2 §6.2) — the
+// gate behind both PDF-download endpoints in `projects` (reached only via
+// platform/contracts, never by importing this package's domain directly)
+// and the "profileComplete" flags surfaced by GET /tenants/me and
+// GET /tenants/me/branding.
+func (s *TenantService) ProfileMissingFields(ctx context.Context, tenantID int64) ([]string, error) {
+	tenant, err := s.Get(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return domain.ProfileMissingFields(*tenant), nil
+}
+
 // DownloadSignature mirrors DownloadLogo's byte-proxy shape exactly.
 func (s *TenantService) DownloadSignature(ctx context.Context, tenantID int64) (io.ReadCloser, error) {
 	tenant, err := s.Get(ctx, tenantID)

@@ -36,6 +36,32 @@ func (s *ClientPaymentService) List(ctx context.Context, projectID int64) ([]dom
 	return s.repo.ListByProject(ctx, projectID)
 }
 
+// TotalReceived sums every recorded client payment for a project, subtracting
+// Refund entries — the backend counterpart to the total the frontend already
+// computes for display (ClientPaymentsSection.tsx's totalReceived), now also
+// needed server-side to print "Total Sudah Dibayar" / "Sisa Tagihan" on the
+// Invoice/Kwitansi PDF, since a PDF builder has no browser to ask (PLAN.md
+// redesain-pdf-invoice-kwitansi-v2 §6, T6). This is a parallel
+// reimplementation of the same rule, not a shared one — Go and TypeScript
+// can't literally share this logic — so if the rule ever changes (a new
+// payment type, a cap on Refund's effect), both sides must be updated
+// together by hand; there is no structural guard against them drifting.
+func (s *ClientPaymentService) TotalReceived(ctx context.Context, projectID int64) (int64, error) {
+	payments, err := s.repo.ListByProject(ctx, projectID)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, p := range payments {
+		if p.Type == domain.PaymentRefund {
+			total -= p.Amount
+		} else {
+			total += p.Amount
+		}
+	}
+	return total, nil
+}
+
 type ClientPaymentInput struct {
 	Type            domain.PaymentType
 	Amount          int64
@@ -104,15 +130,18 @@ func (s *ClientPaymentService) Delete(ctx context.Context, projectID, id int64, 
 	return nil
 }
 
-// EnsureReceiptNumber lazily assigns a permanent Kwitansi number the first
-// time anyone (WO staff or the Client Portal) prints this payment's receipt
-// — idempotent (a payment that already has a number is returned unchanged),
-// and rejects Refund outright since "Telah terima dari <client>" would be
-// semantically backwards for money going the other way (PLAN.md
-// invoice-kwitansi-client §1.11). Period comes from PaymentDate, not the
-// print date, so a payment made in August but printed in September is still
-// numbered KWT/202608/... (§4.3/§4.4).
-func (s *ClientPaymentService) EnsureReceiptNumber(ctx context.Context, tenantID, projectID, id int64) (*domain.ClientPayment, error) {
+// Get returns the payment eligible for a Kwitansi print, or an error
+// explaining why not: NotFound if the ID doesn't exist, or a Validation
+// error if it's a Refund ("Telah terima dari <client>" would be
+// semantically backwards for money going the other way — PLAN.md
+// invoice-kwitansi-client §1.11). Deliberately exposed as its own method
+// (not just inlined into EnsureReceiptNumber) so the receipt-PDF handler can
+// validate the payment BEFORE the profile-completeness gate
+// (redesain-pdf-invoice-kwitansi-v2 §6.2) without ever reaching
+// EnsureReceiptNumber's number-assigning half — a rejected print attempt
+// (bad ID, wrong type, OR an incomplete profile) must never be what
+// consumes a permanent receipt number.
+func (s *ClientPaymentService) Get(ctx context.Context, projectID, id int64) (*domain.ClientPayment, error) {
 	p, err := s.repo.FindByID(ctx, projectID, id)
 	if err != nil {
 		return nil, err
@@ -122,6 +151,20 @@ func (s *ClientPaymentService) EnsureReceiptNumber(ctx context.Context, tenantID
 	}
 	if p.Type == domain.PaymentRefund {
 		return nil, apperror.Validation("Kwitansi tidak tersedia untuk pembayaran jenis Refund", nil)
+	}
+	return p, nil
+}
+
+// EnsureReceiptNumber lazily assigns a permanent Kwitansi number the first
+// time anyone (WO staff or the Client Portal) prints this payment's receipt
+// — idempotent (a payment that already has a number is returned unchanged).
+// Period comes from PaymentDate, not the print date, so a payment made in
+// August but printed in September is still numbered KWT/202608/...
+// (§4.3/§4.4).
+func (s *ClientPaymentService) EnsureReceiptNumber(ctx context.Context, tenantID, projectID, id int64) (*domain.ClientPayment, error) {
+	p, err := s.Get(ctx, projectID, id)
+	if err != nil {
+		return nil, err
 	}
 	if p.ReceiptNumber != "" {
 		return p, nil

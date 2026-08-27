@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -70,3 +71,36 @@ type Tenant struct {
 // application layer can translate it into a field-level validation error
 // (see ADR-0015) without knowing MySQL error codes itself.
 var ErrDuplicateCustomDomain = errors.New("domain kustom sudah digunakan tenant lain")
+
+// ProfileMissingFields is the single source of truth for "is this tenant's
+// business profile complete enough to print an Invoice/Kwitansi PDF" (PLAN.md
+// redesain-pdf-invoice-kwitansi-v2 §6.1) — every consumer (GET /tenants/me,
+// GET /tenants/me/branding, and the PDF-download gate in the `projects`
+// module, reached only via platform/contracts) calls this same function
+// rather than re-implementing the rule. Email, logo, and signature are
+// deliberately excluded (K1) — only identity, contact, and bank-transfer
+// destination are required. Returns a non-nil empty slice, never nil, when
+// complete, and preserves this fixed field order regardless of which fields
+// are missing, so the dialog always lists them the same way.
+func ProfileMissingFields(t Tenant) []string {
+	missing := make([]string, 0, 8)
+	type check struct {
+		value string
+		label string
+	}
+	for _, c := range []check{
+		{t.BusinessName, "Nama Usaha"},
+		{t.OwnerName, "Nama Pemilik"},
+		{t.Phone, "Telepon"},
+		{t.Address, "Alamat"},
+		{t.City, "Kota"},
+		{t.BankName, "Nama Bank"},
+		{t.BankAccountNumber, "No. Rekening"},
+		{t.BankAccountHolderName, "Nama Pemilik Rekening"},
+	} {
+		if strings.TrimSpace(c.value) == "" {
+			missing = append(missing, c.label)
+		}
+	}
+	return missing
+}

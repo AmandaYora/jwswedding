@@ -809,3 +809,59 @@ func TestGetTenantProfile_PresetTakDikenalJatuhKeNavy(t *testing.T) {
 		t.Error("must never resolve to black — a dirty preset value must still render a real accent color")
 	}
 }
+
+// TestProfileMissingFields_TenantTidakLengkap and
+// TestProfileMissingFields_TenantLengkap lock that TenantService.
+// ProfileMissingFields is a thin pass-through to domain.ProfileMissingFields
+// (PLAN.md redesain-pdf-invoice-kwitansi-v2 §6.2) — the rule itself is
+// exercised exhaustively in platform/domain's own tests.
+func TestProfileMissingFields_TenantTidakLengkap(t *testing.T) {
+	tenant := &domain.Tenant{ID: 1, BusinessName: "JWS Wedding"}
+	repo := newFakeTenantRepo(tenant)
+	svc := newTestServiceWithStorage(repo, newFakeObjectStorage())
+
+	missing, err := svc.ProfileMissingFields(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ProfileMissingFields: %v", err)
+	}
+	if len(missing) == 0 {
+		t.Fatal("expected a tenant missing most fields to report missing fields")
+	}
+	found := false
+	for _, m := range missing {
+		if m == "Nama Pemilik" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected \"Nama Pemilik\" among missing fields, got %v", missing)
+	}
+}
+
+func TestProfileMissingFields_TenantLengkap(t *testing.T) {
+	tenant := &domain.Tenant{
+		ID: 1, BusinessName: "JWS Wedding", OwnerName: "Dimas Prasetio", Phone: "0812-0000-0000",
+		Address: "Jl. Melati No. 12", City: "Bandung",
+		BankName: "BCA", BankAccountNumber: "1234567890", BankAccountHolderName: "Dimas Prasetio",
+	}
+	repo := newFakeTenantRepo(tenant)
+	svc := newTestServiceWithStorage(repo, newFakeObjectStorage())
+
+	missing, err := svc.ProfileMissingFields(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ProfileMissingFields: %v", err)
+	}
+	if len(missing) != 0 {
+		t.Errorf("expected a complete tenant to report no missing fields, got %v", missing)
+	}
+}
+
+func TestProfileMissingFields_TenantTidakDitemukan(t *testing.T) {
+	repo := newFakeTenantRepo()
+	svc := newTestServiceWithStorage(repo, newFakeObjectStorage())
+
+	_, err := svc.ProfileMissingFields(context.Background(), 999)
+	if err == nil {
+		t.Fatal("expected an error for a nonexistent tenant, got nil")
+	}
+}

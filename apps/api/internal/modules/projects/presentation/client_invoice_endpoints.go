@@ -197,9 +197,15 @@ func (h *Handler) downloadClientInvoicePDF(w http.ResponseWriter, r *http.Reques
 		writeAppError(w, err)
 		return
 	}
-	profile, err := h.platform.GetTenantProfile(r.Context(), claims.tenantID)
-	if err != nil {
-		writeAppError(w, err)
+	// Gate: reject with 422 before touching logo/signature/totals if the
+	// tenant's business profile isn't complete enough to print (PLAN.md
+	// redesain-pdf-invoice-kwitansi-v2 §6.2) — the frontend already hides
+	// the print action behind IncompleteProfileDialog when it knows the
+	// profile is incomplete, but this is the backend's own enforcement of
+	// the same rule (K4), reached whenever that frontend state is stale or
+	// the endpoint is called directly.
+	profile, ok := h.requireCompleteProfile(w, r, claims.tenantID)
+	if !ok {
 		return
 	}
 	logo, _, hasLogo, err := h.platform.GetTenantLogo(r.Context(), claims.tenantID)
@@ -210,8 +216,21 @@ func (h *Handler) downloadClientInvoicePDF(w http.ResponseWriter, r *http.Reques
 	if !hasLogo {
 		logo = nil
 	}
+	signature, _, hasSignature, err := h.platform.GetTenantSignature(r.Context(), claims.tenantID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	if !hasSignature {
+		signature = nil
+	}
+	totalPaid, err := h.clientPayments.TotalReceived(r.Context(), projectID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
 
-	pdf, err := buildClientInvoicePDF(*project, *inv, profile, logo)
+	pdf, err := buildClientInvoicePDF(*project, *inv, profile, logo, signature, totalPaid)
 	if err != nil {
 		writeAppError(w, err)
 		return

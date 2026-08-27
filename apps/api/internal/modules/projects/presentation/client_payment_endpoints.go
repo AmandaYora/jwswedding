@@ -160,18 +160,40 @@ func (h *Handler) deleteClientPayment(w http.ResponseWriter, r *http.Request, cl
 // its official number on first print (EnsureReceiptNumber) — reachable by
 // staff and by a `client` principal reading their own project, same as
 // downloadClientInvoicePDF.
+//
+// Ordering matters here: ClientPaymentService.Get validates the payment
+// (exists, not a Refund) BEFORE the profile-completeness gate
+// (PLAN.md redesain-pdf-invoice-kwitansi-v2 §6.2), mirroring
+// downloadClientInvoicePDF's own Get-before-gate order — a bad ID or a
+// Refund's specific error must never be masked by the generic "profil belum
+// lengkap" message. EnsureReceiptNumber itself still runs AFTER the gate:
+// it permanently assigns the next official Kwitansi number the first time
+// it's called for a payment, so a rejected print attempt must never be the
+// call that consumes one. Calling Get again inside EnsureReceiptNumber is a
+// second, cheap primary-key read of the same row — not a duplicated
+// business-rule check, since Get is EnsureReceiptNumber's own validation
+// step (see its doc comment).
 func (h *Handler) downloadClientPaymentReceiptPDF(w http.ResponseWriter, r *http.Request, claims staffClaims, projectID int64, paymentIDRaw string) {
 	paymentID, err := parseInt64(paymentIDRaw)
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "ID tidak valid", nil)
 		return
 	}
-	p, err := h.clientPayments.EnsureReceiptNumber(r.Context(), claims.tenantID, projectID, paymentID)
-	if err != nil {
+	if _, err := h.clientPayments.Get(r.Context(), projectID, paymentID); err != nil {
 		writeAppError(w, err)
 		return
 	}
 	project, err := h.projects.Get(r.Context(), claims.tenantID, projectID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	profile, ok := h.requireCompleteProfile(w, r, claims.tenantID)
+	if !ok {
+		return
+	}
+
+	p, err := h.clientPayments.EnsureReceiptNumber(r.Context(), claims.tenantID, projectID, paymentID)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -184,11 +206,6 @@ func (h *Handler) downloadClientPaymentReceiptPDF(w http.ResponseWriter, r *http
 	invoiceNumber := ""
 	if inv != nil {
 		invoiceNumber = inv.InvoiceNumber
-	}
-	profile, err := h.platform.GetTenantProfile(r.Context(), claims.tenantID)
-	if err != nil {
-		writeAppError(w, err)
-		return
 	}
 	logo, _, hasLogo, err := h.platform.GetTenantLogo(r.Context(), claims.tenantID)
 	if err != nil {
@@ -206,8 +223,13 @@ func (h *Handler) downloadClientPaymentReceiptPDF(w http.ResponseWriter, r *http
 	if !hasSignature {
 		signature = nil
 	}
+	totalPaid, err := h.clientPayments.TotalReceived(r.Context(), projectID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
 
-	pdf, err := buildClientPaymentReceiptPDF(*project, *p, invoiceNumber, profile, logo, signature)
+	pdf, err := buildClientPaymentReceiptPDF(*project, *p, invoiceNumber, profile, logo, signature, totalPaid)
 	if err != nil {
 		writeAppError(w, err)
 		return

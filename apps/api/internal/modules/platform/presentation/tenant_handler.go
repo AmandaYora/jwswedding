@@ -50,16 +50,35 @@ type tenantResponse struct {
 	BankName              string `json:"bankName"`
 	BankAccountNumber     string `json:"bankAccountNumber"`
 	BankAccountHolderName string `json:"bankAccountHolderName"`
+	// ProfileComplete/MissingProfileFields back the "Profil Usaha" page's own
+	// completeness banner (PLAN.md redesain-pdf-invoice-kwitansi-v2 §6.3.7) —
+	// computed the same way, and from the same domain.ProfileMissingFields,
+	// as the PDF-download gate itself, so this page never drifts from what
+	// actually blocks printing.
+	ProfileComplete      bool     `json:"profileComplete"`
+	MissingProfileFields []string `json:"missingProfileFields"`
 }
 
-// brandingResponse is the minimal, non-sensitive branding shape any
-// tenant-scoped principal (staff of any role, or client) can read — unlike
-// tenantResponse/me, which stays Owner-only since it also carries
-// subscription/billing data.
+// brandingResponse is the minimal, non-sensitive branding shape the
+// UNAUTHENTICATED PublicBranding endpoint (ADR-0015) returns — deliberately
+// carries no profile-completeness fields (T4: an unknown Host header must
+// never leak which of a tenant's profile fields are missing).
 type brandingResponse struct {
 	BusinessName     string `json:"businessName"`
 	BrandColorPreset string `json:"brandColorPreset"`
 	HasLogo          bool   `json:"hasLogo"`
+}
+
+// myBrandingResponse is myBranding's own response shape — brandingResponse's
+// fields (embedded, so the two can never drift apart if a plain branding
+// field is ever added) plus the profile-completeness gate (PLAN.md
+// redesain-pdf-invoice-kwitansi-v2 §6.2/T4) — used ONLY by the
+// authenticated self-service myBranding handler, never by the pre-auth
+// PublicBranding one.
+type myBrandingResponse struct {
+	brandingResponse
+	ProfileComplete      bool     `json:"profileComplete"`
+	MissingProfileFields []string `json:"missingProfileFields"`
 }
 
 func dateOrNil(t *time.Time) *string {
@@ -71,6 +90,7 @@ func dateOrNil(t *time.Time) *string {
 }
 
 func toTenantResponse(t domain.Tenant) tenantResponse {
+	missing := domain.ProfileMissingFields(t)
 	return tenantResponse{
 		ID: t.ID, BusinessName: t.BusinessName, OwnerName: t.OwnerName, Username: t.Username,
 		Email: t.Email, Phone: t.Phone, City: t.City, JoinedAt: t.JoinedAt.Format("2006-01-02"),
@@ -82,12 +102,26 @@ func toTenantResponse(t domain.Tenant) tenantResponse {
 		CustomDomain: t.CustomDomain,
 		Address: t.Address, BankName: t.BankName, BankAccountNumber: t.BankAccountNumber,
 		BankAccountHolderName: t.BankAccountHolderName,
+		ProfileComplete:       len(missing) == 0, MissingProfileFields: missing,
 	}
 }
 
 func toBrandingResponse(t domain.Tenant) brandingResponse {
 	return brandingResponse{
 		BusinessName: t.BusinessName, BrandColorPreset: t.BrandColorPreset, HasLogo: t.LogoStoragePath != nil,
+	}
+}
+
+// toMyBrandingResponse builds on toBrandingResponse plus the profile-
+// completeness gate — used only by the authenticated myBranding handler
+// (PLAN.md redesain-pdf-invoice-kwitansi-v2 §6.2, T4). Building on top of
+// toBrandingResponse (rather than duplicating its field assignments) means
+// a future field added there is automatically picked up here too.
+func toMyBrandingResponse(t domain.Tenant) myBrandingResponse {
+	missing := domain.ProfileMissingFields(t)
+	return myBrandingResponse{
+		brandingResponse: toBrandingResponse(t),
+		ProfileComplete:  len(missing) == 0, MissingProfileFields: missing,
 	}
 }
 
@@ -171,7 +205,7 @@ func (h *TenantHandler) myBranding(w http.ResponseWriter, r *http.Request) {
 		writeAppError(w, err)
 		return
 	}
-	response.OK(w, "ok", toBrandingResponse(*tenant))
+	response.OK(w, "ok", toMyBrandingResponse(*tenant))
 }
 
 // myLogo streams the caller's own tenant's logo — same auth scoping as

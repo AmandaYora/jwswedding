@@ -181,6 +181,24 @@ export default function CompanyProfilePage() {
       <Card className="max-w-2xl">
         <CardHeader title="Data Usaha" />
         <CardContent className="flex flex-col gap-4">
+          {profile && (
+            profile.missingProfileFields.length === 0 ? (
+              <p className="rounded-md border border-success/30 bg-success-soft px-3.5 py-2.5 text-[13px] font-medium text-success">
+                Profil usaha sudah lengkap, Invoice & Kwitansi siap dicetak.
+              </p>
+            ) : (
+              <div className="rounded-md border border-warning/30 bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning-strong">
+                <p className="font-medium">
+                  Profil usaha belum lengkap — Invoice & Kwitansi belum bisa dicetak sampai field berikut diisi:
+                </p>
+                <ul className="mt-1.5 list-disc space-y-0.5 pl-5">
+                  {profile.missingProfileFields.map((field) => (
+                    <li key={field}>{field}</li>
+                  ))}
+                </ul>
+              </div>
+            )
+          )}
           {saveError && (
             <p className="rounded-md border border-danger/30 bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger">{saveError}</p>
           )}
