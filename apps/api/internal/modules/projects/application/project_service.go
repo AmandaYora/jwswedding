@@ -329,6 +329,9 @@ func (s *ProjectService) Update(ctx context.Context, tenantID, id int64, actorSt
 	if callerRole == "Sales" && input.PICSalesStaffID != p.PICSalesStaffID {
 		return nil, apperror.Forbidden("Sales tidak dapat memindahkan PIC Sales project ini")
 	}
+	if err := guardKonteksUmum(callerRole, p, input); err != nil {
+		return nil, err
+	}
 	p.Name = input.Name
 	p.BrideName = input.BrideName
 	p.GroomName = input.GroomName
@@ -361,6 +364,79 @@ func (s *ProjectService) Update(ctx context.Context, tenantID, id int64, actorSt
 	s.activity.Record(ctx, &p.ID, domain.ActivityProjectUpdated, actorStaffID, "project", formatID(p.ID), p.Name,
 		"Informasi project diperbarui")
 	return p, nil
+}
+
+// guardKonteksUmum rejects a non-Owner/Admin caller (a Wedding Planner
+// "Staff", or "Sales") changing any field of a project's "konteks umum" --
+// confirmed role rule, PLAN.md mom-25082026-item-sebagian §3a: only Status
+// and Description stay freely editable by every role; everything else
+// (identity, schedule, package, contract value, venue attachment) is
+// Owner/Admin only. callerRole == "" (or any other non-Staff/Sales value)
+// skips the check entirely, same convention as the PIC guards above it in
+// Update.
+//
+// VenueID/VenueRentalPrice/VenueCharge are *int64 -- nil means "the request
+// body omitted this key, leave the current attachment untouched" (see
+// ProjectInput.VenueID's doc comment), so a nil input is never treated as a
+// change even when the project currently has a venue attached. Comparisons
+// below dereference both sides rather than comparing pointers directly,
+// since two distinct pointers holding the same value would otherwise always
+// register as "changed".
+//
+// EventDate/PrepStartDate are compared by calendar date (sameCalendarDate),
+// never time.Time.Equal -- found live in mom-25082026-item-sebagian's own
+// HTTP verification pass: the request-parsed value is always UTC
+// (presentation's parseDate uses time.Parse with no location), while a
+// value freshly loaded from the database carries whatever DATABASE_URL's
+// loc= param says (this project's is "Local", i.e. the server OS's zone --
+// WIB/+07:00 in production). Equal() compares absolute instants, so an
+// unrelated 7-hour offset between two midnights representing the exact same
+// calendar date made this guard see EventDate as "changed" on every single
+// request, rejecting a Wedding Planner even when they only touched Status --
+// exactly the regression this guard exists to avoid. sameCalendarDate reads
+// each side's Y/M/D as carried by its own time.Time (time.Time.Date() never
+// converts location first), which is location-independent and matches what
+// a DATE column actually means: no time-of-day component to lose.
+func guardKonteksUmum(callerRole string, p *domain.Project, input ProjectInput) error {
+	if callerRole != "Staff" && callerRole != "Sales" {
+		return nil
+	}
+	changed := input.Name != p.Name ||
+		input.BrideName != p.BrideName ||
+		input.GroomName != p.GroomName ||
+		!sameCalendarDate(input.EventDate, p.EventDate) ||
+		input.Venue != p.Venue ||
+		!sameCalendarDate(input.PrepStartDate, p.PrepStartDate) ||
+		input.PackageName != p.PackageName ||
+		input.ContractValue != p.ContractValue ||
+		venueRefChanged(input.VenueID, p.VenueID) ||
+		venueRefChanged(input.VenueRentalPrice, p.VenueRentalPrice) ||
+		venueRefChanged(input.VenueCharge, p.VenueCharge)
+	if changed {
+		return apperror.Forbidden("Hanya Owner atau Admin yang dapat mengubah data umum project")
+	}
+	return nil
+}
+
+// sameCalendarDate reports whether a and b fall on the same Y/M/D, ignoring
+// time-of-day and location entirely -- see guardKonteksUmum's doc comment
+// for why time.Time.Equal is the wrong tool for comparing two DATE-only
+// values that may have been constructed under different locations.
+func sameCalendarDate(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
+}
+
+// venueRefChanged reports whether a nullable int64 field actually changed,
+// treating a nil input (key omitted from the request body) as "no change"
+// regardless of what the project currently holds -- see guardKonteksUmum's
+// doc comment.
+func venueRefChanged(input, current *int64) bool {
+	if input == nil {
+		return false
+	}
+	return current == nil || *input != *current
 }
 
 func (s *ProjectService) Cancel(ctx context.Context, tenantID, id, actorStaffID int64) (*domain.Project, error) {

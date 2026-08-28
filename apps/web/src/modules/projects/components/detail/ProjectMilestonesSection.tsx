@@ -9,12 +9,14 @@ import { Pagination } from "@/shared/components/ui/Pagination";
 import { usePagination } from "@/shared/hooks/usePagination";
 import { MilestoneRail, MilestoneRailLegend } from "@/shared/components/ui/MilestoneRail";
 import { IconActionButton } from "@/shared/components/ui/IconActionButton";
-import { EvidenceUploadModal } from "@/shared/components/ui/EvidenceUploadModal";
 import { ProjectMilestoneFormModal } from "@/modules/projects/components/ProjectMilestoneFormModal";
-import { ProjectMilestoneEditModal, type ProjectMilestoneEditFields } from "@/modules/projects/components/detail/ProjectMilestoneEditModal";
+import {
+  ProjectMilestoneEditModal,
+  type ProjectMilestoneEditFields,
+  type NewMilestoneEvidenceMeta,
+} from "@/modules/projects/components/detail/ProjectMilestoneEditModal";
 import { ProjectMilestoneGanttView } from "@/modules/projects/components/detail/ProjectMilestoneGanttView";
 import type { ProjectMilestoneFormValues } from "@/modules/projects/schemas/project-milestone.schema";
-import type { EvidenceUploadFormValues } from "@/modules/projects/schemas/evidence.schema";
 import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
 import { computeMilestoneStats, isMilestoneOverdue } from "@/modules/projects/lib/dates";
 import { compressFileForUpload } from "@/shared/lib/image-compression";
@@ -41,11 +43,11 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
   const updateMilestoneStatus = useProjectStore((s) => s.updateMilestoneStatus);
   const updateMilestone = useProjectStore((s) => s.updateMilestone);
   const reorderMilestones = useProjectStore((s) => s.reorderMilestones);
+  const evidence = useProjectStore((s) => s.evidence);
+  const fetchEvidence = useProjectStore((s) => s.fetchEvidence);
   const uploadEvidence = useProjectStore((s) => s.uploadEvidence);
   const [addOpen, setAddOpen] = useState(false);
   const [editingMilestone, setEditingMilestone] = useState<ProjectMilestone | null>(null);
-  const [evidenceMilestone, setEvidenceMilestone] = useState<ProjectMilestone | null>(null);
-  const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "gantt">("list");
   const sortedMilestones = sortMilestones(milestones);
@@ -59,7 +61,15 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     void fetchMilestones(projectId);
-  }, [projectId, fetchMilestones]);
+    void fetchEvidence(projectId);
+  }, [projectId, fetchMilestones, fetchEvidence]);
+
+  // Mirrors ProjectVendorsSection.tsx's own evidenceFor(milestone) — one
+  // fetchEvidence call for the whole project, filtered client-side per
+  // timeline, same pattern as its vendor-milestone sibling.
+  function evidenceFor(milestone: ProjectMilestone) {
+    return evidence.filter((e) => e.relatedKind === "projectMilestone" && e.relatedId === milestone.id);
+  }
 
   async function updateStatus(id: string, status: MilestoneStatus) {
     setActionError(null);
@@ -91,24 +101,22 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
     }
   }
 
-  async function handleAddEvidence(file: File, values: EvidenceUploadFormValues) {
-    if (!evidenceMilestone) return;
-    setEvidenceError(null);
-    try {
-      const compressed = await compressFileForUpload(file);
-      await uploadEvidence(projectId, {
-        ...compressed,
-        name: values.name,
-        type: values.type,
-        documentDate: values.documentDate,
-        description: values.description,
-        relatedKind: "projectMilestone",
-        relatedId: evidenceMilestone.id,
-      });
-      setEvidenceMilestone(null);
-    } catch (err) {
-      setEvidenceError(getApiErrorMessage(err, "Gagal mengunggah evidence"));
-    }
+  // No local try/catch here — matches ProjectVendorsSection.tsx's own
+  // handleAddMilestoneEvidence: errors bubble up to
+  // ProjectMilestoneEditModal's internal handleAddEvidence, which shows its
+  // own uploadError inside the Lampiran section.
+  async function handleAddEvidence(file: File, values: NewMilestoneEvidenceMeta) {
+    if (!editingMilestone) return;
+    const compressed = await compressFileForUpload(file);
+    await uploadEvidence(projectId, {
+      ...compressed,
+      name: values.name,
+      type: values.type,
+      documentDate: values.documentDate,
+      description: values.description,
+      relatedKind: "projectMilestone",
+      relatedId: editingMilestone.id,
+    });
   }
 
   async function handleMove(milestoneId: string, direction: "up" | "down") {
@@ -214,7 +222,6 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
                         </>
                       )}
                       <IconActionButton icon={Pencil} label="Edit timeline" tone="neutral" onClick={() => setEditingMilestone(m)} />
-                      <IconActionButton icon={Paperclip} label="Lampirkan Bukti" tone="info" onClick={() => setEvidenceMilestone(m)} />
                       {cancelled ? (
                         <IconActionButton
                           icon={CheckCircle2}
@@ -243,6 +250,22 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
                       }
                     />
                     <CardListField label="Tanggal Selesai" value={formatDate(m.completedDate)} />
+                    <CardListField
+                      label="Lampiran"
+                      value={
+                        evidenceFor(m).length > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => setEditingMilestone(m)}
+                            className="inline-flex items-center gap-1 font-medium text-navy-900 hover:underline"
+                          >
+                            <Paperclip className="h-3.5 w-3.5" /> {evidenceFor(m).length}
+                          </button>
+                        ) : (
+                          "-"
+                        )
+                      }
+                    />
                   </div>
                   <Select
                     value={m.status}
@@ -265,6 +288,7 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
                 <TH>Status</TH>
                 <TH>Target Tanggal</TH>
                 <TH>Tanggal Selesai</TH>
+                <TH>Lampiran</TH>
                 <TH>Aksi</TH>
               </TR>
             </THead>
@@ -293,6 +317,19 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
                     </TD>
                     <TD>{formatDate(m.completedDate)}</TD>
                     <TD>
+                      {evidenceFor(m).length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setEditingMilestone(m)}
+                          className="inline-flex items-center gap-1 text-[12.5px] font-medium text-navy-900 hover:underline"
+                        >
+                          <Paperclip className="h-3.5 w-3.5" /> {evidenceFor(m).length}
+                        </button>
+                      ) : (
+                        <span className="text-text-secondary">-</span>
+                      )}
+                    </TD>
+                    <TD>
                       <div className="flex items-center gap-1">
                         {!cancelled && (
                           <>
@@ -313,7 +350,6 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
                           </>
                         )}
                         <IconActionButton icon={Pencil} label="Edit timeline" tone="neutral" onClick={() => setEditingMilestone(m)} />
-                      <IconActionButton icon={Paperclip} label="Lampirkan Bukti" tone="info" onClick={() => setEvidenceMilestone(m)} />
                         {cancelled ? (
                           <IconActionButton
                             icon={CheckCircle2}
@@ -358,20 +394,10 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
           open
           onClose={() => setEditingMilestone(null)}
           milestone={editingMilestone}
+          projectId={projectId}
+          evidenceList={evidenceFor(editingMilestone)}
           onSave={(fields) => void handleEditSave(fields)}
-        />
-      )}
-
-      {evidenceMilestone && (
-        <EvidenceUploadModal
-          open
-          onClose={() => setEvidenceMilestone(null)}
-          onSubmit={handleAddEvidence}
-          error={evidenceError}
-          lockedRelatedKind="projectMilestone"
-          lockedRelatedId={evidenceMilestone.id}
-          title="Lampirkan Bukti"
-          description={`Unggah bukti pendukung untuk timeline "${evidenceMilestone.name}".`}
+          onAddEvidence={handleAddEvidence}
         />
       )}
     </div>

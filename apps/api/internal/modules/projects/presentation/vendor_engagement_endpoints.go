@@ -151,7 +151,7 @@ func (h *Handler) updateVendorEngagement(w http.ResponseWriter, r *http.Request,
 		response.Error(w, http.StatusUnprocessableEntity, "Format tanggal tidak valid", map[string][]string{"eventDate": {"Gunakan format YYYY-MM-DD"}})
 		return
 	}
-	pv, err := h.vendors.Update(r.Context(), projectID, pvID, claims.staffID, input)
+	pv, err := h.vendors.Update(r.Context(), projectID, pvID, claims.staffID, claims.role, input)
 	if err != nil {
 		writeAppError(w, err)
 		return

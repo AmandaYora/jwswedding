@@ -40,6 +40,11 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
   // .../duplicate.
   const role = useAuthStore((s) => s.session?.role);
   const canDuplicate = role !== "Staff" && role !== "Sales";
+  // canEditGeneral gates every field in the Edit modal except Status and
+  // Deskripsi — confirmed role rule, PLAN.md mom-25082026-item-sebagian §3c.
+  // The Edit button itself stays visible to every role (unlike canDuplicate)
+  // because a Wedding Planner still needs it to change a project's status.
+  const canEditGeneral = role === "Owner" || role === "Admin";
   // Margin/Keuntungan reveals vendor-cost/venue-cost business data — Wedding
   // Planner is not supposed to see this specific computed figure (confirmed
   // RBAC rule), even though the underlying vendor engagements and venue cost
@@ -268,7 +273,13 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
         )}
       </CardContent>
 
-      <ProjectFormModal open={editOpen} onClose={() => setEditOpen(false)} onSubmit={(values) => void handleEdit(values)} initialProject={project} />
+      <ProjectFormModal
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        onSubmit={(values) => void handleEdit(values)}
+        initialProject={project}
+        canEditGeneral={canEditGeneral}
+      />
       <ProjectFormModal
         open={duplicateOpen}
         onClose={() => setDuplicateOpen(false)}

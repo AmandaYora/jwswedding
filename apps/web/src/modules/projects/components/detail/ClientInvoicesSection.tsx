@@ -48,12 +48,17 @@ export function ClientInvoicesSection({ projectId }: { projectId: string }) {
   const markClientInvoicePaid = useProjectStore((s) => s.markClientInvoicePaid);
   const unmarkClientInvoicePaid = useProjectStore((s) => s.unmarkClientInvoicePaid);
   const downloadClientInvoicePDF = useProjectStore((s) => s.downloadClientInvoicePDF);
-  // Deliberately role === "Owner" || "Admin" -- NOT the role !== "Staff"
-  // idiom ClientPaymentsSection/ProjectPaymentsSection use, which currently
-  // also lets "Sales" through (a pre-existing gap, out of scope here -- see
-  // PLAN.md §4.7's note).
+  // Owner-or-Admin only for every write action here (Tambah/Ubah/Tandai
+  // Lunas/Batalkan Pelunasan/Hapus) — confirmed role rule, PLAN.md
+  // mom-25082026-item-sebagian §3c, matching the backend's
+  // createClientInvoice/updateClientInvoice/markClientInvoicePaid/
+  // unmarkClientInvoicePaid/deleteClientInvoice gates. Was previously
+  // `canDelete`, scoped only to the Hapus button — the idiom itself
+  // (role === "Owner" || "Admin", not the stale `!== "Staff"` pattern
+  // ClientPaymentsSection used to carry) was already correct, so only the
+  // name and its reach widen here.
   const role = useAuthStore((s) => s.session?.role);
-  const canDelete = role === "Owner" || role === "Admin";
+  const canManage = role === "Owner" || role === "Admin";
   const profileComplete = useTenantBrandingStore((s) => s.profileComplete);
   const missingProfileFields = useTenantBrandingStore((s) => s.missingProfileFields);
 
@@ -153,17 +158,17 @@ export function ClientInvoicesSection({ projectId }: { projectId: string }) {
     const isPaid = invoice.status === "Lunas";
     return (
       <div className="flex items-center gap-1">
-        {!isPaid && (
+        {!isPaid && canManage && (
           <>
             <IconActionButton icon={Pencil} label="Ubah Tagihan" tone="neutral" onClick={() => setEditingInvoice(invoice)} />
             <IconActionButton icon={CheckCircle2} label="Tandai Lunas" tone="success" onClick={() => setPayingInvoice(invoice)} />
           </>
         )}
-        {isPaid && (
+        {isPaid && canManage && (
           <IconActionButton icon={Undo2} label="Batalkan Pelunasan" tone="danger" onClick={() => setUnmarkingInvoice(invoice)} />
         )}
         <IconActionButton icon={FileDown} label="Cetak PDF" tone="info" onClick={() => void handlePrintPDF(invoice)} />
-        {canDelete && (
+        {canManage && (
           <IconActionButton
             icon={Trash2}
             label="Hapus Tagihan"
@@ -183,9 +188,11 @@ export function ClientInvoicesSection({ projectId }: { projectId: string }) {
           title="Tagihan (Invoice)"
           subtitle="Tagihan yang diterbitkan ke client. Menandai Lunas otomatis mencatatnya di riwayat pembayaran di bawah."
           action={
-            <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setModalOpen(true)}>
-              Tambah Tagihan
-            </Button>
+            canManage ? (
+              <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setModalOpen(true)}>
+                Tambah Tagihan
+              </Button>
+            ) : undefined
           }
         />
         <CardContent className="flex flex-col gap-4">

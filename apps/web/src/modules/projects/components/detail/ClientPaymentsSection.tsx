@@ -45,11 +45,14 @@ export function ClientPaymentsSection({ projectId }: { projectId: string }) {
   const updateClientPayment = useProjectStore((s) => s.updateClientPayment);
   const deleteClientPayment = useProjectStore((s) => s.deleteClientPayment);
   const downloadClientPaymentReceipt = useProjectStore((s) => s.downloadClientPaymentReceipt);
-  // Hard delete is Owner-or-Admin (broadened from Owner-only per explicit
-  // user request) -- mirrors ProjectHeaderCard.tsx's own "!== \"Staff\"" idiom
-  // for the same Owner-or-Admin bar, since those are the only 3 roles. Edit
-  // has no role restriction at all.
-  const canDelete = useAuthStore((s) => s.session?.role) !== "Staff";
+  // Owner-or-Admin only for every write action here (Tambah/Ubah/Hapus) —
+  // confirmed role rule, PLAN.md mom-25082026-item-sebagian §3c. Was
+  // previously `role !== "Staff"` (Delete only, Edit unrestricted), an idiom
+  // that assumed Owner/Admin/Staff were the only 3 roles — that assumption
+  // went stale the moment "Sales" was added, letting Sales see a Hapus
+  // button and hit a 403. `canManage` now also gates Edit, matching the
+  // backend's createClientPayment/updateClientPayment gates.
+  const canManage = useAuthStore((s) => s.session?.role === "Owner" || s.session?.role === "Admin");
   const profileComplete = useTenantBrandingStore((s) => s.profileComplete);
   const missingProfileFields = useTenantBrandingStore((s) => s.missingProfileFields);
 
@@ -137,9 +140,11 @@ export function ClientPaymentsSection({ projectId }: { projectId: string }) {
           title="Uang Masuk dari Client"
           subtitle="Ringkasan nilai kontrak dan seluruh riwayat pembayaran dari client untuk project ini."
           action={
-            <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setModalOpen(true)}>
-              Tambah Pembayaran
-            </Button>
+            canManage ? (
+              <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setModalOpen(true)}>
+                Tambah Pembayaran
+              </Button>
+            ) : undefined
           }
         />
         <CardContent className="flex flex-col gap-5">
@@ -179,8 +184,10 @@ export function ClientPaymentsSection({ projectId }: { projectId: string }) {
                     {payment.type !== "Refund" && (
                       <IconActionButton icon={Receipt} label="Cetak Kwitansi" tone="navy" onClick={() => void handlePrintReceipt(payment)} />
                     )}
-                    <IconActionButton icon={Pencil} label="Ubah Pembayaran" tone="neutral" onClick={() => setEditingPayment(payment)} />
-                    {canDelete && (
+                    {canManage && (
+                      <IconActionButton icon={Pencil} label="Ubah Pembayaran" tone="neutral" onClick={() => setEditingPayment(payment)} />
+                    )}
+                    {canManage && (
                       <IconActionButton icon={Trash2} label="Hapus Pembayaran" tone="danger" onClick={() => { setDeletingPayment(payment); setDeleteError(null); }} />
                     )}
                   </div>
@@ -215,8 +222,10 @@ export function ClientPaymentsSection({ projectId }: { projectId: string }) {
                         {payment.type !== "Refund" && (
                           <IconActionButton icon={Receipt} label="Cetak Kwitansi" tone="navy" onClick={() => void handlePrintReceipt(payment)} />
                         )}
-                        <IconActionButton icon={Pencil} label="Ubah Pembayaran" tone="neutral" onClick={() => setEditingPayment(payment)} />
-                        {canDelete && (
+                        {canManage && (
+                          <IconActionButton icon={Pencil} label="Ubah Pembayaran" tone="neutral" onClick={() => setEditingPayment(payment)} />
+                        )}
+                        {canManage && (
                           <IconActionButton icon={Trash2} label="Hapus Pembayaran" tone="danger" onClick={() => { setDeletingPayment(payment); setDeleteError(null); }} />
                         )}
                       </div>

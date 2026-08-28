@@ -89,7 +89,18 @@ func (s *VendorEngagementService) Create(ctx context.Context, projectID int64, a
 	return pv, nil
 }
 
-func (s *VendorEngagementService) Update(ctx context.Context, projectID, id int64, actorStaffID int64, input VendorEngagementInput) (*domain.ProjectVendor, error) {
+// Update takes callerRole to decide whether ContractValue/DPAmount get
+// overwritten from input -- confirmed role rule, PLAN.md
+// mom-25082026-item-sebagian §12b: a non-Owner/Admin caller's form never
+// renders those two fields at all, so input always carries a zero value for
+// them. Silently keeping pv's stored values instead of overwriting is
+// deliberate (D1 in the plan) -- unlike ProjectService.Update's
+// guardKonteksUmum, which rejects the whole request, this preserves the
+// caller's other edits (scope, jam acara, status) rather than blocking them
+// over fields the form never gave them a way to send correctly.
+// callerRole == "" (or any other non-Staff/Sales value) behaves exactly as
+// before: both fields overwrite freely.
+func (s *VendorEngagementService) Update(ctx context.Context, projectID, id int64, actorStaffID int64, callerRole string, input VendorEngagementInput) (*domain.ProjectVendor, error) {
 	pv, err := s.Get(ctx, projectID, id)
 	if err != nil {
 		return nil, err
@@ -97,14 +108,16 @@ func (s *VendorEngagementService) Update(ctx context.Context, projectID, id int6
 	pv.VendorID = input.VendorID
 	pv.CategoryID = input.CategoryID
 	pv.Scope = input.Scope
-	pv.ContractValue = input.ContractValue
+	if callerRole != "Staff" && callerRole != "Sales" {
+		pv.ContractValue = input.ContractValue
+		pv.DPAmount = input.DPAmount
+	}
 	pv.PricingTier = input.PricingTier
 	pv.EngagementStatus = input.EngagementStatus
 	pv.BookingDate = input.BookingDate
 	pv.EventDate = input.EventDate
 	pv.EventStartTime = input.EventStartTime
 	pv.EventEndTime = input.EventEndTime
-	pv.DPAmount = input.DPAmount
 	pv.DueDate = input.DueDate
 	pv.PICStaffID = input.PICStaffID
 	pv.Notes = input.Notes

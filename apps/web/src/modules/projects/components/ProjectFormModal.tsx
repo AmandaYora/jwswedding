@@ -18,6 +18,14 @@ interface ProjectFormModalProps {
   // suffix and status resets to Draft as safer defaults; everything else
   // (including dates) is copied verbatim for the user to adjust as needed.
   mode?: "edit" | "duplicate";
+  // canEditGeneral gates every field except Status Project and Deskripsi —
+  // confirmed role rule, PLAN.md mom-25082026-item-sebagian §3c: a
+  // Wedding Planner or Sales caller may only change a project's status and
+  // description, never its identity/schedule/package/contract value (the
+  // backend's guardKonteksUmum rejects those regardless, this just avoids
+  // a 403 round-trip). Defaults to true so every other caller of this modal
+  // (creating a new project) keeps its current unrestricted behavior.
+  canEditGeneral?: boolean;
 }
 
 function toFormValues(project?: Project, defaultStaffId = "", mode?: "edit" | "duplicate"): ProjectFormValues {
@@ -53,7 +61,7 @@ function toFormValues(project?: Project, defaultStaffId = "", mode?: "edit" | "d
   };
 }
 
-export function ProjectFormModal({ open, onClose, onSubmit, initialProject, mode }: ProjectFormModalProps) {
+export function ProjectFormModal({ open, onClose, onSubmit, initialProject, mode, canEditGeneral = true }: ProjectFormModalProps) {
   const staffList = useStaffStore((s) => s.staffSummaries);
   const fetchStaff = useStaffStore((s) => s.fetchStaffSummaries);
   const role = useAuthStore((s) => s.session?.role);
@@ -131,7 +139,7 @@ export function ProjectFormModal({ open, onClose, onSubmit, initialProject, mode
     >
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="Nama Project" required hint={errors.name}>
-          <Input value={values.name} onChange={(e) => set("name", e.target.value)} placeholder="cth. Aurelia & Bagas Wedding" />
+          <Input value={values.name} onChange={(e) => set("name", e.target.value)} placeholder="cth. Aurelia & Bagas Wedding" disabled={!canEditGeneral} />
         </Field>
         <Field label="Status Project" required>
           <Select value={values.status} onChange={(e) => set("status", e.target.value as ProjectFormValues["status"])}>
@@ -141,25 +149,25 @@ export function ProjectFormModal({ open, onClose, onSubmit, initialProject, mode
           </Select>
         </Field>
         <Field label="Nama Mempelai Wanita" required hint={errors.brideName}>
-          <Input value={values.brideName} onChange={(e) => set("brideName", e.target.value)} />
+          <Input value={values.brideName} onChange={(e) => set("brideName", e.target.value)} disabled={!canEditGeneral} />
         </Field>
         <Field label="Nama Mempelai Pria" required hint={errors.groomName}>
-          <Input value={values.groomName} onChange={(e) => set("groomName", e.target.value)} />
+          <Input value={values.groomName} onChange={(e) => set("groomName", e.target.value)} disabled={!canEditGeneral} />
         </Field>
         <Field label="Tanggal Acara" required hint={errors.eventDate}>
-          <Input type="date" value={values.eventDate} onChange={(e) => set("eventDate", e.target.value)} />
+          <Input type="date" value={values.eventDate} onChange={(e) => set("eventDate", e.target.value)} disabled={!canEditGeneral} />
         </Field>
         <Field label="Tanggal Booking" required hint={errors.prepStartDate}>
-          <Input type="date" value={values.prepStartDate} onChange={(e) => set("prepStartDate", e.target.value)} />
+          <Input type="date" value={values.prepStartDate} onChange={(e) => set("prepStartDate", e.target.value)} disabled={!canEditGeneral} />
         </Field>
         <Field label="Lokasi / Venue" required hint={errors.venue}>
-          <Input value={values.venue} onChange={(e) => set("venue", e.target.value)} />
+          <Input value={values.venue} onChange={(e) => set("venue", e.target.value)} disabled={!canEditGeneral} />
         </Field>
         <Field label="Paket / Layanan" required hint={errors.packageName}>
-          <Input value={values.packageName} onChange={(e) => set("packageName", e.target.value)} />
+          <Input value={values.packageName} onChange={(e) => set("packageName", e.target.value)} disabled={!canEditGeneral} />
         </Field>
         <Field label="Nilai Kontrak (Rp)" required hint={errors.contractValue}>
-          <CurrencyInput value={values.contractValue} onChange={(n) => set("contractValue", n)} />
+          <CurrencyInput value={values.contractValue} onChange={(n) => set("contractValue", n)} disabled={!canEditGeneral} />
         </Field>
         <Field label="Penanggung Jawab WO (PIC Wedding Planner)" hint={errors.picStaffId}>
           {picLocked ? (

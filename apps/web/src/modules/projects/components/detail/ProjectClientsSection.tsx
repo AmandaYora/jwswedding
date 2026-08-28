@@ -6,6 +6,7 @@ import { Button } from "@/shared/components/ui/Button";
 import { Modal } from "@/shared/components/ui/Modal";
 import { Input, Field } from "@/shared/components/ui/Input";
 import { useClientStore } from "@/modules/clients/stores/useClientStore";
+import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
 import { useAuthStore } from "@/shared/stores/useAuthStore";
 import {
   clientContactSchema,
@@ -15,6 +16,7 @@ import {
   type ClientCreateFormValues,
   type RepresentativeFormValues,
 } from "@/modules/clients/schemas/client.schema";
+import { suggestUsername, suggestPassword } from "@/modules/clients/lib/credential-suggestion";
 import type { Client, ClientRole } from "@/modules/clients/types";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
 import { formatDate } from "@/shared/lib/formatters";
@@ -49,6 +51,11 @@ export function ProjectClientsSection({ projectId }: { projectId: string }) {
   // already own — resolveProjectAccess (backend) rejects the project fetch
   // itself otherwise, same pattern as canDuplicate/canSeeMargin above.
   const canManage = useAuthStore((s) => s.session?.role) !== "Staff";
+  // Sumber nama/tanggal acara untuk prefill Tambah Client (PLAN.md
+  // mom-25082026-item-sebagian item 10) — ProjectDetailLayout sudah
+  // menjamin currentProject termuat sebelum tab ini dirender, jadi tidak
+  // ada race terhadap null di sini.
+  const project = useProjectStore((s) => s.currentProject);
   const clients = useClientStore((s) => s.clientsByProject[projectId] ?? EMPTY_CLIENTS);
   const fetchClients = useClientStore((s) => s.fetchClients);
   const createClient = useClientStore((s) => s.createClient);
@@ -130,6 +137,15 @@ export function ProjectClientsSection({ projectId }: { projectId: string }) {
     } catch (err) {
       setActionError(getApiErrorMessage(err, "Gagal menambahkan client"));
     }
+  }
+
+  // Nama yang diusulkan untuk Tambah Client — Bride/Groom diambil dari nama
+  // mempelai di project (PLAN.md mom-25082026-item-sebagian item 10);
+  // Family Representative tidak punya sumber di project, mulai kosong.
+  function defaultNameFor(role: ClientRole): string {
+    if (role === "Bride") return project?.brideName ?? "";
+    if (role === "Groom") return project?.groomName ?? "";
+    return "";
   }
 
   return (
@@ -279,6 +295,8 @@ export function ProjectClientsSection({ projectId }: { projectId: string }) {
       {createRole && (
         <CreateClientModal
           role={createRole}
+          defaultName={defaultNameFor(createRole)}
+          eventDate={project?.eventDate ?? ""}
           onClose={() => setCreateRole(null)}
           onSubmit={(values) => void handleCreateSubmit(values)}
         />
@@ -456,18 +474,47 @@ function ResetCredentialModal({
 
 function CreateClientModal({
   role,
+  defaultName,
+  eventDate,
   onClose,
   onSubmit,
 }: {
   role: ClientRole;
+  defaultName: string;
+  eventDate: string;
   onClose: () => void;
   onSubmit: (values: ClientCreateFormValues) => void;
 }) {
-  const [values, setValues] = useState<ClientCreateFormValues>({ name: "", phone: "", email: "", relationNote: "", username: "", password: "" });
+  const [values, setValues] = useState<ClientCreateFormValues>(() => ({
+    name: defaultName,
+    phone: "",
+    email: "",
+    relationNote: "",
+    username: suggestUsername(defaultName),
+    password: suggestPassword(eventDate),
+  }));
   const [errors, setErrors] = useState<Partial<Record<keyof ClientCreateFormValues, string>>>({});
+  // Selama staff belum menyunting field Username sendiri, ia mengikuti
+  // perubahan field Nama — PLAN.md mom-25082026-item-sebagian item 10.
+  // Begitu staff mengetik langsung di Username (setUsername di bawah),
+  // sinkronisasi berhenti permanen untuk sesi modal ini.
+  const [usernameTouched, setUsernameTouched] = useState(false);
 
   function set<K extends keyof ClientCreateFormValues>(key: K, value: ClientCreateFormValues[K]) {
     setValues((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function setName(value: string) {
+    setValues((prev) => ({
+      ...prev,
+      name: value,
+      username: usernameTouched ? prev.username : suggestUsername(value),
+    }));
+  }
+
+  function setUsername(value: string) {
+    setUsernameTouched(true);
+    set("username", value);
   }
 
   function handleSubmit() {
@@ -498,7 +545,7 @@ function CreateClientModal({
     >
       <div className="flex flex-col gap-4">
         <Field label="Nama" required hint={errors.name}>
-          <Input value={values.name} onChange={(e) => set("name", e.target.value)} placeholder="Nama lengkap" />
+          <Input value={values.name} onChange={(e) => setName(e.target.value)} placeholder="Nama lengkap" />
         </Field>
         {role === "Family Representative" && (
           <Field label="Hubungan dengan Pengantin" hint={errors.relationNote}>
@@ -515,11 +562,11 @@ function CreateClientModal({
         <Field label="Email" required hint={errors.email}>
           <Input type="email" value={values.email} onChange={(e) => set("email", e.target.value)} />
         </Field>
-        <Field label="Username" required hint={errors.username}>
-          <Input value={values.username} onChange={(e) => set("username", e.target.value)} placeholder="cth. budi.rahman" />
+        <Field label="Username" required hint={errors.username ?? "Terisi otomatis dari Nama (jws_...) — bisa diubah bila sudah dipakai client lain"}>
+          <Input value={values.username} onChange={(e) => setUsername(e.target.value)} placeholder="cth. jws_budi" />
         </Field>
-        <Field label="Password Login" required hint={errors.password}>
-          <Input type="password" value={values.password} onChange={(e) => set("password", e.target.value)} placeholder="Minimal 6 karakter" />
+        <Field label="Password Login" required hint={errors.password ?? "Terisi otomatis dari tanggal acara (DDMMYYYY) — sampaikan ke client, bisa diubah"}>
+          <Input type="text" value={values.password} onChange={(e) => set("password", e.target.value)} placeholder="Minimal 6 karakter" />
         </Field>
       </div>
     </Modal>

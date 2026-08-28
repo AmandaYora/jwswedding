@@ -47,7 +47,15 @@ type clientPaymentInputBody struct {
 	Notes           string `json:"notes"`
 }
 
+// createClientPayment is Owner-or-Admin only -- confirmed role rule, PLAN.md
+// mom-25082026-item-sebagian §3b: konteks umum & pembayaran client hanya
+// bisa ditulis oleh Owner/Admin, WP dan Sales read-only. Same isOwnerOrAdmin
+// bar deleteClientPayment already uses.
 func (h *Handler) createClientPayment(w http.ResponseWriter, r *http.Request, claims staffClaims, projectID int64) {
+	if !isOwnerOrAdmin(claims.role) {
+		response.Error(w, http.StatusForbidden, "Hanya akun Owner atau Admin yang dapat mencatat pembayaran", nil)
+		return
+	}
 	var body clientPaymentInputBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
@@ -69,13 +77,18 @@ func (h *Handler) createClientPayment(w http.ResponseWriter, r *http.Request, cl
 	response.Created(w, "Pembayaran client berhasil dicatat", toClientPaymentResponse(*p, false))
 }
 
-// updateClientPayment is a full-field overwrite, no role-gate — see
-// updatePayment's doc comment. Guarded against changing type/amount on a
-// payment that a ClientInvoice's MarkPaid produced (PLAN.md
-// invoice-kwitansi-client §1.9/§4.3) — compared against the Invoice's own
-// Type/Amount (not the payment's current values), which is valid because
-// MarkPaid already forces them equal at creation time.
+// updateClientPayment is a full-field overwrite, Owner-or-Admin only (PLAN.md
+// mom-25082026-item-sebagian §3b -- broadened from the old no-role-gate
+// state alongside createClientPayment). Guarded against changing
+// type/amount on a payment that a ClientInvoice's MarkPaid produced
+// (PLAN.md invoice-kwitansi-client §1.9/§4.3) — compared against the
+// Invoice's own Type/Amount (not the payment's current values), which is
+// valid because MarkPaid already forces them equal at creation time.
 func (h *Handler) updateClientPayment(w http.ResponseWriter, r *http.Request, claims staffClaims, projectID int64, paymentIDRaw string) {
+	if !isOwnerOrAdmin(claims.role) {
+		response.Error(w, http.StatusForbidden, "Hanya akun Owner atau Admin yang dapat mengubah pembayaran", nil)
+		return
+	}
 	paymentID, err := parseInt64(paymentIDRaw)
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "ID tidak valid", nil)

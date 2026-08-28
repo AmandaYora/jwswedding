@@ -51,7 +51,13 @@ type clientInvoiceInputBody struct {
 	DueDate     string `json:"dueDate"`
 }
 
+// createClientInvoice is Owner-or-Admin only -- confirmed role rule, PLAN.md
+// mom-25082026-item-sebagian §3b, same bar deleteClientInvoice already uses.
 func (h *Handler) createClientInvoice(w http.ResponseWriter, r *http.Request, claims staffClaims, projectID int64) {
+	if !isOwnerOrAdmin(claims.role) {
+		response.Error(w, http.StatusForbidden, "Hanya akun Owner atau Admin yang dapat membuat Tagihan", nil)
+		return
+	}
 	var body clientInvoiceInputBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
@@ -80,7 +86,14 @@ type updateClientInvoiceBody struct {
 	Status      string `json:"status"`
 }
 
+// updateClientInvoice is Owner-or-Admin only -- confirmed role rule,
+// PLAN.md mom-25082026-item-sebagian §3b, same bar deleteClientInvoice
+// already uses.
 func (h *Handler) updateClientInvoice(w http.ResponseWriter, r *http.Request, claims staffClaims, projectID int64, invoiceIDRaw string) {
+	if !isOwnerOrAdmin(claims.role) {
+		response.Error(w, http.StatusForbidden, "Hanya akun Owner atau Admin yang dapat mengubah Tagihan", nil)
+		return
+	}
 	invoiceID, err := parseInt64(invoiceIDRaw)
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "ID tidak valid", nil)
@@ -134,7 +147,18 @@ type markInvoicePaidBody struct {
 	Notes           string `json:"notes"`
 }
 
+// markClientInvoicePaid is Owner-or-Admin only -- confirmed role rule,
+// PLAN.md mom-25082026-item-sebagian §3b. This gate is not optional: marking
+// an Invoice "Lunas" auto-creates a linked ClientPayment (ClientInvoice's
+// own MarkPaid), so leaving this route open would let a non-Owner/Admin
+// caller create a client payment through a back door even after
+// createClientPayment/updateClientPayment are gated -- see the sibling
+// unmarkClientInvoicePaid for the matching back door on the delete side.
 func (h *Handler) markClientInvoicePaid(w http.ResponseWriter, r *http.Request, claims staffClaims, projectID int64, invoiceIDRaw string) {
+	if !isOwnerOrAdmin(claims.role) {
+		response.Error(w, http.StatusForbidden, "Hanya akun Owner atau Admin yang dapat menandai Tagihan Lunas", nil)
+		return
+	}
 	invoiceID, err := parseInt64(invoiceIDRaw)
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "ID tidak valid", nil)
@@ -160,7 +184,15 @@ func (h *Handler) markClientInvoicePaid(w http.ResponseWriter, r *http.Request, 
 	response.OK(w, "Tagihan ditandai Lunas", toClientInvoiceResponse(*inv))
 }
 
+// unmarkClientInvoicePaid is Owner-or-Admin only -- confirmed role rule,
+// PLAN.md mom-25082026-item-sebagian §3b. Mirrors markClientInvoicePaid's
+// gate: UnmarkPaid deletes the linked ClientPayment, which is exactly the
+// back door deleteClientPayment's own Owner-or-Admin gate exists to close.
 func (h *Handler) unmarkClientInvoicePaid(w http.ResponseWriter, r *http.Request, claims staffClaims, projectID int64, invoiceIDRaw string) {
+	if !isOwnerOrAdmin(claims.role) {
+		response.Error(w, http.StatusForbidden, "Hanya akun Owner atau Admin yang dapat membatalkan pelunasan Tagihan", nil)
+		return
+	}
 	invoiceID, err := parseInt64(invoiceIDRaw)
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "ID tidak valid", nil)
