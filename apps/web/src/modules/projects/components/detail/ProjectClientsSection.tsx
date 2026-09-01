@@ -7,7 +7,6 @@ import { Modal } from "@/shared/components/ui/Modal";
 import { Input, Field } from "@/shared/components/ui/Input";
 import { useClientStore } from "@/modules/clients/stores/useClientStore";
 import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
-import { useAuthStore } from "@/shared/stores/useAuthStore";
 import {
   clientContactSchema,
   clientCreateSchema,
@@ -42,15 +41,12 @@ interface ModalTarget {
 const EMPTY_CLIENTS: Client[] = [];
 
 export function ProjectClientsSection({ projectId }: { projectId: string }) {
-  // Wedding Planner reads client data for their own project fine (backend
-  // already scopes it), but every write action here is Owner/Admin/Sales
-  // only (see PLAN.md revisi-timeline-vendor-role-sales's RBAC section) —
-  // hide the buttons for that role instead of letting them click through to
-  // a 403. Sales isn't scoped to "their own project" here specifically
-  // because they can only ever reach this component for a project they
-  // already own — resolveProjectAccess (backend) rejects the project fetch
-  // itself otherwise, same pattern as canDuplicate/canSeeMargin above.
-  const canManage = useAuthStore((s) => s.session?.role) !== "Staff";
+  // Every write action here is Owner/Admin/Sales/Staff (Wedding Planner) —
+  // PLAN.md mom-25082026-item-belum item 2 widened this from Owner/Admin/
+  // Sales to also include WP. No role-gated canManage anymore: whoever can
+  // reach this component at all (resolveProjectAccess already scoped a WP
+  // or Sales caller to their own project) can act on it — the backend's
+  // requireManagerOrProjectPIC enforces the same scoping server-side.
   // Sumber nama/tanggal acara untuk prefill Tambah Client (PLAN.md
   // mom-25082026-item-sebagian item 10) — ProjectDetailLayout sudah
   // menjamin currentProject termuat sebelum tab ini dirender, jadi tidak
@@ -168,11 +164,9 @@ export function ProjectClientsSection({ projectId }: { projectId: string }) {
                   className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-dashed border-border px-4 py-3 text-[13px] text-text-secondary"
                 >
                   <span>Belum ada data {ROLE_LABEL[role]}.</span>
-                  {canManage && (
-                    <Button size="sm" variant="secondary" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateRole(role)}>
-                      Tambah {ROLE_LABEL[role]}
-                    </Button>
-                  )}
+                  <Button size="sm" variant="secondary" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateRole(role)}>
+                    Tambah {ROLE_LABEL[role]}
+                  </Button>
                 </div>
               );
             }
@@ -200,51 +194,49 @@ export function ProjectClientsSection({ projectId }: { projectId: string }) {
                   </span>
                 </div>
 
-                {canManage && (
-                  <div className="mt-3 flex flex-wrap gap-2">
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={<Pencil className="h-3.5 w-3.5" />}
+                    onClick={() => setModalTarget({ clientId: client.id, mode: "contact" })}
+                  >
+                    Ubah Kontak
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={<RefreshCw className="h-3.5 w-3.5" />}
+                    onClick={() => setModalTarget({ clientId: client.id, mode: "reset" })}
+                  >
+                    Reset Credential
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={client.isActive ? "danger" : "secondary"}
+                    onClick={() => void handleToggleActive(client.id)}
+                  >
+                    {client.isActive ? "Nonaktifkan" : "Aktifkan"}
+                  </Button>
+                  {role === "Family Representative" && (
                     <Button
                       size="sm"
                       variant="secondary"
-                      icon={<Pencil className="h-3.5 w-3.5" />}
-                      onClick={() => setModalTarget({ clientId: client.id, mode: "contact" })}
+                      icon={<UserCog className="h-3.5 w-3.5" />}
+                      onClick={() => setModalTarget({ clientId: client.id, mode: "replace" })}
                     >
-                      Ubah Kontak
+                      Ganti Wedding Representative
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      icon={<RefreshCw className="h-3.5 w-3.5" />}
-                      onClick={() => setModalTarget({ clientId: client.id, mode: "reset" })}
-                    >
-                      Reset Credential
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant={client.isActive ? "danger" : "secondary"}
-                      onClick={() => void handleToggleActive(client.id)}
-                    >
-                      {client.isActive ? "Nonaktifkan" : "Aktifkan"}
-                    </Button>
-                    {role === "Family Representative" && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        icon={<UserCog className="h-3.5 w-3.5" />}
-                        onClick={() => setModalTarget({ clientId: client.id, mode: "replace" })}
-                      >
-                        Ganti Wedding Representative
-                      </Button>
-                    )}
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      icon={<Trash2 className="h-3.5 w-3.5" />}
-                      onClick={() => setDeletingClientId(client.id)}
-                    >
-                      Hapus Client
-                    </Button>
-                  </div>
-                )}
+                  )}
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    icon={<Trash2 className="h-3.5 w-3.5" />}
+                    onClick={() => setDeletingClientId(client.id)}
+                  >
+                    Hapus Client
+                  </Button>
+                </div>
 
                 {deletingClientId === client.id && (
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger/30 bg-danger-soft px-4 py-3">

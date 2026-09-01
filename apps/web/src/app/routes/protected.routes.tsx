@@ -26,6 +26,7 @@ const VenueListPage = lazy(() => import("@/modules/venues/pages/VenueListPage"))
 const UserListPage = lazy(() => import("@/modules/users/pages/UserListPage"));
 const SubscriptionPage = lazy(() => import("@/modules/subscription/pages/SubscriptionPage"));
 const CompanyProfilePage = lazy(() => import("@/modules/company-profile/pages/CompanyProfilePage"));
+const TimelineMonitorPage = lazy(() => import("@/modules/timeline-monitor/pages/TimelineMonitorPage"));
 
 export const protectedRoutes: RouteObject = {
   element: <RequireAuth allow={["staff"]} />,
@@ -68,6 +69,15 @@ export const protectedRoutes: RouteObject = {
             { path: ROUTE_PATHS.vendors, element: <VendorListPage /> },
             { path: ROUTE_PATHS.venues, element: <VenueListPage /> },
           ],
+        },
+        {
+          // Wider than the Owner/Admin-only block above: a Wedding Planner
+          // has no Dashboard access at all (PLAN.md mom-25082026-item-belum
+          // item 17, T-1), so Monitoring Timeline is its own standalone
+          // route/menu entry reachable by Staff too — scoped server-side to
+          // their own PIC'd projects.
+          element: <RequireRole allow={["Owner", "Admin", "Staff"]} />,
+          children: [{ path: ROUTE_PATHS.clientTimelines, element: <TimelineMonitorPage /> }],
         },
         {
           element: <RequireRole allow={["Owner"]} />,

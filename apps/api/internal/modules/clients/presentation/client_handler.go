@@ -75,24 +75,34 @@ func requireManagerRole(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// requireManagerOrProjectSales is the extra gate every Client **write**
+// requireManagerOrProjectPIC is the extra gate every Client **write**
 // action needs on top of requireTenant — Owner/Admin write freely across
-// every project (same as before); a Sales staff member additionally gets
-// full write access, but only within the one project they're PIC Sales of
-// (PLAN.md revisi-timeline-vendor-role-sales, confirmed: Sales gets full
-// Client write, unlike a Wedding Planner who stays read-only everywhere —
-// see VerifyProjectReadAccess). Every other role (notably "Staff") is
-// rejected outright, same scope requireManagerRole always had.
-func (h *Handler) requireManagerOrProjectSales(w http.ResponseWriter, r *http.Request, tenantID, projectID int64) bool {
-	claims, _ := middleware.FromContext(r.Context())
+// every project (same as before); a Sales or Staff (Wedding Planner) staff
+// member additionally gets full write access, but only within the one
+// project they're PIC of (PLAN.md mom-25082026-item-belum item 2: WP was
+// previously rejected outright here, same as everyone but Owner/Admin/Sales
+// — now delegated to VerifyProjectReadAccess, which already scopes both
+// roles correctly: Staff by ProjectPICStaffID, Sales by PIC Sales).
+//
+// The PrincipalType == "staff" check is not optional: VerifyProjectReadAccess's
+// switch only has cases for "Staff"/"Sales" and falls through to a bare nil
+// (pass) for anything else, since it was written assuming only staff-role
+// callers ever reach it. Without this check here, a Client Portal principal
+// (role "Bride"/"Groom"/"Family Representative") would match none of those
+// cases and be silently granted write access — including creating client
+// accounts and resetting credentials — for any project in their own tenant.
+func (h *Handler) requireManagerOrProjectPIC(w http.ResponseWriter, r *http.Request, tenantID, projectID int64) bool {
+	claims, ok := middleware.FromContext(r.Context())
+	if !ok || claims.PrincipalType != "staff" {
+		response.Error(w, http.StatusForbidden, "Hanya staff WO yang dapat melakukan aksi ini", nil)
+		return false
+	}
 	if claims.HasRole("Owner", "Admin") {
 		return true
 	}
-	if claims.HasRole("Sales") {
-		staffID, err := strconv.ParseInt(claims.PrincipalID, 10, 64)
-		if err == nil && h.clients.VerifyProjectSalesOwner(r.Context(), tenantID, projectID, staffID) == nil {
-			return true
-		}
+	staffID, err := strconv.ParseInt(claims.PrincipalID, 10, 64)
+	if err == nil && h.clients.VerifyProjectReadAccess(r.Context(), tenantID, projectID, staffID, claims.Role) == nil {
+		return true
 	}
 	response.Error(w, http.StatusForbidden, "Anda tidak memiliki akses untuk melakukan aksi ini", nil)
 	return false
@@ -197,7 +207,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, tenantID int64)
 		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
 		return
 	}
-	if !h.requireManagerOrProjectSales(w, r, tenantID, body.ProjectID) {
+	if !h.requireManagerOrProjectPIC(w, r, tenantID, body.ProjectID) {
 		return
 	}
 	c, err := h.clients.Create(r.Context(), tenantID, application.CreateClientInput{
@@ -214,8 +224,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, tenantID int64)
 // Item only ever dispatches write actions (update/delete/toggle-active/
 // reset-credential/replace-representative — no GET case exists here), so
 // the whole function is gated in one place — Owner/Admin unconditionally, or
-// a Sales staff member scoped to this client's own project (see
-// requireManagerOrProjectSales). The client row is fetched once here just to
+// a Sales/Staff member scoped to this client's own project (see
+// requireManagerOrProjectPIC). The client row is fetched once here just to
 // resolve its ProjectID for that check; every sub-handler below still does
 // its own lookup when it needs the row's other fields, same as before.
 func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
@@ -238,7 +248,7 @@ func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 		writeAppError(w, err)
 		return
 	}
-	if !h.requireManagerOrProjectSales(w, r, tenantID, c.ProjectID) {
+	if !h.requireManagerOrProjectPIC(w, r, tenantID, c.ProjectID) {
 		return
 	}
 

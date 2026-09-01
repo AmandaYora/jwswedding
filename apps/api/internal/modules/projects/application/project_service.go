@@ -673,6 +673,9 @@ func (s *ProjectService) UpdateMilestone(ctx context.Context, tenantID, projectI
 	if m == nil {
 		return nil, apperror.NotFound("Timeline tidak ditemukan")
 	}
+	if err := guardStatusSelesai(ctx, s.evidence, m, input, milestoneID); err != nil {
+		return nil, err
+	}
 	m.Status = input.Status
 	m.TargetDate = input.TargetDate
 	m.CompletedDate = input.CompletedDate
@@ -682,6 +685,38 @@ func (s *ProjectService) UpdateMilestone(ctx context.Context, tenantID, projectI
 	s.activity.Record(ctx, &projectID, domain.ActivityMilestoneUpdated, actorStaffID, "project_milestone", formatID(m.ID), m.Name,
 		"Timeline project diperbarui: "+m.Name)
 	return m, nil
+}
+
+// guardStatusSelesai enforces MOM 25/08/2026 item 5: a timeline can't be
+// marked Completed without a CompletedDate and at least one attached
+// lampiran. Only guards the TRANSITION into Completed (m.Status was
+// something else, input.Status is now Completed) — deliberate (PLAN.md
+// mom-25082026-item-belum D1): production already holds Completed rows from
+// before this rule existed, some without evidence, and if this guard also
+// re-validated every save on an already-Completed row, editing any of
+// those old rows (e.g. fixing a typo'd TargetDate) would be permanently
+// blocked with no way out from the UI. A row already Completed stays
+// editable; only the transition into Completed is guarded, so no new row
+// can become Completed without proof going forward.
+func guardStatusSelesai(ctx context.Context, evidence *EvidenceService, m *domain.ProjectMilestone, input MilestoneUpdateInput, milestoneID int64) error {
+	if input.Status != domain.MilestoneCompleted || m.Status == domain.MilestoneCompleted {
+		return nil
+	}
+	if input.CompletedDate == nil {
+		return apperror.Validation("Tanggal selesai wajib diisi", map[string][]string{
+			"completedDate": {"Timeline tidak bisa ditandai Completed tanpa tanggal selesai"},
+		})
+	}
+	has, err := evidence.HasForRelated(ctx, domain.RelatedProjectMilestone, milestoneID)
+	if err != nil {
+		return err
+	}
+	if !has {
+		return apperror.Validation("Lampiran wajib diisi", map[string][]string{
+			"lampiran": {"Timeline tidak bisa ditandai Completed tanpa lampiran. Bila tidak ada dokumen asli, unggah screenshot jadwal meeting atau dokumen kosong."},
+		})
+	}
+	return nil
 }
 
 // ReorderMilestones rewrites every milestone's SortOrder for this project to

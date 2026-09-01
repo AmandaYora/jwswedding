@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { UPLOAD_ACCEPT } from "@/shared/lib/upload-file-types";
 import { Modal } from "@/shared/components/ui/Modal";
 import { Button } from "@/shared/components/ui/Button";
 import { Input, Textarea, Select, Field } from "@/shared/components/ui/Input";
@@ -140,7 +141,7 @@ export function EvidenceUploadModal({
         <Field label="Berkas" required hint={fileError ?? undefined}>
           <input
             type="file"
-            accept="image/jpeg,image/png,application/pdf"
+            accept={UPLOAD_ACCEPT}
             onChange={(e) => {
               setFile(e.target.files?.[0] ?? null);
               setFileError(null);

@@ -27,6 +27,20 @@ type DashboardPaymentRow struct {
 	VendorID    int64
 }
 
+// ClientTimelineRow denormalizes a Timeline Project item + its project's
+// identity (name, couple's names, event date) for the standalone Monitoring
+// Timeline page (PLAN.md mom-25082026-item-belum item 17) — a client-facing
+// view, so BrideName/GroomName ride along even though the sibling *Row
+// types above only ever carry ProjectName.
+type ClientTimelineRow struct {
+	Milestone   ProjectMilestone
+	ProjectID   int64
+	ProjectName string
+	BrideName   string
+	GroomName   string
+	EventDate   time.Time
+}
+
 // DashboardVenuePaymentRow deliberately stays a separate slice/type from
 // DashboardPaymentRow above rather than a merged, source-discriminated one --
 // there's no VendorID-equivalent for a venue payment, and keeping the

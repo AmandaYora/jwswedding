@@ -1,9 +1,11 @@
 import { useState } from "react";
-import { Plus, FileText } from "lucide-react";
+import { Plus, FileText, Eye } from "lucide-react";
+import { UPLOAD_ACCEPT } from "@/shared/lib/upload-file-types";
 import { Modal } from "@/shared/components/ui/Modal";
 import { Button } from "@/shared/components/ui/Button";
 import { Badge } from "@/shared/components/ui/Badge";
 import { Input, Select, Field } from "@/shared/components/ui/Input";
+import { IconActionButton } from "@/shared/components/ui/IconActionButton";
 import { EvidenceViewerModal } from "@/shared/components/ui/EvidenceViewerModal";
 import { EVIDENCE_TYPE_OPTIONS } from "@/modules/projects/schemas/evidence.schema";
 import type { Evidence, EvidenceType, MilestoneStatus, ProjectMilestone } from "@/modules/projects/types";
@@ -108,7 +110,14 @@ export function ProjectMilestoneEditModal({
         <section>
           <p className="mb-3 text-[12px] font-semibold uppercase tracking-wide text-text-secondary">Status &amp; Jadwal</p>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Status">
+            <Field
+              label="Status"
+              hint={
+                fields.status === "Completed" && evidenceList.length === 0
+                  ? "Timeline hanya bisa ditandai Completed bila sudah ada lampiran (boleh screenshot jadwal meeting atau dokumen kosong bila belum ada dokumen asli)."
+                  : undefined
+              }
+            >
               <Select value={fields.status} onChange={(e) => set("status", e.target.value as MilestoneStatus)}>
                 {STATUS_OPTIONS.map((s) => (
                   <option key={s} value={s}>{s}</option>
@@ -139,7 +148,7 @@ export function ProjectMilestoneEditModal({
                 <Field label="Berkas" required>
                   <input
                     type="file"
-                    accept="image/jpeg,image/png,application/pdf"
+                    accept={UPLOAD_ACCEPT}
                     onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                     className="block w-full text-[13px] text-text-secondary file:mr-3 file:rounded-md file:border-0 file:bg-navy-900 file:px-3 file:py-1.5 file:text-[12.5px] file:font-semibold file:text-white"
                   />
@@ -178,16 +187,22 @@ export function ProjectMilestoneEditModal({
             <ul className="flex flex-col gap-2">
               {evidenceList.map((e) => (
                 <li key={e.id}>
-                  <button
-                    type="button"
+                  {/* Baris ini sendiri (bukan <button>) tetap bisa diklik untuk
+                     membuka viewer (item 6) -- ikon mata di ujung kanan adalah
+                     IconActionButton, dan sebuah <button> tidak boleh
+                     bersarang di dalam <button> lain (HTML tidak valid),
+                     jadi baris pembungkusnya adalah <div onClick> alih-alih
+                     <button>. */}
+                  <div
                     onClick={() => setViewingEvidence(e)}
-                    className="flex w-full items-center gap-3 rounded-md border border-border px-3 py-2 text-left text-[13px] transition-colors hover:bg-surface-muted"
+                    className="flex w-full cursor-pointer items-center gap-3 rounded-md border border-border px-3 py-2 text-left text-[13px] transition-colors hover:bg-surface-muted"
                   >
                     <FileText className="h-4 w-4 shrink-0 text-text-secondary" />
                     <span className="min-w-0 flex-1 truncate font-medium text-text-primary">{e.name}</span>
                     <Badge tone="neutral">{e.type}</Badge>
                     <span className="shrink-0 text-text-secondary">{formatDate(e.documentDate)}</span>
-                  </button>
+                    <IconActionButton icon={Eye} label="Lihat Lampiran" tone="info" onClick={() => setViewingEvidence(e)} />
+                  </div>
                 </li>
               ))}
             </ul>

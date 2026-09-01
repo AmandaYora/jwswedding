@@ -66,6 +66,20 @@ func (s *EvidenceService) List(ctx context.Context, projectID int64) ([]domain.E
 	return s.repo.ListByProject(ctx, projectID)
 }
 
+// HasForRelated reports whether at least one evidence row exists for the
+// given (kind, relatedID) pair — backs ProjectService's guardStatusSelesai
+// (PLAN.md mom-25082026-item-belum item 5), which only needs to know
+// existence, not the rows themselves. Goes through ListByRelated (already
+// backed by idx_evidence_related) rather than loading a project's entire
+// evidence list and filtering in memory.
+func (s *EvidenceService) HasForRelated(ctx context.Context, kind domain.EvidenceRelatedKind, relatedID int64) (bool, error) {
+	list, err := s.repo.ListByRelated(ctx, kind, relatedID)
+	if err != nil {
+		return false, err
+	}
+	return len(list) > 0, nil
+}
+
 // ListClientDocuments backs GET /projects/{id}/documents — Client Portal's
 // own "Dokumen" tab. Reachable by staff too (no principal-type branching
 // here); the safety property this endpoint exists for is that it ALWAYS
@@ -167,6 +181,14 @@ func (s *EvidenceService) Upload(ctx context.Context, tenantID, projectID int64,
 	}
 	if len(decoded) > maxDecodedSize {
 		return nil, apperror.Validation("Ukuran file terlalu besar", map[string][]string{"base64Data": {"Maksimal 15 MB"}})
+	}
+	// Allowlist enforced here, not just the frontend's <input accept=...> —
+	// PLAN.md mom-25082026-item-belum item 7 (D3). See
+	// domain.IsAllowedUploadMimeType's doc comment for what's excluded and
+	// why (html/svg/js/executable, to prevent stored XSS through evidence's
+	// inline Content-Disposition).
+	if !domain.IsAllowedUploadMimeType(input.MimeType) {
+		return nil, apperror.Validation("Jenis file tidak didukung", map[string][]string{"mimeType": {"Jenis file ini tidak diizinkan untuk diunggah"}})
 	}
 
 	// Backend re-compression is the authoritative pass — see ADR-0010. Runs

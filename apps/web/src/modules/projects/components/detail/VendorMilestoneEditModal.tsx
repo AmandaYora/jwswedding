@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Plus, FileText } from "lucide-react";
+import { UPLOAD_ACCEPT } from "@/shared/lib/upload-file-types";
 import { Modal } from "@/shared/components/ui/Modal";
 import { Button } from "@/shared/components/ui/Button";
 import { Badge } from "@/shared/components/ui/Badge";
@@ -177,7 +178,7 @@ export function VendorMilestoneEditModal({
                 <Field label="Berkas" required>
                   <input
                     type="file"
-                    accept="image/jpeg,image/png,application/pdf"
+                    accept={UPLOAD_ACCEPT}
                     onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                     className="block w-full text-[13px] text-text-secondary file:mr-3 file:rounded-md file:border-0 file:bg-navy-900 file:px-3 file:py-1.5 file:text-[12.5px] file:font-semibold file:text-white"
                   />

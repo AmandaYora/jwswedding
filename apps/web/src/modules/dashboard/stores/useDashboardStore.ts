@@ -106,7 +106,7 @@ function toDashboardStats(raw: RawDashboard): DashboardStats {
 
 interface DashboardState {
   stats: DashboardStats | null;
-  fetchDashboard: () => Promise<void>;
+  fetchDashboard: (month?: string) => Promise<void>;
 }
 
 // Backed by the real WO dashboard aggregation endpoint (Fase 5) —
@@ -116,8 +116,12 @@ interface DashboardState {
 export const useDashboardStore = create<DashboardState>((set) => ({
   stats: null,
 
-  fetchDashboard: async () => {
-    const res = await httpClient.get(API.dashboard);
+  // month ("YYYY-MM") switches "Acara Terdekat" from the default 5-nearest
+  // to every open project in that exact calendar month (PLAN.md
+  // mom-25082026-item-belum item 16) — omitted entirely keeps the old
+  // behavior, matching the backend's nil-means-default contract.
+  fetchDashboard: async (month) => {
+    const res = await httpClient.get(API.dashboard, { params: month ? { month } : undefined });
     set({ stats: toDashboardStats(res.data.data as RawDashboard) });
   },
 }));

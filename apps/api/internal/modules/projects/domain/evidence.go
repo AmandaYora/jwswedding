@@ -67,3 +67,45 @@ type Evidence struct {
 	// a document in before a client can see it.
 	IsClientVisible bool
 }
+
+// allowedUploadMimeTypes is the allowlist an evidence upload's mime type
+// must match (PLAN.md mom-25082026-item-belum item 7) -- deliberately wider
+// than "just images and PDF" but stops short of "everything": html, svg,
+// javascript, and executables are excluded on purpose. Evidence is served
+// with Content-Disposition: inline from this application's own origin (see
+// presentation.downloadEvidence), so an uploaded .html or .svg would run as
+// a script under this app's own origin for whoever opens it -- staff and,
+// for client-visible documents, the client too. This is the sole
+// authoritative check; the frontend's <input accept=...> is only a dialog
+// filter and is not trusted.
+var allowedUploadMimeTypes = map[string]bool{
+	// Gambar
+	"image/jpeg": true,
+	"image/jpg":  true,
+	"image/png":  true,
+	"image/gif":  true,
+	"image/webp": true,
+	// Dokumen
+	"application/pdf": true,
+	// Office
+	"application/msword": true,
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+	"application/vnd.ms-excel": true,
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         true,
+	"application/vnd.ms-powerpoint":                                             true,
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation": true,
+	// Teks
+	"text/plain": true,
+	"text/csv":   true,
+	// Arsip
+	"application/zip":              true,
+	"application/x-rar-compressed": true,
+	"application/x-7z-compressed":  true,
+}
+
+// IsAllowedUploadMimeType reports whether mime is on the evidence upload
+// allowlist -- see allowedUploadMimeTypes' doc comment for what's excluded
+// and why.
+func IsAllowedUploadMimeType(mime string) bool {
+	return allowedUploadMimeTypes[mime]
+}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
-import { LayoutDashboard, FolderKanban, Users, Tags, Store, Building2, UserCog, Sparkles, Settings, CalendarClock, Landmark, ChevronDown, LogOut, X } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Users, Tags, Store, Building2, UserCog, Sparkles, Settings, CalendarClock, CalendarCheck, Landmark, ChevronDown, LogOut, X } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { Avatar } from "@/shared/components/ui/Avatar";
@@ -32,10 +32,13 @@ type NavEntry = NavLinkItem | NavGroupItem;
 // "Pengaturan" groups the 3 lower-frequency admin pages behind one collapsible
 // entry instead of each sitting flat in the list. Role matrix (confirmed):
 // Owner sees everything; Admin sees everything except Pengaturan entirely;
-// Wedding Planner ("Staff") sees only Project.
+// Wedding Planner ("Staff") sees only Project and Monitoring Timeline
+// (PLAN.md mom-25082026-item-belum item 17 — WP has no Dashboard access at
+// all, so this is a standalone entry, not folded into Dashboard's own).
 const NAV_ITEMS: NavEntry[] = [
   { kind: "link", to: ROUTE_PATHS.dashboard, label: "Dashboard", icon: LayoutDashboard, allowedRoles: ["Owner", "Admin"] },
   { kind: "link", to: ROUTE_PATHS.projects, label: "Project", icon: FolderKanban },
+  { kind: "link", to: ROUTE_PATHS.clientTimelines, label: "Monitoring Timeline", icon: CalendarCheck, allowedRoles: ["Owner", "Admin", "Staff"] },
   { kind: "link", to: ROUTE_PATHS.clients, label: "Client", icon: Users, allowedRoles: ["Owner", "Admin"] },
   { kind: "link", to: ROUTE_PATHS.vendors, label: "Vendor", icon: Store, allowedRoles: ["Owner", "Admin"] },
   { kind: "link", to: ROUTE_PATHS.venues, label: "Venue", icon: Building2, allowedRoles: ["Owner", "Admin"] },

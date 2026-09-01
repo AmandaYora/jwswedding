@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { StatCard } from "@/shared/components/ui/StatCard";
 import { AttentionQueue } from "@/modules/dashboard/components/AttentionQueue";
 import { UpcomingEvents } from "@/modules/dashboard/components/UpcomingEvents";
@@ -16,11 +16,17 @@ export default function DashboardPage() {
   const fetchDashboard = useDashboardStore((s) => s.fetchDashboard);
   const vendors = useVendorStore((s) => s.vendors);
   const fetchVendors = useVendorStore((s) => s.fetchVendors);
+  // "" = mode default (5 acara terdekat) — PLAN.md mom-25082026-item-belum
+  // item 16.
+  const [upcomingMonth, setUpcomingMonth] = useState("");
 
   useEffect(() => {
-    void fetchDashboard();
+    void fetchDashboard(upcomingMonth || undefined);
+  }, [fetchDashboard, upcomingMonth]);
+
+  useEffect(() => {
     void fetchVendors();
-  }, [fetchDashboard, fetchVendors]);
+  }, [fetchVendors]);
 
   const { items, counts } = useMemo(
     () => (stats ? buildAttentionItems(stats, vendors) : { items: [] as AttentionItem[], counts: {} as Record<string, number> }),
@@ -71,7 +77,7 @@ export default function DashboardPage() {
           <AttentionQueue items={items} counts={counts} />
         </div>
         <div className="flex flex-col gap-6">
-          <UpcomingEvents projects={stats.upcomingProjects} />
+          <UpcomingEvents projects={stats.upcomingProjects} month={upcomingMonth} onMonthChange={setUpcomingMonth} />
           <RecentActivity activity={stats.recentActivity} />
         </div>
       </div>

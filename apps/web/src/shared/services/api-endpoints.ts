@@ -133,6 +133,7 @@ export const API = {
     item: (id: string) => `/api/v1/milestone-templates/${id}`,
   },
   dashboard: "/api/v1/dashboard",
+  clientTimelines: "/api/v1/client-timelines",
   clients: {
     base: "/api/v1/clients",
     byProject: (projectId: string) => `/api/v1/clients?projectId=${projectId}`,

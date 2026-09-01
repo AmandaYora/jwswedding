@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
-import { Plus, Ban, CheckCircle2, Pencil, ArrowUp, ArrowDown, Paperclip, List as ListIcon, GanttChartSquare } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, Ban, CheckCircle2, Pencil, ArrowUp, ArrowDown, Eye, List as ListIcon, GanttChartSquare } from "lucide-react";
 import { Card, CardHeader, CardContent } from "@/shared/components/ui/Card";
 import { Button } from "@/shared/components/ui/Button";
-import { Select } from "@/shared/components/ui/Input";
+import { Input, Select } from "@/shared/components/ui/Input";
+import { SearchInput } from "@/shared/components/ui/SearchInput";
 import { Table, THead, TBody, TR, TH, TD } from "@/shared/components/ui/Table";
 import { CardList, CardListField } from "@/shared/components/ui/CardList";
 import { Pagination } from "@/shared/components/ui/Pagination";
@@ -50,13 +51,33 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
   const [editingMilestone, setEditingMilestone] = useState<ProjectMilestone | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "gantt">("list");
+  const [query, setQuery] = useState("");
+  const [monthFilter, setMonthFilter] = useState("");
   const sortedMilestones = sortMilestones(milestones);
   const stats = computeMilestoneStats(milestones);
-  const { page, setPage, totalPages, totalItems, pageSize, pageItems } = usePagination(sortedMilestones);
+  const isFilterActive = query.trim().length > 0 || monthFilter.length > 0;
+  // Search cocok pada nama timeline saja -- satu-satunya teks bebas pada
+  // ProjectMilestone (PLAN.md mom-25082026-item-belum item 4). Filter bulan
+  // menyaring target_date, bukan tanggal selesai -- MOM-nya bicara "timeline
+  // yg harus diselesaikan", yaitu target (item 15).
+  const filteredMilestones = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return sortedMilestones.filter((m) => {
+      const matchesQuery = q.length === 0 || m.name.toLowerCase().includes(q);
+      const matchesMonth = monthFilter.length === 0 || m.targetDate.slice(0, 7) === monthFilter;
+      return matchesQuery && matchesMonth;
+    });
+  }, [sortedMilestones, query, monthFilter]);
+  const { page, setPage, totalPages, totalItems, pageSize, pageItems } = usePagination(filteredMilestones);
   // Up/down only makes sense within the active (non-cancelled) set — a
   // cancelled milestone's on-screen position is always forced to the bottom
   // (see sortMilestones above) regardless of its stored sort order, so
-  // reordering buttons on it (or past it) would be confusing.
+  // reordering buttons on it (or past it) would be confusing. Computed from
+  // the UNFILTERED list (not filteredMilestones) on purpose: handleMove
+  // sends the full permutation of every milestone's ID to the backend, which
+  // rejects anything less than a complete permutation (project_service.go's
+  // ReorderMilestones) -- reordering buttons stay hidden while a
+  // filter/search is active instead (see isFilterActive below).
   const activeOrder = sortedMilestones.filter((m) => m.status !== "Cancelled");
 
   useEffect(() => {
@@ -184,9 +205,29 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
             </div>
           </div>
 
-          {viewMode === "gantt" ? (
+          {milestones.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 pt-4">
+              <SearchInput
+                className="max-w-xs"
+                placeholder="Cari nama timeline..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              <Input type="month" className="w-40" value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} />
+            </div>
+          )}
+
+          {milestones.length === 0 ? (
+            <p className="mt-4 rounded-md border border-dashed border-border px-4 py-6 text-center text-[13px] text-text-secondary">
+              Belum ada timeline untuk project ini.
+            </p>
+          ) : filteredMilestones.length === 0 ? (
+            <p className="mt-4 rounded-md border border-dashed border-border px-4 py-6 text-center text-[13px] text-text-secondary">
+              Tidak ada timeline yang cocok dengan pencarian atau filter.
+            </p>
+          ) : viewMode === "gantt" ? (
             <div className="pt-4">
-              <ProjectMilestoneGanttView milestones={sortedMilestones} />
+              <ProjectMilestoneGanttView milestones={filteredMilestones} />
             </div>
           ) : (
           <>
@@ -203,7 +244,7 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
                   <div className="flex items-start justify-between gap-3">
                     <span className={cn("font-medium text-text-primary", cancelled && "line-through")}>{m.order}. {m.name}</span>
                     <div className="flex shrink-0 items-center gap-1">
-                      {!cancelled && (
+                      {!cancelled && !isFilterActive && (
                         <>
                           <IconActionButton
                             icon={ArrowUp}
@@ -254,13 +295,10 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
                       label="Lampiran"
                       value={
                         evidenceFor(m).length > 0 ? (
-                          <button
-                            type="button"
-                            onClick={() => setEditingMilestone(m)}
-                            className="inline-flex items-center gap-1 font-medium text-navy-900 hover:underline"
-                          >
-                            <Paperclip className="h-3.5 w-3.5" /> {evidenceFor(m).length}
-                          </button>
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="font-medium text-text-primary">{evidenceFor(m).length}</span>
+                            <IconActionButton icon={Eye} label="Lihat Lampiran" tone="info" onClick={() => setEditingMilestone(m)} />
+                          </span>
                         ) : (
                           "-"
                         )
@@ -318,20 +356,17 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
                     <TD>{formatDate(m.completedDate)}</TD>
                     <TD>
                       {evidenceFor(m).length > 0 ? (
-                        <button
-                          type="button"
-                          onClick={() => setEditingMilestone(m)}
-                          className="inline-flex items-center gap-1 text-[12.5px] font-medium text-navy-900 hover:underline"
-                        >
-                          <Paperclip className="h-3.5 w-3.5" /> {evidenceFor(m).length}
-                        </button>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="text-[12.5px] font-medium text-text-primary">{evidenceFor(m).length}</span>
+                          <IconActionButton icon={Eye} label="Lihat Lampiran" tone="info" onClick={() => setEditingMilestone(m)} />
+                        </span>
                       ) : (
                         <span className="text-text-secondary">-</span>
                       )}
                     </TD>
                     <TD>
                       <div className="flex items-center gap-1">
-                        {!cancelled && (
+                        {!cancelled && !isFilterActive && (
                           <>
                             <IconActionButton
                               icon={ArrowUp}

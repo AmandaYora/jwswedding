@@ -270,3 +270,183 @@ func TestProjectServiceUpdate_Owner_MengubahSeluruhField_Berhasil(t *testing.T) 
 		t.Errorf("Owner update tidak diterapkan: got %+v", got)
 	}
 }
+
+// --- guardStatusSelesai (PLAN.md mom-25082026-item-belum item 5) ---
+
+// fakeMilestoneRepo is a minimal in-memory stand-in for MilestoneRepository
+// -- only FindByID/Update matter for UpdateMilestone's own tests.
+type fakeMilestoneRepo struct {
+	milestone *domain.ProjectMilestone
+	updated   *domain.ProjectMilestone
+}
+
+func (f *fakeMilestoneRepo) ListByProject(ctx context.Context, projectID int64) ([]domain.ProjectMilestone, error) {
+	panic("not implemented")
+}
+func (f *fakeMilestoneRepo) ListByProjects(ctx context.Context, projectIDs []int64) ([]domain.ProjectMilestone, error) {
+	panic("not implemented")
+}
+func (f *fakeMilestoneRepo) FindByID(ctx context.Context, projectID, id int64) (*domain.ProjectMilestone, error) {
+	return f.milestone, nil
+}
+func (f *fakeMilestoneRepo) Create(ctx context.Context, m *domain.ProjectMilestone) error {
+	panic("not implemented")
+}
+func (f *fakeMilestoneRepo) Update(ctx context.Context, m *domain.ProjectMilestone) error {
+	f.updated = m
+	return nil
+}
+func (f *fakeMilestoneRepo) NextSortOrder(ctx context.Context, projectID int64) (int, error) {
+	panic("not implemented")
+}
+func (f *fakeMilestoneRepo) Reorder(ctx context.Context, projectID int64, orderedIDs []int64) error {
+	panic("not implemented")
+}
+
+// fakeEvidenceRepoForGuard is a minimal in-memory stand-in for
+// EvidenceRepository -- only ListByRelated matters for guardStatusSelesai,
+// and it counts calls so the "guard never even asks" performance claim
+// (PLAN.md §5) is something a test actually verifies, not just prose.
+type fakeEvidenceRepoForGuard struct {
+	hasEvidence        bool
+	listByRelatedCalls int
+}
+
+func (f *fakeEvidenceRepoForGuard) ListByProject(ctx context.Context, projectID int64) ([]domain.Evidence, error) {
+	panic("not implemented")
+}
+func (f *fakeEvidenceRepoForGuard) ListByProjects(ctx context.Context, projectIDs []int64) ([]domain.Evidence, error) {
+	panic("not implemented")
+}
+func (f *fakeEvidenceRepoForGuard) ListByRelated(ctx context.Context, kind domain.EvidenceRelatedKind, relatedID int64) ([]domain.Evidence, error) {
+	f.listByRelatedCalls++
+	if f.hasEvidence {
+		return []domain.Evidence{{ID: 1}}, nil
+	}
+	return nil, nil
+}
+func (f *fakeEvidenceRepoForGuard) ListClientVisibleGeneral(ctx context.Context, projectID int64) ([]domain.Evidence, error) {
+	panic("not implemented")
+}
+func (f *fakeEvidenceRepoForGuard) FindByID(ctx context.Context, projectID, id int64) (*domain.Evidence, error) {
+	panic("not implemented")
+}
+func (f *fakeEvidenceRepoForGuard) Create(ctx context.Context, e *domain.Evidence) error {
+	panic("not implemented")
+}
+func (f *fakeEvidenceRepoForGuard) SetClientVisible(ctx context.Context, projectID, id int64, visible bool) error {
+	panic("not implemented")
+}
+func (f *fakeEvidenceRepoForGuard) DeleteByRelated(ctx context.Context, kind domain.EvidenceRelatedKind, relatedID int64) error {
+	panic("not implemented")
+}
+
+func baseTestMilestone() *domain.ProjectMilestone {
+	return &domain.ProjectMilestone{
+		ID: 1, ProjectID: 10, SortOrder: 1, Name: "Technical Meeting",
+		Status: domain.MilestoneInProgress, TargetDate: time.Date(2027, 5, 1, 0, 0, 0, 0, time.UTC),
+	}
+}
+
+func newProjectServiceForMilestoneTest(p *domain.Project, m *domain.ProjectMilestone, evidenceRepo *fakeEvidenceRepoForGuard) (*ProjectService, *fakeMilestoneRepo) {
+	milestones := &fakeMilestoneRepo{milestone: m}
+	evidence := NewEvidenceService(evidenceRepo, nil, nil, NewActivityService(&fakeActivityRepoForProject{}))
+	return &ProjectService{
+		repo:       &fakeProjectRepo{project: p},
+		milestones: milestones,
+		evidence:   evidence,
+		activity:   NewActivityService(&fakeActivityRepoForProject{}),
+	}, milestones
+}
+
+func TestUpdateMilestone_StatusInProgressTanpaLampiran_Berhasil(t *testing.T) {
+	p, m := baseProject(), baseTestMilestone()
+	evidenceRepo := &fakeEvidenceRepoForGuard{hasEvidence: false}
+	svc, _ := newProjectServiceForMilestoneTest(p, m, evidenceRepo)
+	_, err := svc.UpdateMilestone(context.Background(), p.TenantID, p.ID, m.ID, 99, MilestoneUpdateInput{
+		Status: domain.MilestoneInProgress, TargetDate: m.TargetDate,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMilestone() error = %v, want success", err)
+	}
+}
+
+func TestUpdateMilestone_TransisiCompletedTanpaCompletedDate_Validation(t *testing.T) {
+	p, m := baseProject(), baseTestMilestone()
+	evidenceRepo := &fakeEvidenceRepoForGuard{hasEvidence: true}
+	svc, _ := newProjectServiceForMilestoneTest(p, m, evidenceRepo)
+	_, err := svc.UpdateMilestone(context.Background(), p.TenantID, p.ID, m.ID, 99, MilestoneUpdateInput{
+		Status: domain.MilestoneCompleted, TargetDate: m.TargetDate, CompletedDate: nil,
+	})
+	var appErr *apperror.AppError
+	if !errors.As(err, &appErr) || appErr.Kind != apperror.KindValidation {
+		t.Fatalf("UpdateMilestone() error = %v, want Validation (completedDate)", err)
+	}
+}
+
+func TestUpdateMilestone_TransisiCompletedTanpaLampiran_Validation(t *testing.T) {
+	p, m := baseProject(), baseTestMilestone()
+	evidenceRepo := &fakeEvidenceRepoForGuard{hasEvidence: false}
+	svc, _ := newProjectServiceForMilestoneTest(p, m, evidenceRepo)
+	completedDate := time.Date(2027, 5, 1, 0, 0, 0, 0, time.UTC)
+	_, err := svc.UpdateMilestone(context.Background(), p.TenantID, p.ID, m.ID, 99, MilestoneUpdateInput{
+		Status: domain.MilestoneCompleted, TargetDate: m.TargetDate, CompletedDate: &completedDate,
+	})
+	var appErr *apperror.AppError
+	if !errors.As(err, &appErr) || appErr.Kind != apperror.KindValidation {
+		t.Fatalf("UpdateMilestone() error = %v, want Validation (lampiran)", err)
+	}
+}
+
+func TestUpdateMilestone_TransisiCompletedDenganLampiran_Berhasil(t *testing.T) {
+	p, m := baseProject(), baseTestMilestone()
+	evidenceRepo := &fakeEvidenceRepoForGuard{hasEvidence: true}
+	svc, _ := newProjectServiceForMilestoneTest(p, m, evidenceRepo)
+	completedDate := time.Date(2027, 5, 1, 0, 0, 0, 0, time.UTC)
+	got, err := svc.UpdateMilestone(context.Background(), p.TenantID, p.ID, m.ID, 99, MilestoneUpdateInput{
+		Status: domain.MilestoneCompleted, TargetDate: m.TargetDate, CompletedDate: &completedDate,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMilestone() error = %v, want success", err)
+	}
+	if got.Status != domain.MilestoneCompleted {
+		t.Errorf("Status = %q, want Completed", got.Status)
+	}
+}
+
+// D1: a row already Completed stays editable without re-proving evidence --
+// only the transition INTO Completed is guarded.
+func TestUpdateMilestone_SudahCompletedTanpaLampiran_TetapBisaDisunting(t *testing.T) {
+	p, m := baseProject(), baseTestMilestone()
+	m.Status = domain.MilestoneCompleted
+	newTarget := time.Date(2027, 5, 2, 0, 0, 0, 0, time.UTC)
+	evidenceRepo := &fakeEvidenceRepoForGuard{hasEvidence: false}
+	svc, _ := newProjectServiceForMilestoneTest(p, m, evidenceRepo)
+	got, err := svc.UpdateMilestone(context.Background(), p.TenantID, p.ID, m.ID, 99, MilestoneUpdateInput{
+		Status: domain.MilestoneCompleted, TargetDate: newTarget, CompletedDate: m.CompletedDate,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMilestone() error = %v, want success (D1: baris lama tetap bisa disunting)", err)
+	}
+	if !got.TargetDate.Equal(newTarget) {
+		t.Errorf("TargetDate = %v, want %v", got.TargetDate, newTarget)
+	}
+	if evidenceRepo.listByRelatedCalls != 0 {
+		t.Errorf("ListByRelated dipanggil %d kali, want 0 -- guard semestinya tidak menanyakan evidence sama sekali untuk baris yang sudah Completed", evidenceRepo.listByRelatedCalls)
+	}
+}
+
+func TestUpdateMilestone_StatusInProgress_TidakMemanggilHasForRelated(t *testing.T) {
+	p, m := baseProject(), baseTestMilestone()
+	evidenceRepo := &fakeEvidenceRepoForGuard{hasEvidence: false}
+	svc, _ := newProjectServiceForMilestoneTest(p, m, evidenceRepo)
+	_, err := svc.UpdateMilestone(context.Background(), p.TenantID, p.ID, m.ID, 99, MilestoneUpdateInput{
+		Status: domain.MilestoneBlocked, TargetDate: m.TargetDate,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMilestone() error = %v, want success", err)
+	}
+	if evidenceRepo.listByRelatedCalls != 0 {
+		t.Errorf("ListByRelated dipanggil %d kali, want 0 untuk status non-Completed", evidenceRepo.listByRelatedCalls)
+	}
+}

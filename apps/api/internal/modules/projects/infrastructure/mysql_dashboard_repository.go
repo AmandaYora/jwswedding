@@ -218,3 +218,51 @@ func (r *MySQLDashboardRepository) ListRecentActivity(ctx context.Context, tenan
 	}
 	return list, rows.Err()
 }
+
+// ListClientTimelines backs the standalone Monitoring Timeline page
+// (PLAN.md mom-25082026-item-belum item 17). picStaffID, when non-nil,
+// scopes the result to a single Wedding Planner's own PIC'd projects
+// (D2) -- same nil-means-everyone convention as MySQLProjectRepository.List
+// above, built the same way (conditional clause + args, not a `pic_staff_id
+// = ?` with a possibly-NULL bind, which would always evaluate false and
+// silently return nothing instead of "no filter"). Completed/Cancelled and
+// archived projects are excluded -- this page is for tracking work still in
+// flight, not a historical record.
+func (r *MySQLDashboardRepository) ListClientTimelines(ctx context.Context, tenantID int64, picStaffID *int64) ([]domain.ClientTimelineRow, error) {
+	query := `
+		SELECT pm.id, pm.project_id, pm.sort_order, pm.name, pm.status, pm.target_date, pm.completed_date,
+		       p.id, p.name, p.bride_name, p.groom_name, p.event_date
+		FROM project_milestones pm
+		JOIN projects p ON p.id = pm.project_id
+		WHERE p.tenant_id = ? AND p.status NOT IN ('Completed','Cancelled') AND p.is_archived = 0`
+	args := []interface{}{tenantID}
+	if picStaffID != nil {
+		query += ` AND p.pic_staff_id = ?`
+		args = append(args, *picStaffID)
+	}
+	query += ` ORDER BY pm.target_date ASC`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []domain.ClientTimelineRow
+	for rows.Next() {
+		var row domain.ClientTimelineRow
+		var status string
+		var completedDate sql.NullTime
+		if err := rows.Scan(&row.Milestone.ID, &row.Milestone.ProjectID, &row.Milestone.SortOrder, &row.Milestone.Name,
+			&status, &row.Milestone.TargetDate, &completedDate,
+			&row.ProjectID, &row.ProjectName, &row.BrideName, &row.GroomName, &row.EventDate); err != nil {
+			return nil, err
+		}
+		row.Milestone.Status = domain.MilestoneStatus(status)
+		if completedDate.Valid {
+			row.Milestone.CompletedDate = &completedDate.Time
+		}
+		list = append(list, row)
+	}
+	return list, rows.Err()
+}

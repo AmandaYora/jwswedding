@@ -19,6 +19,11 @@ type DashboardRepository interface {
 	ListPaymentCandidates(ctx context.Context, tenantID int64) ([]domain.DashboardPaymentRow, error)
 	ListVenuePaymentCandidates(ctx context.Context, tenantID int64) ([]domain.DashboardVenuePaymentRow, error)
 	ListRecentActivity(ctx context.Context, tenantID int64, limit int) ([]domain.ActivityLogEntry, error)
+	// ListClientTimelines backs the standalone Monitoring Timeline page
+	// (PLAN.md mom-25082026-item-belum item 17) -- see the infrastructure
+	// implementation's doc comment for picStaffID's nil-means-everyone
+	// convention.
+	ListClientTimelines(ctx context.Context, tenantID int64, picStaffID *int64) ([]domain.ClientTimelineRow, error)
 }
 
 type DashboardService struct {
@@ -33,7 +38,13 @@ func NewDashboardService(projects *ProjectService, repo DashboardRepository, evi
 
 const trendMonthsBack = 12
 
-func (s *DashboardService) Get(ctx context.Context, tenantID int64, asOf time.Time) (*domain.DashboardStats, error) {
+// Get computes the full dashboard aggregation. upcomingMonth is nil for the
+// default "5 nearest upcoming events" behavior; a non-nil pointer (already
+// parsed by the presentation layer -- see dashboard_endpoint.go) switches
+// UpcomingProjects to every open project whose EventDate falls in that exact
+// calendar month, unbounded (PLAN.md mom-25082026-item-belum item 16) --
+// capping at 5 there would hide events the caller explicitly asked to see.
+func (s *DashboardService) Get(ctx context.Context, tenantID int64, asOf time.Time, upcomingMonth *time.Time) (*domain.DashboardStats, error) {
 	totalProjects, err := s.projects.CountAll(ctx, tenantID)
 	if err != nil {
 		return nil, err
@@ -62,7 +73,7 @@ func (s *DashboardService) Get(ctx context.Context, tenantID int64, asOf time.Ti
 		if isOpenProject && domain.IsNearDDay(p.EventDate, asOf) {
 			stats.NearDDayProjects = append(stats.NearDDayProjects, p)
 		}
-		if isOpenProject && daysBetweenPublic(asOf, p.EventDate) >= 0 {
+		if isOpenProject && matchesUpcoming(p.EventDate, asOf, upcomingMonth) {
 			upcoming = append(upcoming, p)
 		}
 		if isOpenProject {
@@ -70,7 +81,10 @@ func (s *DashboardService) Get(ctx context.Context, tenantID int64, asOf time.Ti
 		}
 	}
 	sort.Slice(upcoming, func(i, j int) bool { return upcoming[i].EventDate.Before(upcoming[j].EventDate) })
-	if len(upcoming) > 5 {
+	// Capped at 5 only for the default "nearest upcoming" mode -- an
+	// explicit month filter means the caller wants everything in that month,
+	// capping it would hide events they specifically asked for.
+	if upcomingMonth == nil && len(upcoming) > 5 {
 		upcoming = upcoming[:5]
 	}
 	stats.UpcomingProjects = upcoming
@@ -150,6 +164,23 @@ func (s *DashboardService) Get(ctx context.Context, tenantID int64, asOf time.Ti
 	stats.Revenue = buildRevenueSummary(stats.RevenueTrend)
 
 	return stats, nil
+}
+
+// ListClientTimelines backs the standalone Monitoring Timeline page
+// (PLAN.md mom-25082026-item-belum item 17). callerRole == "Staff" scopes
+// the result to the Wedding Planner's own PIC'd projects (D2, mirroring the
+// scoping convention project_endpoints.go's listProjects already uses for
+// the Project list); Owner/Admin see every project's timelines. This
+// method has no role gate of its own -- Sales is rejected in the
+// presentation layer (dashboard_endpoint.go's ClientTimelines handler)
+// before this is ever called, same division of responsibility Dashboard's
+// own Owner/Admin gate already has.
+func (s *DashboardService) ListClientTimelines(ctx context.Context, tenantID int64, callerRole string, callerStaffID int64) ([]domain.ClientTimelineRow, error) {
+	var picStaffID *int64
+	if callerRole == "Staff" {
+		picStaffID = &callerStaffID
+	}
+	return s.repo.ListClientTimelines(ctx, tenantID, picStaffID)
 }
 
 // evidenceLookup fetches evidence per distinct project id (not per payment)
@@ -261,6 +292,20 @@ func buildRevenueSummary(revenueTrend []domain.RevenueTrendPoint) domain.Revenue
 		summary.DeltaPercent = &delta
 	}
 	return summary
+}
+
+// matchesUpcoming decides whether eventDate belongs in UpcomingProjects.
+// upcomingMonth == nil: default mode, same-or-after asOf's calendar day
+// (the original "nearest upcoming" rule, unchanged). upcomingMonth != nil:
+// pure calendar-month match against eventDate, deliberately NOT also
+// requiring same-or-after asOf -- a caller who explicitly picked, say, the
+// current month wants every event that month including ones earlier in the
+// month than asOf's day, not just the ones still ahead of today.
+func matchesUpcoming(eventDate, asOf time.Time, upcomingMonth *time.Time) bool {
+	if upcomingMonth == nil {
+		return daysBetweenPublic(asOf, eventDate) >= 0
+	}
+	return eventDate.Year() == upcomingMonth.Year() && eventDate.Month() == upcomingMonth.Month()
 }
 
 // daysBetweenPublic avoids exporting the domain package's private helper —

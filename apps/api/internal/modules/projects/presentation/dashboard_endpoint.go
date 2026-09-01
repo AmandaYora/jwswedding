@@ -158,6 +158,64 @@ func toDashboardResponse(s domain.DashboardStats) dashboardResponse {
 	return resp
 }
 
+// clientTimelineResponse flattens ClientTimelineRow's milestone + project
+// identity into one row for the Monitoring Timeline page (PLAN.md
+// mom-25082026-item-belum item 17) — same flattening convention
+// dashboardMilestoneResponse already uses for the vendor-milestone sibling.
+type clientTimelineResponse struct {
+	ID            int64   `json:"id"`
+	Order         int     `json:"order"`
+	Name          string  `json:"name"`
+	Status        string  `json:"status"`
+	TargetDate    string  `json:"targetDate"`
+	CompletedDate *string `json:"completedDate"`
+	ProjectID     int64   `json:"projectId"`
+	ProjectName   string  `json:"projectName"`
+	BrideName     string  `json:"brideName"`
+	GroomName     string  `json:"groomName"`
+	EventDate     string  `json:"eventDate"`
+}
+
+func toClientTimelineResponse(row domain.ClientTimelineRow) clientTimelineResponse {
+	return clientTimelineResponse{
+		ID: row.Milestone.ID, Order: row.Milestone.SortOrder, Name: row.Milestone.Name, Status: string(row.Milestone.Status),
+		TargetDate: row.Milestone.TargetDate.Format(dateLayout), CompletedDate: formatDatePtr(row.Milestone.CompletedDate),
+		ProjectID: row.ProjectID, ProjectName: row.ProjectName, BrideName: row.BrideName, GroomName: row.GroomName,
+		EventDate: row.EventDate.Format(dateLayout),
+	}
+}
+
+// ClientTimelines is Owner/Admin/Staff (Wedding Planner) — Sales is
+// rejected, unlike Dashboard's Owner/Admin-only bar (PLAN.md
+// mom-25082026-item-belum item 17, D2): this page's whole point is letting
+// a WP monitor Timeline Project items, scoped to their own PIC'd projects
+// (DashboardService.ListClientTimelines translates the role for us) rather
+// than the tenant-wide aggregation Dashboard itself stays gated behind.
+func (h *Handler) ClientTimelines(w http.ResponseWriter, r *http.Request) {
+	claims, ok := requireStaff(w, r)
+	if !ok {
+		return
+	}
+	if claims.role == "Sales" {
+		response.Error(w, http.StatusForbidden, "Sales tidak dapat mengakses monitoring timeline", nil)
+		return
+	}
+	if r.Method != http.MethodGet {
+		response.Error(w, http.StatusMethodNotAllowed, "Metode HTTP tidak diizinkan untuk endpoint ini", nil)
+		return
+	}
+	rows, err := h.dashboard.ListClientTimelines(r.Context(), claims.tenantID, claims.role, claims.staffID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	result := make([]clientTimelineResponse, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, toClientTimelineResponse(row))
+	}
+	response.OK(w, "ok", result)
+}
+
 // Dashboard is Owner/Admin only (confirmed role rule) — it aggregates stats
 // across every project/vendor/issue in the whole tenant, which neither a
 // Wedding Planner nor Sales (both scoped to only their own PIC'd projects
@@ -176,10 +234,34 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusMethodNotAllowed, "Metode HTTP tidak diizinkan untuk endpoint ini", nil)
 		return
 	}
-	stats, err := h.dashboard.Get(r.Context(), claims.tenantID, time.Now())
+	upcomingMonth, ok := parseUpcomingMonth(w, r)
+	if !ok {
+		return
+	}
+	stats, err := h.dashboard.Get(r.Context(), claims.tenantID, time.Now(), upcomingMonth)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
 	response.OK(w, "ok", toDashboardResponse(*stats))
+}
+
+// parseUpcomingMonth reads the optional ?month=YYYY-MM query param for the
+// "Acara Terdekat" filter (PLAN.md mom-25082026-item-belum item 16). Empty
+// means nil (default "5 nearest upcoming" behavior). time.Parse rather than
+// a regex is deliberate: a "^\d{4}-\d{2}$" pattern alone would accept
+// "2027-13", which then matches no project and silently renders an empty
+// list instead of a clear error -- time.Parse("2006-01", ...) rejects both
+// a malformed shape and an out-of-range month (13) in one call.
+func parseUpcomingMonth(w http.ResponseWriter, r *http.Request) (*time.Time, bool) {
+	raw := r.URL.Query().Get("month")
+	if raw == "" {
+		return nil, true
+	}
+	parsed, err := time.Parse("2006-01", raw)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "Parameter month tidak valid", map[string][]string{"month": {"Gunakan format YYYY-MM"}})
+		return nil, false
+	}
+	return &parsed, true
 }

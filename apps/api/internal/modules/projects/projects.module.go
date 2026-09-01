@@ -91,6 +91,7 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux, authed func(http.Handler) ht
 	mux.Handle("/api/v1/projects", authed(http.HandlerFunc(m.handler.Collection)))
 	mux.Handle("/api/v1/projects/", authed(http.HandlerFunc(m.handler.Item)))
 	mux.Handle("/api/v1/dashboard", authed(http.HandlerFunc(m.handler.Dashboard)))
+	mux.Handle("/api/v1/client-timelines", authed(http.HandlerFunc(m.handler.ClientTimelines)))
 	mux.Handle("/api/v1/milestone-templates", authed(http.HandlerFunc(m.milestoneTemplateHandler.Collection)))
 	mux.Handle("/api/v1/milestone-templates/", authed(http.HandlerFunc(m.milestoneTemplateHandler.Item)))
 }
