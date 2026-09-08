@@ -77,6 +77,9 @@ func TestMatchesUpcoming_BulanCocokLokasiBeda(t *testing.T) {
 type fakeDashboardRepoForClientTimelines struct {
 	calledWithPicStaffID *int64
 	calledAtLeastOnce    bool
+	// rows, when set, is what ListClientTimelines hands back -- lets a test
+	// assert the new PICStaffID column (D1/D2) survives the service layer.
+	rows []domain.ClientTimelineRow
 }
 
 func (f *fakeDashboardRepoForClientTimelines) CountActiveVendors(ctx context.Context, tenantID int64) (int, error) {
@@ -100,7 +103,7 @@ func (f *fakeDashboardRepoForClientTimelines) ListRecentActivity(ctx context.Con
 func (f *fakeDashboardRepoForClientTimelines) ListClientTimelines(ctx context.Context, tenantID int64, picStaffID *int64) ([]domain.ClientTimelineRow, error) {
 	f.calledAtLeastOnce = true
 	f.calledWithPicStaffID = picStaffID
-	return nil, nil
+	return f.rows, nil
 }
 
 func TestListClientTimelines_Staff_MeneruskanPicStaffIDNonNil(t *testing.T) {
@@ -127,5 +130,25 @@ func TestListClientTimelines_OwnerAdmin_MeneruskanPicStaffIDNil(t *testing.T) {
 		if repo.calledWithPicStaffID != nil {
 			t.Errorf("role=%s: picStaffID = %v, want nil (Owner/Admin melihat semua project, D2)", role, *repo.calledWithPicStaffID)
 		}
+	}
+}
+
+// PICStaffID (Blok D) harus utuh sampai pemanggil -- kolom ini yang menyuplai
+// kolom PIC dan filter WP di Monitoring Timeline.
+func TestListClientTimelines_MengembalikanPICStaffID(t *testing.T) {
+	repo := &fakeDashboardRepoForClientTimelines{rows: []domain.ClientTimelineRow{
+		{ProjectID: 10, ProjectName: "A", PICStaffID: 42},
+		{ProjectID: 11, ProjectName: "B", PICStaffID: 0}, // belum ditugaskan
+	}}
+	svc := &DashboardService{repo: repo}
+	got, err := svc.ListClientTimelines(context.Background(), 1, "Owner", 0)
+	if err != nil {
+		t.Fatalf("ListClientTimelines() error = %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("rows = %d, want 2", len(got))
+	}
+	if got[0].PICStaffID != 42 || got[1].PICStaffID != 0 {
+		t.Errorf("PICStaffID = %d, %d; want 42, 0", got[0].PICStaffID, got[1].PICStaffID)
 	}
 }

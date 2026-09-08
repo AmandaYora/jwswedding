@@ -122,6 +122,9 @@ export const API = {
     // Client Portal's own "Dokumen" tab — always only general-kind,
     // client-visible documents, unconditionally (see backend listDocuments).
     documents: (id: string) => `/api/v1/projects/${id}/documents`,
+    // Client Portal's timeline lampiran — always only projectMilestone-kind,
+    // client-visible attachments (Blok E, see backend listMilestoneDocuments).
+    milestoneDocuments: (id: string) => `/api/v1/projects/${id}/milestone-documents`,
     activity: (id: string) => `/api/v1/projects/${id}/activity`,
     venue: (id: string) => `/api/v1/projects/${id}/venue`,
   },

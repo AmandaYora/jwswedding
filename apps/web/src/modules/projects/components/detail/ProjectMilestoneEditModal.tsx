@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, FileText, Eye } from "lucide-react";
+import { Plus, FileText, Eye, EyeOff } from "lucide-react";
 import { UPLOAD_ACCEPT } from "@/shared/lib/upload-file-types";
 import { Modal } from "@/shared/components/ui/Modal";
 import { Button } from "@/shared/components/ui/Button";
@@ -9,12 +9,15 @@ import { IconActionButton } from "@/shared/components/ui/IconActionButton";
 import { EvidenceViewerModal } from "@/shared/components/ui/EvidenceViewerModal";
 import { EVIDENCE_TYPE_OPTIONS } from "@/modules/projects/schemas/evidence.schema";
 import type { Evidence, EvidenceType, MilestoneStatus, ProjectMilestone } from "@/modules/projects/types";
+import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
+import { categoryOptions } from "@/modules/projects/lib/milestone-categories";
 import { todayISO } from "@/modules/projects/lib/dates";
 import { formatDate } from "@/shared/lib/formatters";
 
 const STATUS_OPTIONS: MilestoneStatus[] = ["Not Started", "In Progress", "Completed", "Blocked", "Cancelled"];
 
 export interface ProjectMilestoneEditFields {
+  category: string;
   status: MilestoneStatus;
   targetDate: string;
   completedDate: string;
@@ -25,6 +28,9 @@ export interface NewMilestoneEvidenceMeta {
   type: EvidenceType;
   documentDate: string;
   description: string;
+  // Whether the pengantin may see this timeline attachment (Blok E). Default
+  // false — attachments are hidden from the client unless explicitly opened.
+  isClientVisible: boolean;
 }
 
 interface ProjectMilestoneEditModalProps {
@@ -54,13 +60,17 @@ export function ProjectMilestoneEditModal({
   onSave,
   onAddEvidence,
 }: ProjectMilestoneEditModalProps) {
+  const milestones = useProjectStore((s) => s.milestones);
+  const toggleEvidenceClientVisible = useProjectStore((s) => s.toggleEvidenceClientVisible);
+  const catOptions = categoryOptions(milestones.map((m) => m.category));
   const [fields, setFields] = useState<ProjectMilestoneEditFields>({
+    category: milestone.category,
     status: milestone.status,
     targetDate: milestone.targetDate,
     completedDate: milestone.completedDate ?? "",
   });
   const [showEvidenceForm, setShowEvidenceForm] = useState(false);
-  const [evidenceForm, setEvidenceForm] = useState({ name: "", type: "Document" as EvidenceType, documentDate: "", description: "" });
+  const [evidenceForm, setEvidenceForm] = useState({ name: "", type: "Document" as EvidenceType, documentDate: "", description: "", isClientVisible: false });
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -82,7 +92,7 @@ export function ProjectMilestoneEditModal({
     setUploadError(null);
     try {
       await onAddEvidence(file, evidenceForm);
-      setEvidenceForm({ name: "", type: "Document", documentDate: "", description: "" });
+      setEvidenceForm({ name: "", type: "Document", documentDate: "", description: "", isClientVisible: false });
       setFile(null);
       setShowEvidenceForm(false);
     } catch {
@@ -121,6 +131,14 @@ export function ProjectMilestoneEditModal({
               <Select value={fields.status} onChange={(e) => set("status", e.target.value as MilestoneStatus)}>
                 {STATUS_OPTIONS.map((s) => (
                   <option key={s} value={s}>{s}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Kategori">
+              <Select value={fields.category} onChange={(e) => set("category", e.target.value)}>
+                <option value="">Tanpa Kategori</option>
+                {catOptions.map((c) => (
+                  <option key={c} value={c}>{c}</option>
                 ))}
               </Select>
             </Field>
@@ -170,6 +188,15 @@ export function ProjectMilestoneEditModal({
                   <Input value={evidenceForm.description} onChange={(e) => setEvidenceForm((p) => ({ ...p, description: e.target.value }))} />
                 </Field>
               </div>
+              <label className="flex items-center gap-2 text-[13px] text-text-primary">
+                <input
+                  type="checkbox"
+                  checked={evidenceForm.isClientVisible}
+                  onChange={(e) => setEvidenceForm((p) => ({ ...p, isClientVisible: e.target.checked }))}
+                  className="h-4 w-4 rounded border-border"
+                />
+                Boleh dilihat client
+              </label>
               <div className="flex justify-end gap-2">
                 <Button size="sm" variant="secondary" onClick={() => setShowEvidenceForm(false)}>Batal</Button>
                 <Button size="sm" onClick={() => void handleAddEvidence()} disabled={uploading || !file}>
@@ -201,6 +228,19 @@ export function ProjectMilestoneEditModal({
                     <span className="min-w-0 flex-1 truncate font-medium text-text-primary">{e.name}</span>
                     <Badge tone="neutral">{e.type}</Badge>
                     <span className="shrink-0 text-text-secondary">{formatDate(e.documentDate)}</span>
+                    {/* Eye/EyeOff toggles whether the pengantin sees this
+                       lampiran in Client Portal (Blok E) — same affordance as
+                       ProjectEvidenceSection's general-document toggle. Wrapped
+                       in a stop-propagation span so it doesn't also open the
+                       viewer via the row's onClick. */}
+                    <span onClick={(ev) => ev.stopPropagation()}>
+                      <IconActionButton
+                        icon={e.isClientVisible ? EyeOff : Eye}
+                        label={e.isClientVisible ? "Sembunyikan dari client" : "Tampilkan ke client"}
+                        tone={e.isClientVisible ? "success" : "neutral"}
+                        onClick={() => void toggleEvidenceClientVisible(projectId, e.id)}
+                      />
+                    </span>
                     <IconActionButton icon={Eye} label="Lihat Lampiran" tone="info" onClick={() => setViewingEvidence(e)} />
                   </div>
                 </li>

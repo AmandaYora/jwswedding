@@ -28,13 +28,14 @@ func NewMilestoneTemplateHandler(templates *application.MilestoneTemplateService
 type milestoneTemplateResponse struct {
 	ID              int64  `json:"id"`
 	Name            string `json:"name"`
+	Category        string `json:"category"`
 	DaysBeforeEvent int    `json:"daysBeforeEvent"`
 	SortOrder       int    `json:"sortOrder"`
 }
 
 func toMilestoneTemplateResponse(t domain.ProjectMilestoneTemplate) milestoneTemplateResponse {
 	return milestoneTemplateResponse{
-		ID: t.ID, Name: t.Name, DaysBeforeEvent: t.DaysBeforeEvent, SortOrder: t.SortOrder,
+		ID: t.ID, Name: t.Name, Category: t.Category, DaysBeforeEvent: t.DaysBeforeEvent, SortOrder: t.SortOrder,
 	}
 }
 
@@ -62,6 +63,7 @@ func requireOwnerForTemplates(w http.ResponseWriter, r *http.Request) (int64, bo
 
 type milestoneTemplateInputBody struct {
 	Name            string `json:"name"`
+	Category        string `json:"category"`
 	DaysBeforeEvent int    `json:"daysBeforeEvent"`
 }
 
@@ -93,7 +95,7 @@ func (h *MilestoneTemplateHandler) Collection(w http.ResponseWriter, r *http.Req
 			return
 		}
 		t, err := h.templates.Create(r.Context(), tenantID, application.MilestoneTemplateInput{
-			Name: body.Name, DaysBeforeEvent: body.DaysBeforeEvent,
+			Name: body.Name, Category: body.Category, DaysBeforeEvent: body.DaysBeforeEvent,
 		})
 		if err != nil {
 			writeAppError(w, err)
@@ -140,7 +142,7 @@ func (h *MilestoneTemplateHandler) Item(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		t, err := h.templates.Update(r.Context(), tenantID, id, application.MilestoneTemplateInput{
-			Name: body.Name, DaysBeforeEvent: body.DaysBeforeEvent,
+			Name: body.Name, Category: body.Category, DaysBeforeEvent: body.DaysBeforeEvent,
 		})
 		if err != nil {
 			writeAppError(w, err)

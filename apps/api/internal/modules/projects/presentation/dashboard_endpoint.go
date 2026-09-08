@@ -174,6 +174,10 @@ type clientTimelineResponse struct {
 	BrideName     string  `json:"brideName"`
 	GroomName     string  `json:"groomName"`
 	EventDate     string  `json:"eventDate"`
+	// PICStaffID is the project's Wedding Planner (0 = "Belum ditugaskan") --
+	// backs the PIC column and WP filter on Monitoring Timeline (Blok D). The
+	// name is resolved client-side via /staff/summary, per MODULE_MAP.md.
+	PICStaffID int64 `json:"picStaffId"`
 }
 
 func toClientTimelineResponse(row domain.ClientTimelineRow) clientTimelineResponse {
@@ -181,7 +185,8 @@ func toClientTimelineResponse(row domain.ClientTimelineRow) clientTimelineRespon
 		ID: row.Milestone.ID, Order: row.Milestone.SortOrder, Name: row.Milestone.Name, Status: string(row.Milestone.Status),
 		TargetDate: row.Milestone.TargetDate.Format(dateLayout), CompletedDate: formatDatePtr(row.Milestone.CompletedDate),
 		ProjectID: row.ProjectID, ProjectName: row.ProjectName, BrideName: row.BrideName, GroomName: row.GroomName,
-		EventDate: row.EventDate.Format(dateLayout),
+		EventDate:  row.EventDate.Format(dateLayout),
+		PICStaffID: row.PICStaffID,
 	}
 }
 

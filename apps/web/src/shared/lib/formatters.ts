@@ -22,6 +22,16 @@ export function formatDate(dateStr: string | null): string {
   return `${d} ${MONTHS_ID[m - 1]} ${y}`;
 }
 
+// formatMonth turns a "YYYY-MM" string into an Indonesian long month + year
+// label, e.g. "2026-09" -> "September 2026". Empty input returns "" (used by
+// MonthSelect for the "Semua Bulan" option). Blok C, revisi-putri-mom-25082026.
+export function formatMonth(ym: string): string {
+  if (!ym) return "";
+  const [y, m] = ym.split("-").map(Number);
+  if (!y || !m) return "";
+  return new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric" }).format(new Date(y, m - 1, 1));
+}
+
 export function formatDateTime(dateStr: string | null): string {
   if (!dateStr) return "-";
   const [datePart, timePart] = dateStr.split("T");

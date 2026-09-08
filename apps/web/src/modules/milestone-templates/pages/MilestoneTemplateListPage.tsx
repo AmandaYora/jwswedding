@@ -162,6 +162,7 @@ export default function MilestoneTemplateListPage() {
                           <IconActionButton icon={Trash2} label="Hapus timeline" tone="danger" onClick={() => setConfirmingDeleteId(t.id)} />
                         </div>
                       </div>
+                      <CardListField label="Kategori" value={t.category || "Tanpa Kategori"} />
                       <CardListField label="Hari Sebelum/Setelah Acara" value={formatDaysLabel(t.daysBeforeEvent)} />
                     </>
                   );
@@ -172,6 +173,7 @@ export default function MilestoneTemplateListPage() {
                   <THead>
                     <TR>
                       <TH>Nama Timeline</TH>
+                      <TH>Kategori</TH>
                       <TH>Hari Sebelum/Setelah Acara</TH>
                       <TH>Aksi</TH>
                     </TR>
@@ -180,6 +182,7 @@ export default function MilestoneTemplateListPage() {
                     {templates.map((t, idx) => (
                       <TR key={t.id}>
                         <TD className="font-medium text-text-primary">{t.sortOrder}. {t.name}</TD>
+                        <TD className="text-text-secondary">{t.category || "Tanpa Kategori"}</TD>
                         <TD className="text-text-secondary">{formatDaysLabel(t.daysBeforeEvent)}</TD>
                         <TD>
                           <div className="flex items-center gap-1.5">

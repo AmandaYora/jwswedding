@@ -22,7 +22,15 @@ type Project struct {
 	BrideName string
 	GroomName string
 	EventDate time.Time
-	Venue     string
+	// EventStartTime/EventEndTime are the project-level Jam Acara (PLAN.md
+	// revisi-putri-mom-25082026, Blok A / item 11), stored as "HH:MM" strings.
+	// Both optional: nil means "Belum ditentukan". Independent of the per-vendor
+	// project_vendors.event_start_time/end_time (D4) -- this is the ceremony's
+	// own time slot (e.g. Sesi Pagi 08:00-13:00). Part of "konteks umum", so
+	// guarded by guardKonteksUmum (D3).
+	EventStartTime *string
+	EventEndTime   *string
+	Venue          string
 	// VenueID is a cross-module primitive reference into vendors' Venue
 	// directory (ADR-0016) -- resolved via a module contract, never a SQL
 	// foreign key. nil means no structured venue is attached yet; Venue
@@ -52,9 +60,9 @@ type Project struct {
 	// see PLAN.md revisi-timeline-vendor-role-sales.
 	PICSalesStaffID int64
 	Description     string
-	IsArchived       bool
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	IsArchived      bool
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // ProjectRef is a minimal {id, name} projection of a project — backs the
@@ -77,10 +85,15 @@ const (
 )
 
 type ProjectMilestone struct {
-	ID            int64
-	ProjectID     int64
-	SortOrder     int
-	Name          string
+	ID        int64
+	ProjectID int64
+	SortOrder int
+	Name      string
+	// Category is a display-grouping label for the timeline (PLAN.md
+	// revisi-putri-mom-25082026, Blok B / item 14). "" means "Tanpa Kategori".
+	// A plain VARCHAR, not a master table (D1) and not reused from
+	// vendor_categories (D2).
+	Category      string
 	Status        MilestoneStatus
 	TargetDate    time.Time
 	CompletedDate *time.Time

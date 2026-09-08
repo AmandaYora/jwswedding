@@ -231,6 +231,7 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
 
         <div className="grid grid-cols-2 gap-4 border-t border-border-light pt-4 sm:grid-cols-3 lg:grid-cols-6">
           <InfoField label="Tanggal Acara" value={formatDate(project.eventDate)} />
+          <InfoField label="Jam Acara" value={formatEventHours(project.eventStartTime, project.eventEndTime)} />
           <InfoField
             label="Countdown"
             value={isOpenProject ? (d >= 0 ? `H-${d}` : `H+${Math.abs(d)}`) : project.status === "Completed" ? "Selesai" : "Dibatalkan"}
@@ -289,6 +290,14 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
       />
     </Card>
   );
+}
+
+// formatEventHours renders the project-level Jam Acara as "08.00 - 13.00"
+// (dot separators, matching the display in gambar 1), or "Belum ditentukan"
+// when either bound is unset — same empty-sentinel convention as PIC fields.
+function formatEventHours(start: string | null, end: string | null): string {
+  if (!start || !end) return "Belum ditentukan";
+  return `${start.replace(":", ".")} - ${end.replace(":", ".")}`;
 }
 
 function InfoField({ label, value, emphasize }: { label: string; value: string; emphasize?: boolean }) {

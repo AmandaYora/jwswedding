@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const projectMilestoneSchema = z.object({
   name: z.string().min(3, "Nama timeline minimal 3 karakter"),
+  // Category grouping label (Blok B) — "" = "Tanpa Kategori".
+  category: z.string().optional().default(""),
   targetDate: z.string().min(1, "Target tanggal wajib diisi"),
 });
 

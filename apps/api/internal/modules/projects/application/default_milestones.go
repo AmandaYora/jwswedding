@@ -27,7 +27,7 @@ func (s *ProjectService) seedDefaultMilestones(ctx context.Context, tenantID, pr
 			target = prepStartDate
 		}
 		m := &domain.ProjectMilestone{
-			ProjectID: projectID, SortOrder: i + 1, Name: tmpl.Name,
+			ProjectID: projectID, SortOrder: i + 1, Name: tmpl.Name, Category: tmpl.Category,
 			Status: domain.MilestoneNotStarted, TargetDate: target,
 		}
 		if err := s.milestones.Create(ctx, m); err != nil {

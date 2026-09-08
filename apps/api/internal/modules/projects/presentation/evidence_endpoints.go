@@ -10,7 +10,25 @@ import (
 	"jwswedding/internal/shared/response"
 )
 
-func (h *Handler) listEvidence(w http.ResponseWriter, r *http.Request, projectID int64) {
+// clientHiddenEvidence reports whether an evidence row must NOT reach a client
+// principal: one of the two opt-in kinds (general, projectMilestone) that was
+// never marked client-visible. Every other kind is unconditionally
+// client-visible and passes through — deliberate, and relied on by Client
+// Portal's Kendala/Pembayaran/Vendor tabs (T-4, Blok E). Mirrors the
+// application layer's clientVisibilityApplies + is_client_visible test, kept
+// here because the HTTP layer is where the principal type is known.
+func clientHiddenEvidence(e domain.Evidence) bool {
+	if e.IsClientVisible {
+		return false
+	}
+	return e.RelatedKind == domain.RelatedGeneral || e.RelatedKind == domain.RelatedProjectMilestone
+}
+
+// listEvidence is reachable by both staff and client principals (both pass
+// resolveProjectAccess). For a client it drops the two opt-in kinds that were
+// not marked client-visible — the T-4 fix: before this, a `general` document
+// hidden with is_client_visible=0 still leaked to the client through this route.
+func (h *Handler) listEvidence(w http.ResponseWriter, r *http.Request, claims staffClaims, projectID int64) {
 	list, err := h.evidence.List(r.Context(), projectID)
 	if err != nil {
 		writeAppError(w, err)
@@ -18,6 +36,9 @@ func (h *Handler) listEvidence(w http.ResponseWriter, r *http.Request, projectID
 	}
 	result := make([]evidenceResponse, 0, len(list))
 	for _, e := range list {
+		if claims.principalType == "client" && clientHiddenEvidence(e) {
+			continue
+		}
 		result = append(result, toEvidenceResponse(e))
 	}
 	response.OK(w, "ok", result)
@@ -30,6 +51,24 @@ func (h *Handler) listEvidence(w http.ResponseWriter, r *http.Request, projectID
 // EvidenceService.ListClientDocuments.
 func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request, projectID int64) {
 	list, err := h.evidence.ListClientDocuments(r.Context(), projectID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	result := make([]evidenceResponse, 0, len(list))
+	for _, e := range list {
+		result = append(result, toEvidenceResponse(e))
+	}
+	response.OK(w, "ok", result)
+}
+
+// listMilestoneDocuments backs GET /projects/{id}/milestone-documents — the
+// timeline lampiran a client may see in Client Portal (Blok E). Reachable by
+// staff too; the safety property is that it ALWAYS returns only
+// projectMilestone-kind, client-visible rows, unconditionally, regardless of
+// who's calling — see EvidenceService.ListClientMilestoneDocuments.
+func (h *Handler) listMilestoneDocuments(w http.ResponseWriter, r *http.Request, projectID int64) {
+	list, err := h.evidence.ListClientMilestoneDocuments(r.Context(), projectID)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -73,10 +112,13 @@ func (h *Handler) uploadEvidence(w http.ResponseWriter, r *http.Request, claims 
 	response.Created(w, "Evidence berhasil diunggah", toEvidenceResponse(*e))
 }
 
-// toggleEvidenceClientVisible flips a general-kind document's client
-// visibility without re-uploading the file — see
-// EvidenceService.ToggleClientVisible for why this is rejected for every
-// other RelatedKind.
+// toggleEvidenceClientVisible flips the client visibility of one of the two
+// opt-in kinds — `general` (project documents) and `projectMilestone`
+// (timeline lampiran, Blok E) — without re-uploading the file. See
+// EvidenceService.ToggleClientVisible for why it is rejected for every other
+// RelatedKind. No claims parameter: this route is POST, which
+// resolveProjectAccess already refuses for a client principal, so only staff
+// ever reach it.
 func (h *Handler) toggleEvidenceClientVisible(w http.ResponseWriter, r *http.Request, projectID int64, evidenceIDRaw string) {
 	evidenceID, err := parseInt64(evidenceIDRaw)
 	if err != nil {
@@ -91,7 +133,12 @@ func (h *Handler) toggleEvidenceClientVisible(w http.ResponseWriter, r *http.Req
 	response.OK(w, "Visibilitas dokumen diperbarui", toEvidenceResponse(*e))
 }
 
-func (h *Handler) downloadEvidence(w http.ResponseWriter, r *http.Request, projectID int64, evidenceIDRaw string) {
+// downloadEvidence streams one evidence file inline. It is deliberately NOT
+// closed off to clients — EvidenceViewerModal uses it for every Client Portal
+// tab — but a client is denied (403) exactly the rows listEvidence would have
+// hidden from them: an opt-in kind (general, projectMilestone) not marked
+// client-visible (T-4/Blok E). Staff are unaffected.
+func (h *Handler) downloadEvidence(w http.ResponseWriter, r *http.Request, claims staffClaims, projectID int64, evidenceIDRaw string) {
 	evidenceID, err := parseInt64(evidenceIDRaw)
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "ID tidak valid", nil)
@@ -103,6 +150,11 @@ func (h *Handler) downloadEvidence(w http.ResponseWriter, r *http.Request, proje
 		return
 	}
 	defer reader.Close()
+
+	if claims.principalType == "client" && clientHiddenEvidence(*e) {
+		response.Error(w, http.StatusForbidden, "Lampiran ini tidak dapat diakses", nil)
+		return
+	}
 
 	w.Header().Set("Content-Disposition", `inline; filename="`+e.FileName+`"`)
 	w.WriteHeader(http.StatusOK)

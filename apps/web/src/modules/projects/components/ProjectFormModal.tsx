@@ -3,7 +3,7 @@ import { Modal } from "@/shared/components/ui/Modal";
 import { Button } from "@/shared/components/ui/Button";
 import { Input, Textarea, Select, Field } from "@/shared/components/ui/Input";
 import { CurrencyInput } from "@/shared/components/ui/CurrencyInput";
-import { projectSchema, PROJECT_STATUS_OPTIONS, type ProjectFormValues } from "@/modules/projects/schemas/project.schema";
+import { projectSchema, PROJECT_STATUS_OPTIONS, EVENT_SESSION_PRESETS, type ProjectFormValues } from "@/modules/projects/schemas/project.schema";
 import type { Project } from "@/modules/projects/types";
 import { useStaffStore } from "@/modules/users/stores/useStaffStore";
 import { useAuthStore } from "@/shared/stores/useAuthStore";
@@ -28,6 +28,18 @@ interface ProjectFormModalProps {
   canEditGeneral?: boolean;
 }
 
+// Jam Acara preset handling (Blok A) — mirrors ProjectVendorFormModal's own
+// preset/custom pattern. CUSTOM_SESSION is the sentinel for a hand-typed pair.
+const CUSTOM_SESSION = "__custom__";
+
+// sessionPresetKeyFor maps the current start/end pair back to a preset label,
+// falling back to CUSTOM_SESSION for any non-preset pair so a hand-typed value
+// round-trips instead of snapping to the nearest preset.
+function sessionPresetKeyFor(start: string, end: string): string {
+  const match = EVENT_SESSION_PRESETS.find((p) => p.start === start && p.end === end);
+  return match ? match.label : CUSTOM_SESSION;
+}
+
 function toFormValues(project?: Project, defaultStaffId = "", mode?: "edit" | "duplicate"): ProjectFormValues {
   if (!project) {
     return {
@@ -35,6 +47,8 @@ function toFormValues(project?: Project, defaultStaffId = "", mode?: "edit" | "d
       brideName: "",
       groomName: "",
       eventDate: "",
+      eventStartTime: "",
+      eventEndTime: "",
       venue: "",
       prepStartDate: "",
       packageName: "",
@@ -50,6 +64,8 @@ function toFormValues(project?: Project, defaultStaffId = "", mode?: "edit" | "d
     brideName: project.brideName,
     groomName: project.groomName,
     eventDate: project.eventDate,
+    eventStartTime: project.eventStartTime ?? "",
+    eventEndTime: project.eventEndTime ?? "",
     venue: project.venue,
     prepStartDate: project.prepStartDate,
     packageName: project.packageName,
@@ -100,6 +116,21 @@ export function ProjectFormModal({ open, onClose, onSubmit, initialProject, mode
   function set<K extends keyof ProjectFormValues>(key: K, value: ProjectFormValues[K]) {
     setValues((prev) => ({ ...prev, [key]: value }));
   }
+
+  // Selecting a preset fills both time fields; picking Custom clears them so
+  // the manual inputs start blank. Same shape as ProjectVendorFormModal.
+  function handleSessionPresetChange(key: string) {
+    if (key === CUSTOM_SESSION) {
+      setValues((prev) => ({ ...prev, eventStartTime: "", eventEndTime: "" }));
+      return;
+    }
+    const preset = EVENT_SESSION_PRESETS.find((p) => p.label === key);
+    if (preset) {
+      setValues((prev) => ({ ...prev, eventStartTime: preset.start, eventEndTime: preset.end }));
+    }
+  }
+
+  const currentSessionPresetKey = sessionPresetKeyFor(values.eventStartTime, values.eventEndTime);
 
   function handleSubmit() {
     const result = projectSchema.safeParse(values);
@@ -157,6 +188,23 @@ export function ProjectFormModal({ open, onClose, onSubmit, initialProject, mode
         <Field label="Tanggal Acara" required hint={errors.eventDate}>
           <Input type="date" value={values.eventDate} onChange={(e) => set("eventDate", e.target.value)} disabled={!canEditGeneral} />
         </Field>
+        <Field label="Jam Acara">
+          <Select value={currentSessionPresetKey} onChange={(e) => handleSessionPresetChange(e.target.value)} disabled={!canEditGeneral}>
+            {EVENT_SESSION_PRESETS.map((p) => (
+              <option key={p.label} value={p.label}>{p.label}</option>
+            ))}
+            <option value={CUSTOM_SESSION}>Custom</option>
+          </Select>
+        </Field>
+        {currentSessionPresetKey === CUSTOM_SESSION && (
+          <Field label="Jam Mulai - Selesai (Custom)">
+            <div className="flex items-center gap-2">
+              <Input type="time" value={values.eventStartTime} onChange={(e) => set("eventStartTime", e.target.value)} disabled={!canEditGeneral} />
+              <span className="text-text-secondary">–</span>
+              <Input type="time" value={values.eventEndTime} onChange={(e) => set("eventEndTime", e.target.value)} disabled={!canEditGeneral} />
+            </div>
+          </Field>
+        )}
         <Field label="Tanggal Booking" required hint={errors.prepStartDate}>
           <Input type="date" value={values.prepStartDate} onChange={(e) => set("prepStartDate", e.target.value)} disabled={!canEditGeneral} />
         </Field>

@@ -6,10 +6,14 @@ import "time"
 // Default (PLAN.md) -- copied into a new project's ProjectMilestone rows at
 // creation time, never referenced again afterward.
 type ProjectMilestoneTemplate struct {
-	ID              int64
-	TenantID        int64
-	SortOrder       int
-	Name            string
+	ID        int64
+	TenantID  int64
+	SortOrder int
+	Name      string
+	// Category is the display-grouping label seeded into ProjectMilestone.Category
+	// when a project is created (PLAN.md revisi-putri-mom-25082026, Blok B).
+	// "" means "Tanpa Kategori".
+	Category        string
 	DaysBeforeEvent int
 	CreatedAt       time.Time
 	UpdatedAt       time.Time

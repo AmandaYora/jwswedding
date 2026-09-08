@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Modal } from "@/shared/components/ui/Modal";
 import { Button } from "@/shared/components/ui/Button";
-import { Input, Field } from "@/shared/components/ui/Input";
+import { Input, Select, Field } from "@/shared/components/ui/Input";
 import { projectMilestoneSchema, type ProjectMilestoneFormValues } from "@/modules/projects/schemas/project-milestone.schema";
+import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
+import { categoryOptions } from "@/modules/projects/lib/milestone-categories";
 
 interface ProjectMilestoneFormModalProps {
   open: boolean;
@@ -11,10 +13,12 @@ interface ProjectMilestoneFormModalProps {
 }
 
 function emptyValues(): ProjectMilestoneFormValues {
-  return { name: "", targetDate: "" };
+  return { name: "", category: "", targetDate: "" };
 }
 
 export function ProjectMilestoneFormModal({ open, onClose, onSubmit }: ProjectMilestoneFormModalProps) {
+  const milestones = useProjectStore((s) => s.milestones);
+  const catOptions = categoryOptions(milestones.map((m) => m.category));
   const [values, setValues] = useState<ProjectMilestoneFormValues>(emptyValues);
   const [errors, setErrors] = useState<Partial<Record<keyof ProjectMilestoneFormValues, string>>>({});
 
@@ -53,6 +57,14 @@ export function ProjectMilestoneFormModal({ open, onClose, onSubmit }: ProjectMi
       <div className="flex flex-col gap-4">
         <Field label="Nama Timeline" required hint={errors.name}>
           <Input value={values.name} onChange={(e) => set("name", e.target.value)} placeholder="cth. Fitting Baju Pengantin" />
+        </Field>
+        <Field label="Kategori">
+          <Select value={values.category} onChange={(e) => set("category", e.target.value)}>
+            <option value="">Tanpa Kategori</option>
+            {catOptions.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </Select>
         </Field>
         <Field label="Target Tanggal" required hint={errors.targetDate}>
           <Input type="date" value={values.targetDate} onChange={(e) => set("targetDate", e.target.value)} />

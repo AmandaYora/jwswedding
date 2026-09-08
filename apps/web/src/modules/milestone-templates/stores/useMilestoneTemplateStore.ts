@@ -7,6 +7,7 @@ import type { MilestoneTemplateSubmitValues } from "@/modules/milestone-template
 interface RawMilestoneTemplate {
   id: number;
   name: string;
+  category: string;
   daysBeforeEvent: number;
   sortOrder: number;
 }

@@ -47,6 +47,21 @@ export class VendorPaymentEvidenceError extends Error {}
 // Same purpose as VendorPaymentEvidenceError, for createVenuePayment.
 export class VenuePaymentEvidenceError extends Error {}
 
+// fetchProjectPage's filter bag (D8, docs/plan/revisi-putri-lanjutan/PLAN.md
+// Blok I) — an object instead of positional args, since this grew from 3
+// filters to 6: a positional call that long is unreadable and easy to
+// mis-order. picStaffId/picSalesStaffId of "0" is the "Belum ditugaskan"
+// sentinel (a real filter value); "" (or omitted) means no filter at all —
+// the backend tells the two apart the same way (project_endpoints.go).
+export interface ProjectListFilters {
+  search?: string;
+  status?: string;
+  showArchived?: boolean;
+  picStaffId?: string;
+  picSalesStaffId?: string;
+  eventMonth?: string;
+}
+
 // --- Raw wire shapes (see apps/api .../projects/presentation/dto.go) ---
 
 interface RawMilestoneStats {
@@ -77,6 +92,8 @@ export interface RawProject {
   brideName: string;
   groomName: string;
   eventDate: string;
+  eventStartTime: string | null;
+  eventEndTime: string | null;
   venue: string;
   venueId: number | null;
   venueRentalPrice: number | null;
@@ -113,6 +130,8 @@ export function toProject(raw: RawProject): Project {
     brideName: raw.brideName,
     groomName: raw.groomName,
     eventDate: raw.eventDate,
+    eventStartTime: raw.eventStartTime,
+    eventEndTime: raw.eventEndTime,
     venue: raw.venue,
     venueId: raw.venueId !== null ? String(raw.venueId) : null,
     venueRentalPrice: raw.venueRentalPrice,
@@ -136,6 +155,10 @@ function projectInputBody(values: ProjectFormValues) {
     brideName: values.brideName,
     groomName: values.groomName,
     eventDate: values.eventDate,
+    // Project-level Jam Acara (Blok A) — always send both keys as strings; the
+    // backend converts "" to NULL ("Belum ditentukan").
+    eventStartTime: values.eventStartTime,
+    eventEndTime: values.eventEndTime,
     venue: values.venue,
     prepStartDate: values.prepStartDate,
     packageName: values.packageName,
@@ -170,16 +193,18 @@ interface RawMilestone {
   id: number;
   order: number;
   name: string;
+  category: string;
   status: MilestoneStatus;
   targetDate: string;
   completedDate: string | null;
 }
 
 function toMilestone(raw: RawMilestone): ProjectMilestone {
-  return { id: String(raw.id), order: raw.order, name: raw.name, status: raw.status, targetDate: raw.targetDate, completedDate: raw.completedDate };
+  return { id: String(raw.id), order: raw.order, name: raw.name, category: raw.category, status: raw.status, targetDate: raw.targetDate, completedDate: raw.completedDate };
 }
 
 export interface ProjectMilestoneUpdateFields {
+  category: string;
   status: MilestoneStatus;
   targetDate: string;
   completedDate: string;
@@ -527,6 +552,9 @@ interface ProjectState {
   // `evidence` above (which staff-only screens populate via a different,
   // unfiltered endpoint).
   documents: Evidence[];
+  // Client-visible timeline lampiran (Blok E) — populated from the dedicated
+  // milestone-documents endpoint, same shape/lifecycle as `documents` above.
+  milestoneDocuments: Evidence[];
   activity: ActivityLogEntry[];
 
   projectPage: Project[];
@@ -538,7 +566,7 @@ interface ProjectState {
   // (which the dashboard, global search, and client grouping still rely on).
   // showArchived splits active/archived into two disjoint views, never
   // merged (see ADR-0013) — omit or pass false for the normal active view.
-  fetchProjectPage: (page: number, search: string, status: string, showArchived?: boolean) => Promise<void>;
+  fetchProjectPage: (page: number, filters: ProjectListFilters) => Promise<void>;
   createProject: (values: ProjectFormValues) => Promise<Project>;
   updateProject: (id: string, values: ProjectFormValues) => Promise<Project>;
   // Attaches/detaches this project's structured venue (ADR-0016) — pass
@@ -646,6 +674,7 @@ interface ProjectState {
   uploadEvidence: (projectId: string, values: UploadEvidenceInput) => Promise<void>;
   toggleEvidenceClientVisible: (projectId: string, evidenceId: string) => Promise<void>;
   fetchDocuments: (projectId: string) => Promise<void>;
+  fetchMilestoneDocuments: (projectId: string) => Promise<void>;
 
   fetchActivity: (projectId: string) => Promise<void>;
 }
@@ -667,6 +696,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   issues: [],
   evidence: [],
   documents: [],
+  milestoneDocuments: [],
   activity: [],
 
   projectPage: [],
@@ -678,9 +708,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ projects: list });
   },
 
-  fetchProjectPage: async (page, search, status, showArchived = false) => {
+  fetchProjectPage: async (page, filters) => {
     const res = await httpClient.get(API.projects.base, {
-      params: { page, search: search || undefined, status: status || undefined, archived: showArchived || undefined },
+      params: {
+        page,
+        search: filters.search || undefined,
+        status: filters.status || undefined,
+        archived: filters.showArchived || undefined,
+        picStaffId: filters.picStaffId || undefined,
+        picSalesStaffId: filters.picSalesStaffId || undefined,
+        eventMonth: filters.eventMonth || undefined,
+      },
     });
     const list = (res.data.data as RawProject[]).map(toProject);
     set({ projectPage: list, projectPageMeta: toPaginationMeta(res.data.meta as RawPaginationMeta) });
@@ -815,6 +853,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     // partial-update endpoint.
     const existing = get().milestones.find((m) => m.id === milestoneId);
     await httpClient.patch(API.projects.milestone(projectId, milestoneId), {
+      // Resend category unchanged alongside status/dates — the backend PATCH is
+      // a full update, so omitting it would blank the milestone's category.
+      category: existing?.category ?? "",
       status,
       targetDate: existing?.targetDate ?? "",
       completedDate: existing?.completedDate ?? "",
@@ -824,6 +865,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   updateMilestone: async (projectId, milestoneId, fields) => {
     await httpClient.patch(API.projects.milestone(projectId, milestoneId), {
+      category: fields.category,
       status: fields.status,
       targetDate: fields.targetDate,
       completedDate: fields.completedDate,
@@ -1257,6 +1299,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   fetchDocuments: async (projectId) => {
     const res = await httpClient.get(API.projects.documents(projectId));
     set({ documents: (res.data.data as RawEvidence[]).map(toEvidence) });
+  },
+
+  fetchMilestoneDocuments: async (projectId) => {
+    const res = await httpClient.get(API.projects.milestoneDocuments(projectId));
+    set({ milestoneDocuments: (res.data.data as RawEvidence[]).map(toEvidence) });
   },
 
   fetchActivity: async (projectId) => {

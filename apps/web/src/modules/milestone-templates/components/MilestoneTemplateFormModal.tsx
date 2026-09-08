@@ -10,6 +10,8 @@ import {
   type MilestoneTemplateSubmitValues,
 } from "@/modules/milestone-templates/schemas/milestone-template.schema";
 import type { MilestoneTemplate } from "@/modules/milestone-templates/types";
+import { useMilestoneTemplateStore } from "@/modules/milestone-templates/stores/useMilestoneTemplateStore";
+import { categoryOptions } from "@/modules/projects/lib/milestone-categories";
 
 interface MilestoneTemplateFormModalProps {
   open: boolean;
@@ -20,12 +22,14 @@ interface MilestoneTemplateFormModalProps {
 
 function toFormValues(template?: MilestoneTemplate): MilestoneTemplateFormValues {
   if (!template) {
-    return { name: "", daysOffset: 0, daysDirection: "before" };
+    return { name: "", category: "", daysOffset: 0, daysDirection: "before" };
   }
-  return { name: template.name, ...fromDaysBeforeEvent(template.daysBeforeEvent) };
+  return { name: template.name, category: template.category, ...fromDaysBeforeEvent(template.daysBeforeEvent) };
 }
 
 export function MilestoneTemplateFormModal({ open, onClose, onSubmit, initialTemplate }: MilestoneTemplateFormModalProps) {
+  const templates = useMilestoneTemplateStore((s) => s.templates);
+  const catOptions = categoryOptions(templates.map((t) => t.category));
   const [values, setValues] = useState<MilestoneTemplateFormValues>(() => toFormValues(initialTemplate));
   const [errors, setErrors] = useState<Partial<Record<keyof MilestoneTemplateFormValues, string>>>({});
 
@@ -60,6 +64,7 @@ export function MilestoneTemplateFormModal({ open, onClose, onSubmit, initialTem
     }
     onSubmit({
       name: result.data.name,
+      category: result.data.category,
       daysBeforeEvent: toDaysBeforeEvent(result.data.daysOffset, result.data.daysDirection),
     });
   }
@@ -82,6 +87,14 @@ export function MilestoneTemplateFormModal({ open, onClose, onSubmit, initialTem
       <div className="grid grid-cols-1 gap-4">
         <Field label="Nama Timeline" required hint={errors.name}>
           <Input value={values.name} onChange={(e) => set("name", e.target.value)} placeholder="cth. Survei Venue & Vendor" />
+        </Field>
+        <Field label="Kategori">
+          <Select value={values.category} onChange={(e) => set("category", e.target.value)}>
+            <option value="">Tanpa Kategori</option>
+            {catOptions.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </Select>
         </Field>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Jumlah Hari" required hint={errors.daysOffset}>

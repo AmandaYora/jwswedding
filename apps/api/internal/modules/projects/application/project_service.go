@@ -20,7 +20,7 @@ type ProjectRepository interface {
 	// instead of List's entire unbounded tenant history. See the
 	// infrastructure implementation's doc comment for `since`'s exact meaning.
 	ListForDashboard(ctx context.Context, tenantID int64, since time.Time) ([]domain.Project, error)
-	ListPaginated(ctx context.Context, tenantID int64, picStaffID, picSalesStaffID *int64, params pagination.Params, search, status string, showArchived bool) ([]domain.Project, int64, error)
+	ListPaginated(ctx context.Context, tenantID int64, picStaffID, picSalesStaffID *int64, params pagination.Params, search, status string, showArchived bool, eventMonth *string) ([]domain.Project, int64, error)
 	// ListByVenueID/ListByStaffPIC back the hard-delete "impact" endpoints
 	// (PLAN.md) -- see their infrastructure implementations' doc comments.
 	ListByVenueID(ctx context.Context, tenantID, venueID int64) ([]domain.ProjectRef, error)
@@ -219,8 +219,8 @@ func (s *ProjectService) ListForDashboard(ctx context.Context, tenantID int64, s
 // result into two disjoint views (active vs. archived), never merged, so
 // archived projects stay genuinely out of the way of day-to-day work (see
 // ADR-0013) rather than just visually deprioritized in a mixed list.
-func (s *ProjectService) ListPaginated(ctx context.Context, tenantID int64, picStaffID, picSalesStaffID *int64, params pagination.Params, search, status string, showArchived bool) ([]domain.Project, int64, error) {
-	return s.repo.ListPaginated(ctx, tenantID, picStaffID, picSalesStaffID, params, search, status, showArchived)
+func (s *ProjectService) ListPaginated(ctx context.Context, tenantID int64, picStaffID, picSalesStaffID *int64, params pagination.Params, search, status string, showArchived bool, eventMonth *string) ([]domain.Project, int64, error) {
+	return s.repo.ListPaginated(ctx, tenantID, picStaffID, picSalesStaffID, params, search, status, showArchived, eventMonth)
 }
 
 func (s *ProjectService) Get(ctx context.Context, tenantID, id int64) (*domain.Project, error) {
@@ -247,16 +247,25 @@ func (s *ProjectService) ExistsForTenant(ctx context.Context, tenantID, id int64
 }
 
 type ProjectInput struct {
-	Name          string
-	BrideName     string
-	GroomName     string
-	EventDate     time.Time
-	Venue         string
-	PrepStartDate time.Time
-	PackageName   string
-	ContractValue int64
-	Status        domain.ProjectStatus
-	PICStaffID    int64
+	Name      string
+	BrideName string
+	GroomName string
+	EventDate time.Time
+	// EventStartTime/EventEndTime are the project-level Jam Acara ("HH:MM"),
+	// PLAN.md revisi-putri-mom-25082026 Blok A. Presentation converts an empty
+	// string in the body to nil before this struct is built, so nil here means
+	// "Belum ditentukan"; a non-nil pointer holds "HH:MM". Both keys are always
+	// present in the body, so emptying one (non-nil -> nil) is a real change and
+	// guardKonteksUmum must treat it as such (sameOptionalString, not
+	// venueRefChanged).
+	EventStartTime *string
+	EventEndTime   *string
+	Venue          string
+	PrepStartDate  time.Time
+	PackageName    string
+	ContractValue  int64
+	Status         domain.ProjectStatus
+	PICStaffID     int64
 	// PICSalesStaffID is the "PIC Sales" slot -- see Project.PICSalesStaffID's
 	// doc comment. Create forces this to the caller's own staff id when
 	// callerRole is "Sales" (ignoring whatever's sent here); Owner/Admin's
@@ -293,7 +302,8 @@ func (s *ProjectService) Create(ctx context.Context, tenantID int64, actorStaffI
 	}
 	p := &domain.Project{
 		TenantID: tenantID, Name: input.Name, BrideName: input.BrideName, GroomName: input.GroomName,
-		EventDate: input.EventDate, Venue: input.Venue, PrepStartDate: input.PrepStartDate,
+		EventDate: input.EventDate, EventStartTime: input.EventStartTime, EventEndTime: input.EventEndTime,
+		Venue: input.Venue, PrepStartDate: input.PrepStartDate,
 		PackageName: input.PackageName, ContractValue: input.ContractValue, Status: input.Status,
 		PICStaffID: input.PICStaffID, PICSalesStaffID: picSalesStaffID, Description: input.Description,
 	}
@@ -336,6 +346,8 @@ func (s *ProjectService) Update(ctx context.Context, tenantID, id int64, actorSt
 	p.BrideName = input.BrideName
 	p.GroomName = input.GroomName
 	p.EventDate = input.EventDate
+	p.EventStartTime = input.EventStartTime
+	p.EventEndTime = input.EventEndTime
 	p.Venue = input.Venue
 	p.PrepStartDate = input.PrepStartDate
 	p.PackageName = input.PackageName
@@ -405,6 +417,8 @@ func guardKonteksUmum(callerRole string, p *domain.Project, input ProjectInput) 
 		input.BrideName != p.BrideName ||
 		input.GroomName != p.GroomName ||
 		!sameCalendarDate(input.EventDate, p.EventDate) ||
+		!sameOptionalString(input.EventStartTime, p.EventStartTime) ||
+		!sameOptionalString(input.EventEndTime, p.EventEndTime) ||
 		input.Venue != p.Venue ||
 		!sameCalendarDate(input.PrepStartDate, p.PrepStartDate) ||
 		input.PackageName != p.PackageName ||
@@ -437,6 +451,19 @@ func venueRefChanged(input, current *int64) bool {
 		return false
 	}
 	return current == nil || *input != *current
+}
+
+// sameOptionalString reports whether two optional string fields are equal,
+// treating both-nil as equal and exactly-one-nil as different. Unlike
+// venueRefChanged, a nil input is NOT "no change": the project-level Jam Acara
+// (Blok A) always sends both keys in the body, so clearing a value (non-nil ->
+// nil) is a genuine edit that guardKonteksUmum must catch. See ProjectInput's
+// EventStartTime doc comment.
+func sameOptionalString(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 func (s *ProjectService) Cancel(ctx context.Context, tenantID, id, actorStaffID int64) (*domain.Project, error) {
@@ -538,7 +565,8 @@ func (s *ProjectService) Duplicate(ctx context.Context, tenantID int64, actorSta
 
 	p := &domain.Project{
 		TenantID: tenantID, Name: input.Name, BrideName: input.BrideName, GroomName: input.GroomName,
-		EventDate: input.EventDate, Venue: input.Venue, PrepStartDate: input.PrepStartDate,
+		EventDate: input.EventDate, EventStartTime: input.EventStartTime, EventEndTime: input.EventEndTime,
+		Venue: input.Venue, PrepStartDate: input.PrepStartDate,
 		PackageName: input.PackageName, ContractValue: input.ContractValue, Status: input.Status,
 		PICStaffID: input.PICStaffID, PICSalesStaffID: input.PICSalesStaffID, Description: input.Description,
 	}
@@ -565,7 +593,7 @@ func (s *ProjectService) cloneMilestonesFrom(ctx context.Context, sourceProjectI
 	}
 	for _, m := range milestones {
 		clone := &domain.ProjectMilestone{
-			ProjectID: newProjectID, SortOrder: m.SortOrder, Name: m.Name,
+			ProjectID: newProjectID, SortOrder: m.SortOrder, Name: m.Name, Category: m.Category,
 			Status: domain.MilestoneNotStarted, TargetDate: m.TargetDate,
 		}
 		if err := s.milestones.Create(ctx, clone); err != nil {
@@ -621,6 +649,7 @@ func (s *ProjectService) cloneVendorEngagementsFrom(ctx context.Context, sourceP
 
 type MilestoneInput struct {
 	Name       string
+	Category   string
 	TargetDate time.Time
 }
 
@@ -640,7 +669,7 @@ func (s *ProjectService) CreateMilestone(ctx context.Context, tenantID, projectI
 		return nil, err
 	}
 	m := &domain.ProjectMilestone{
-		ProjectID: projectID, SortOrder: order, Name: input.Name,
+		ProjectID: projectID, SortOrder: order, Name: input.Name, Category: input.Category,
 		Status: domain.MilestoneNotStarted, TargetDate: input.TargetDate,
 	}
 	if err := s.milestones.Create(ctx, m); err != nil {
@@ -652,6 +681,7 @@ func (s *ProjectService) CreateMilestone(ctx context.Context, tenantID, projectI
 }
 
 type MilestoneUpdateInput struct {
+	Category      string
 	Status        domain.MilestoneStatus
 	TargetDate    time.Time
 	CompletedDate *time.Time
@@ -676,6 +706,7 @@ func (s *ProjectService) UpdateMilestone(ctx context.Context, tenantID, projectI
 	if err := guardStatusSelesai(ctx, s.evidence, m, input, milestoneID); err != nil {
 		return nil, err
 	}
+	m.Category = input.Category
 	m.Status = input.Status
 	m.TargetDate = input.TargetDate
 	m.CompletedDate = input.CompletedDate

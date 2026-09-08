@@ -39,6 +39,10 @@ type ClientTimelineRow struct {
 	BrideName   string
 	GroomName   string
 	EventDate   time.Time
+	// PICStaffID is the project's Wedding Planner (sentinel 0 = "Belum
+	// ditugaskan"), surfaced so Monitoring Timeline can show a PIC column and
+	// filter by PIC (Blok D). Name resolution is client-side, per MODULE_MAP.md.
+	PICStaffID int64
 }
 
 // DashboardVenuePaymentRow deliberately stays a separate slice/type from

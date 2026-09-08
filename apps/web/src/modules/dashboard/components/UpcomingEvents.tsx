@@ -1,10 +1,11 @@
 import { Link } from "react-router-dom";
 import { Card, CardHeader, CardContent } from "@/shared/components/ui/Card";
 import { EmptyState } from "@/shared/components/feedback/EmptyState";
-import { Input } from "@/shared/components/ui/Input";
+import { MonthSelect } from "@/shared/components/ui/MonthSelect";
 import type { Project } from "@/modules/projects/types";
 import { daysUntil } from "@/modules/projects/lib/dates";
 import { formatDate, todayISO } from "@/shared/lib/formatters";
+import { monthOptionsForward } from "@/shared/lib/month-options";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { CalendarClock } from "lucide-react";
 
@@ -16,27 +17,28 @@ interface UpcomingEventsProps {
 
 // PLAN.md mom-25082026-item-belum item 16: month ("YYYY-MM") switches this
 // card from the default "5 acara terdekat" to every open project in that
-// exact calendar month. min is pinned to the current month -- a past month
-// isn't just unhelpful here, the backend's own upcoming-mode semantics for
-// a past month would collide with the "no calendar-day floor" behavior a
-// month filter intentionally has (see DashboardService.matchesUpcoming's
-// doc comment), so keeping the picker from ever offering one avoids a
-// confusing result rather than a broken one.
+// exact calendar month. The dropdown offers only the current month and the 11
+// months after it (T-3): a past month isn't just unhelpful here, the backend's
+// own upcoming-mode semantics for a past month would collide with the "no
+// calendar-day floor" behavior a month filter intentionally has (see
+// DashboardService.matchesUpcoming's doc comment). The current-month floor is
+// now enforced by the option list itself (built forward from this month),
+// which is why the old <Input type="month" min> is gone.
 export function UpcomingEvents({ projects, month, onMonthChange }: UpcomingEventsProps) {
-  const currentMonth = todayISO().slice(0, 7);
   const subtitle = month ? "Seluruh acara pada bulan yang dipilih." : "Diurutkan berdasarkan tanggal acara.";
+  const monthOptions = monthOptionsForward(todayISO().slice(0, 7), 12);
   return (
     <Card>
       <CardHeader
         title="Acara Terdekat"
         subtitle={subtitle}
         action={
-          <Input
-            type="month"
-            className="h-8 w-36 text-[12.5px]"
-            min={currentMonth}
+          <MonthSelect
+            className="h-8 w-44 text-[12.5px]"
             value={month}
-            onChange={(e) => onMonthChange(e.target.value)}
+            onChange={onMonthChange}
+            options={monthOptions}
+            allLabel="5 Acara Terdekat"
           />
         }
       />

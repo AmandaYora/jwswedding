@@ -15,11 +15,11 @@ func NewMySQLMilestoneTemplateRepository(db *sql.DB) *MySQLMilestoneTemplateRepo
 	return &MySQLMilestoneTemplateRepository{db: db}
 }
 
-const milestoneTemplateColumns = `id, tenant_id, sort_order, name, days_before_event, created_at, updated_at`
+const milestoneTemplateColumns = `id, tenant_id, sort_order, name, category, days_before_event, created_at, updated_at`
 
 func scanMilestoneTemplate(scan func(dest ...interface{}) error) (*domain.ProjectMilestoneTemplate, error) {
 	var t domain.ProjectMilestoneTemplate
-	err := scan(&t.ID, &t.TenantID, &t.SortOrder, &t.Name, &t.DaysBeforeEvent, &t.CreatedAt, &t.UpdatedAt)
+	err := scan(&t.ID, &t.TenantID, &t.SortOrder, &t.Name, &t.Category, &t.DaysBeforeEvent, &t.CreatedAt, &t.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -56,8 +56,8 @@ func (r *MySQLMilestoneTemplateRepository) FindByID(ctx context.Context, tenantI
 
 func (r *MySQLMilestoneTemplateRepository) Create(ctx context.Context, t *domain.ProjectMilestoneTemplate) error {
 	result, err := r.db.ExecContext(ctx,
-		`INSERT INTO project_milestone_templates (tenant_id, sort_order, name, days_before_event) VALUES (?, ?, ?, ?)`,
-		t.TenantID, t.SortOrder, t.Name, t.DaysBeforeEvent,
+		`INSERT INTO project_milestone_templates (tenant_id, sort_order, name, category, days_before_event) VALUES (?, ?, ?, ?, ?)`,
+		t.TenantID, t.SortOrder, t.Name, t.Category, t.DaysBeforeEvent,
 	)
 	if err != nil {
 		return err
@@ -72,8 +72,8 @@ func (r *MySQLMilestoneTemplateRepository) Create(ctx context.Context, t *domain
 
 func (r *MySQLMilestoneTemplateRepository) Update(ctx context.Context, t *domain.ProjectMilestoneTemplate) error {
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE project_milestone_templates SET name = ?, days_before_event = ? WHERE tenant_id = ? AND id = ?`,
-		t.Name, t.DaysBeforeEvent, t.TenantID, t.ID,
+		`UPDATE project_milestone_templates SET name = ?, category = ?, days_before_event = ? WHERE tenant_id = ? AND id = ?`,
+		t.Name, t.Category, t.DaysBeforeEvent, t.TenantID, t.ID,
 	)
 	return err
 }

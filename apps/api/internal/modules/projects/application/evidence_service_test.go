@@ -29,6 +29,9 @@ func (f *fakeEvidenceRepoForUpload) ListByRelated(ctx context.Context, kind doma
 func (f *fakeEvidenceRepoForUpload) ListClientVisibleGeneral(ctx context.Context, projectID int64) ([]domain.Evidence, error) {
 	panic("not implemented")
 }
+func (f *fakeEvidenceRepoForUpload) ListClientVisibleMilestoneDocs(ctx context.Context, projectID int64) ([]domain.Evidence, error) {
+	panic("not implemented")
+}
 func (f *fakeEvidenceRepoForUpload) FindByID(ctx context.Context, projectID, id int64) (*domain.Evidence, error) {
 	panic("not implemented")
 }
@@ -175,5 +178,100 @@ func TestUpload_TerimaSpreadsheet(t *testing.T) {
 	}
 	if storage.saveCalls != 1 {
 		t.Errorf("storage.Save dipanggil %d kali, want 1", storage.saveCalls)
+	}
+}
+
+// fakeEvidenceRepoForToggle is a functional in-memory EvidenceRepository for
+// the Blok E visibility tests -- FindByID, SetClientVisible, and
+// ListClientVisibleMilestoneDocs are real, the rest panic.
+type fakeEvidenceRepoForToggle struct {
+	rows []domain.Evidence
+}
+
+func (f *fakeEvidenceRepoForToggle) ListByProject(ctx context.Context, projectID int64) ([]domain.Evidence, error) {
+	panic("not implemented")
+}
+func (f *fakeEvidenceRepoForToggle) ListByProjects(ctx context.Context, projectIDs []int64) ([]domain.Evidence, error) {
+	panic("not implemented")
+}
+func (f *fakeEvidenceRepoForToggle) ListByRelated(ctx context.Context, kind domain.EvidenceRelatedKind, relatedID int64) ([]domain.Evidence, error) {
+	panic("not implemented")
+}
+func (f *fakeEvidenceRepoForToggle) ListClientVisibleGeneral(ctx context.Context, projectID int64) ([]domain.Evidence, error) {
+	panic("not implemented")
+}
+func (f *fakeEvidenceRepoForToggle) ListClientVisibleMilestoneDocs(ctx context.Context, projectID int64) ([]domain.Evidence, error) {
+	var out []domain.Evidence
+	for _, e := range f.rows {
+		if e.RelatedKind == domain.RelatedProjectMilestone && e.IsClientVisible {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+func (f *fakeEvidenceRepoForToggle) FindByID(ctx context.Context, projectID, id int64) (*domain.Evidence, error) {
+	for i := range f.rows {
+		if f.rows[i].ID == id {
+			return &f.rows[i], nil
+		}
+	}
+	return nil, nil
+}
+func (f *fakeEvidenceRepoForToggle) Create(ctx context.Context, e *domain.Evidence) error {
+	panic("not implemented")
+}
+func (f *fakeEvidenceRepoForToggle) SetClientVisible(ctx context.Context, projectID, id int64, visible bool) error {
+	for i := range f.rows {
+		if f.rows[i].ID == id {
+			f.rows[i].IsClientVisible = visible
+			return nil
+		}
+	}
+	return nil
+}
+func (f *fakeEvidenceRepoForToggle) DeleteByRelated(ctx context.Context, kind domain.EvidenceRelatedKind, relatedID int64) error {
+	panic("not implemented")
+}
+
+func TestToggleClientVisible_ProjectMilestone_Berhasil(t *testing.T) {
+	repo := &fakeEvidenceRepoForToggle{rows: []domain.Evidence{
+		{ID: 1, RelatedKind: domain.RelatedProjectMilestone, IsClientVisible: false},
+	}}
+	svc := NewEvidenceService(repo, nil, nil, NewActivityService(&fakeActivityRepoForProject{}))
+	e, err := svc.ToggleClientVisible(context.Background(), 10, 1)
+	if err != nil {
+		t.Fatalf("ToggleClientVisible() error = %v, want success", err)
+	}
+	if !e.IsClientVisible {
+		t.Error("IsClientVisible = false, want true setelah toggle")
+	}
+}
+
+func TestToggleClientVisible_Payment_Ditolak(t *testing.T) {
+	repo := &fakeEvidenceRepoForToggle{rows: []domain.Evidence{
+		{ID: 1, RelatedKind: domain.RelatedPayment, IsClientVisible: false},
+	}}
+	svc := NewEvidenceService(repo, nil, nil, NewActivityService(&fakeActivityRepoForProject{}))
+	_, err := svc.ToggleClientVisible(context.Background(), 10, 1)
+	var appErr *apperror.AppError
+	if !errors.As(err, &appErr) || appErr.Kind != apperror.KindValidation {
+		t.Fatalf("ToggleClientVisible() error = %v, want Validation -- gerbang longgar hanya untuk general & projectMilestone", err)
+	}
+}
+
+func TestListClientMilestoneDocuments_HanyaVisibleMilestone(t *testing.T) {
+	repo := &fakeEvidenceRepoForToggle{rows: []domain.Evidence{
+		{ID: 1, RelatedKind: domain.RelatedProjectMilestone, IsClientVisible: true},
+		{ID: 2, RelatedKind: domain.RelatedProjectMilestone, IsClientVisible: false},
+		{ID: 3, RelatedKind: domain.RelatedGeneral, IsClientVisible: true},
+		{ID: 4, RelatedKind: domain.RelatedPayment, IsClientVisible: true},
+	}}
+	svc := NewEvidenceService(repo, nil, nil, NewActivityService(&fakeActivityRepoForProject{}))
+	got, err := svc.ListClientMilestoneDocuments(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("ListClientMilestoneDocuments() error = %v", err)
+	}
+	if len(got) != 1 || got[0].ID != 1 {
+		t.Errorf("hasil = %+v, want hanya baris projectMilestone yang visible (ID 1)", got)
 	}
 }

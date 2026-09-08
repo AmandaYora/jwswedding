@@ -20,6 +20,9 @@ import (
 type fakeProjectRepo struct {
 	project *domain.Project
 	updated *domain.Project
+	// created records what Duplicate/Create wrote (and assigns it an id, which
+	// Duplicate then uses to clone sub-entities into).
+	created *domain.Project
 }
 
 func (f *fakeProjectRepo) List(ctx context.Context, tenantID int64, picStaffID, picSalesStaffID *int64) ([]domain.Project, error) {
@@ -31,7 +34,7 @@ func (f *fakeProjectRepo) CountAll(ctx context.Context, tenantID int64) (int64, 
 func (f *fakeProjectRepo) ListForDashboard(ctx context.Context, tenantID int64, since time.Time) ([]domain.Project, error) {
 	panic("not implemented")
 }
-func (f *fakeProjectRepo) ListPaginated(ctx context.Context, tenantID int64, picStaffID, picSalesStaffID *int64, params pagination.Params, search, status string, showArchived bool) ([]domain.Project, int64, error) {
+func (f *fakeProjectRepo) ListPaginated(ctx context.Context, tenantID int64, picStaffID, picSalesStaffID *int64, params pagination.Params, search, status string, showArchived bool, eventMonth *string) ([]domain.Project, int64, error) {
 	panic("not implemented")
 }
 func (f *fakeProjectRepo) ListByVenueID(ctx context.Context, tenantID, venueID int64) ([]domain.ProjectRef, error) {
@@ -44,7 +47,9 @@ func (f *fakeProjectRepo) FindByID(ctx context.Context, tenantID, id int64) (*do
 	return f.project, nil
 }
 func (f *fakeProjectRepo) Create(ctx context.Context, p *domain.Project) error {
-	panic("not implemented")
+	p.ID = 99
+	f.created = p
+	return nil
 }
 func (f *fakeProjectRepo) Update(ctx context.Context, p *domain.Project) error {
 	f.updated = p
@@ -74,6 +79,7 @@ func (f *fakeActivityRepoForProject) ListByProject(ctx context.Context, projectI
 }
 
 func int64Ptr(v int64) *int64 { return &v }
+func strPtr(v string) *string { return &v }
 
 // baseProject and baseInputFor(p) together form a project whose stored state
 // and next-submitted input are identical field-for-field -- every test below
@@ -98,6 +104,7 @@ func baseProject() *domain.Project {
 func baseInputFor(p *domain.Project) ProjectInput {
 	return ProjectInput{
 		Name: p.Name, BrideName: p.BrideName, GroomName: p.GroomName, EventDate: p.EventDate,
+		EventStartTime: p.EventStartTime, EventEndTime: p.EventEndTime,
 		Venue: p.Venue, PrepStartDate: p.PrepStartDate, PackageName: p.PackageName,
 		ContractValue: p.ContractValue, Status: p.Status, PICStaffID: p.PICStaffID,
 		PICSalesStaffID: p.PICSalesStaffID, Description: p.Description,
@@ -145,6 +152,47 @@ func TestProjectServiceUpdate_SalesMengubahPaket_Forbidden(t *testing.T) {
 	input.PackageName = "Paket Lain"
 	_, err := svc.Update(context.Background(), p.TenantID, p.ID, 99, "Sales", input)
 	assertForbidden(t, err)
+}
+
+// Jam Acara project-level (Blok A / D3) rides guardKonteksUmum. A WP changing
+// the start time on an otherwise-identical submit is rejected.
+func TestProjectServiceUpdate_StaffMengubahJamAcara_Forbidden(t *testing.T) {
+	p := baseProject()
+	p.EventStartTime = strPtr("08:00")
+	p.EventEndTime = strPtr("13:00")
+	svc := newProjectServiceForTest(p)
+	input := baseInputFor(p)
+	input.EventStartTime = strPtr("09:00")
+	_, err := svc.Update(context.Background(), p.TenantID, p.ID, 99, "Staff", input)
+	assertForbidden(t, err)
+}
+
+// Clearing the jam acara (non-nil -> nil) MUST count as a change — this is the
+// case that would slip through if venueRefChanged (nil = "no change") had been
+// used instead of sameOptionalString (§4.1).
+func TestProjectServiceUpdate_StaffMengosongkanJamAcara_Forbidden(t *testing.T) {
+	p := baseProject()
+	p.EventStartTime = strPtr("08:00")
+	p.EventEndTime = strPtr("13:00")
+	svc := newProjectServiceForTest(p)
+	input := baseInputFor(p)
+	input.EventStartTime = nil // dikosongkan
+	_, err := svc.Update(context.Background(), p.TenantID, p.ID, 99, "Staff", input)
+	assertForbidden(t, err)
+}
+
+// Regression: the guard must not turn galak — a WP touching only Status while
+// jam acara is set and unchanged still succeeds.
+func TestProjectServiceUpdate_StaffStatusJamAcaraTidakBerubah_Berhasil(t *testing.T) {
+	p := baseProject()
+	p.EventStartTime = strPtr("08:00")
+	p.EventEndTime = strPtr("13:00")
+	svc := newProjectServiceForTest(p)
+	input := baseInputFor(p)
+	input.Status = domain.StatusReady
+	if _, err := svc.Update(context.Background(), p.TenantID, p.ID, 99, "Staff", input); err != nil {
+		t.Fatalf("Update() error = %v, want success", err)
+	}
 }
 
 func TestProjectServiceUpdate_StaffHanyaMengubahStatus_Berhasil(t *testing.T) {
@@ -278,10 +326,15 @@ func TestProjectServiceUpdate_Owner_MengubahSeluruhField_Berhasil(t *testing.T) 
 type fakeMilestoneRepo struct {
 	milestone *domain.ProjectMilestone
 	updated   *domain.ProjectMilestone
+	// list backs ListByProject (cloneMilestonesFrom's source); created records
+	// every Create call (clone/seed destinations) so a test can assert what
+	// was written.
+	list    []domain.ProjectMilestone
+	created []*domain.ProjectMilestone
 }
 
 func (f *fakeMilestoneRepo) ListByProject(ctx context.Context, projectID int64) ([]domain.ProjectMilestone, error) {
-	panic("not implemented")
+	return f.list, nil
 }
 func (f *fakeMilestoneRepo) ListByProjects(ctx context.Context, projectIDs []int64) ([]domain.ProjectMilestone, error) {
 	panic("not implemented")
@@ -290,14 +343,15 @@ func (f *fakeMilestoneRepo) FindByID(ctx context.Context, projectID, id int64) (
 	return f.milestone, nil
 }
 func (f *fakeMilestoneRepo) Create(ctx context.Context, m *domain.ProjectMilestone) error {
-	panic("not implemented")
+	f.created = append(f.created, m)
+	return nil
 }
 func (f *fakeMilestoneRepo) Update(ctx context.Context, m *domain.ProjectMilestone) error {
 	f.updated = m
 	return nil
 }
 func (f *fakeMilestoneRepo) NextSortOrder(ctx context.Context, projectID int64) (int, error) {
-	panic("not implemented")
+	return len(f.created) + 1, nil
 }
 func (f *fakeMilestoneRepo) Reorder(ctx context.Context, projectID int64, orderedIDs []int64) error {
 	panic("not implemented")
@@ -326,6 +380,9 @@ func (f *fakeEvidenceRepoForGuard) ListByRelated(ctx context.Context, kind domai
 	return nil, nil
 }
 func (f *fakeEvidenceRepoForGuard) ListClientVisibleGeneral(ctx context.Context, projectID int64) ([]domain.Evidence, error) {
+	panic("not implemented")
+}
+func (f *fakeEvidenceRepoForGuard) ListClientVisibleMilestoneDocs(ctx context.Context, projectID int64) ([]domain.Evidence, error) {
 	panic("not implemented")
 }
 func (f *fakeEvidenceRepoForGuard) FindByID(ctx context.Context, projectID, id int64) (*domain.Evidence, error) {
@@ -448,5 +505,184 @@ func TestUpdateMilestone_StatusInProgress_TidakMemanggilHasForRelated(t *testing
 	}
 	if evidenceRepo.listByRelatedCalls != 0 {
 		t.Errorf("ListByRelated dipanggil %d kali, want 0 untuk status non-Completed", evidenceRepo.listByRelatedCalls)
+	}
+}
+
+// --- Blok B: kategori timeline mengalir lewat Create/Update/clone/seed (T-5) ---
+
+func TestCreateMilestone_MenyimpanCategory(t *testing.T) {
+	p := baseProject()
+	svc, milestones := newProjectServiceForMilestoneTest(p, nil, &fakeEvidenceRepoForGuard{})
+	_, err := svc.CreateMilestone(context.Background(), p.TenantID, p.ID, 99, MilestoneInput{
+		Name: "Fitting Baju", Category: "Make Up & Busana", TargetDate: time.Date(2027, 5, 1, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("CreateMilestone() error = %v", err)
+	}
+	if len(milestones.created) != 1 || milestones.created[0].Category != "Make Up & Busana" {
+		t.Errorf("Category tidak tersimpan pada Create: %+v", milestones.created)
+	}
+}
+
+func TestUpdateMilestone_MengosongkanCategory(t *testing.T) {
+	p, m := baseProject(), baseTestMilestone()
+	m.Category = "Dekorasi"
+	svc, milestones := newProjectServiceForMilestoneTest(p, m, &fakeEvidenceRepoForGuard{hasEvidence: true})
+	_, err := svc.UpdateMilestone(context.Background(), p.TenantID, p.ID, m.ID, 99, MilestoneUpdateInput{
+		Category: "", Status: domain.MilestoneInProgress, TargetDate: m.TargetDate,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMilestone() error = %v", err)
+	}
+	if milestones.updated == nil || milestones.updated.Category != "" {
+		t.Errorf("Category tidak dikosongkan pada Update: %+v", milestones.updated)
+	}
+}
+
+func TestCloneMilestonesFrom_MenyalinCategory(t *testing.T) {
+	target := time.Date(2027, 5, 1, 0, 0, 0, 0, time.UTC)
+	milestones := &fakeMilestoneRepo{list: []domain.ProjectMilestone{
+		{ID: 1, Name: "Survei Venue", Category: "Venue", Status: domain.MilestoneCompleted, TargetDate: target},
+		{ID: 2, Name: "Catatan", Category: "", Status: domain.MilestoneCompleted, TargetDate: target},
+	}}
+	svc := &ProjectService{milestones: milestones}
+	if err := svc.cloneMilestonesFrom(context.Background(), 10, 20); err != nil {
+		t.Fatalf("cloneMilestonesFrom() error = %v", err)
+	}
+	if len(milestones.created) != 2 {
+		t.Fatalf("created = %d, want 2", len(milestones.created))
+	}
+	if milestones.created[0].Category != "Venue" || milestones.created[1].Category != "" {
+		t.Errorf("Category tidak tersalin: %q, %q", milestones.created[0].Category, milestones.created[1].Category)
+	}
+	if milestones.created[0].Status != domain.MilestoneNotStarted {
+		t.Errorf("status klon = %q, want reset ke Not Started", milestones.created[0].Status)
+	}
+}
+
+// fakeTemplateRepoForSeed backs seedDefaultMilestones -- only List matters.
+type fakeTemplateRepoForSeed struct {
+	templates []domain.ProjectMilestoneTemplate
+}
+
+func (f *fakeTemplateRepoForSeed) List(ctx context.Context, tenantID int64) ([]domain.ProjectMilestoneTemplate, error) {
+	return f.templates, nil
+}
+func (f *fakeTemplateRepoForSeed) FindByID(ctx context.Context, tenantID, id int64) (*domain.ProjectMilestoneTemplate, error) {
+	panic("not implemented")
+}
+func (f *fakeTemplateRepoForSeed) Create(ctx context.Context, t *domain.ProjectMilestoneTemplate) error {
+	panic("not implemented")
+}
+func (f *fakeTemplateRepoForSeed) Update(ctx context.Context, t *domain.ProjectMilestoneTemplate) error {
+	panic("not implemented")
+}
+func (f *fakeTemplateRepoForSeed) Delete(ctx context.Context, tenantID, id int64) error {
+	panic("not implemented")
+}
+func (f *fakeTemplateRepoForSeed) NextSortOrder(ctx context.Context, tenantID int64) (int, error) {
+	panic("not implemented")
+}
+func (f *fakeTemplateRepoForSeed) Reorder(ctx context.Context, tenantID int64, orderedIDs []int64) error {
+	panic("not implemented")
+}
+
+func TestSeedDefaultMilestones_MenyalinCategory(t *testing.T) {
+	milestones := &fakeMilestoneRepo{}
+	templates := &fakeTemplateRepoForSeed{templates: []domain.ProjectMilestoneTemplate{
+		{Name: "Survei Venue", Category: "Venue", DaysBeforeEvent: 90},
+		{Name: "Hari-H", Category: "", DaysBeforeEvent: 0},
+	}}
+	svc := &ProjectService{milestones: milestones, milestoneTemplates: templates}
+	event := time.Date(2027, 6, 1, 0, 0, 0, 0, time.UTC)
+	prep := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := svc.seedDefaultMilestones(context.Background(), 1, 20, event, prep); err != nil {
+		t.Fatalf("seedDefaultMilestones() error = %v", err)
+	}
+	if len(milestones.created) != 2 || milestones.created[0].Category != "Venue" {
+		t.Errorf("Category template tidak tersalin saat seeding: %+v", milestones.created)
+	}
+}
+
+// --- Blok A / T-5: Duplicate menyalin Jam Acara ---
+
+// fakeVendorEngagementRepoForDuplicate hanya perlu ListByProject (mengembalikan
+// nol engagement), sehingga cloneVendorEngagementsFrom berhenti lebih awal dan
+// vendorMilestones tidak pernah tersentuh.
+type fakeVendorEngagementRepoForDuplicate struct{}
+
+func (f *fakeVendorEngagementRepoForDuplicate) ListByProject(ctx context.Context, projectID int64) ([]domain.ProjectVendor, error) {
+	return nil, nil
+}
+func (f *fakeVendorEngagementRepoForDuplicate) ListByProjects(ctx context.Context, projectIDs []int64) ([]domain.ProjectVendor, error) {
+	panic("not implemented")
+}
+func (f *fakeVendorEngagementRepoForDuplicate) FindByID(ctx context.Context, projectID, id int64) (*domain.ProjectVendor, error) {
+	panic("not implemented")
+}
+func (f *fakeVendorEngagementRepoForDuplicate) Create(ctx context.Context, pv *domain.ProjectVendor) error {
+	panic("not implemented")
+}
+func (f *fakeVendorEngagementRepoForDuplicate) Update(ctx context.Context, pv *domain.ProjectVendor) error {
+	panic("not implemented")
+}
+func (f *fakeVendorEngagementRepoForDuplicate) SetStatus(ctx context.Context, projectID, id int64, status domain.EngagementStatus) error {
+	panic("not implemented")
+}
+func (f *fakeVendorEngagementRepoForDuplicate) ListByVendor(ctx context.Context, tenantID, vendorID int64) ([]domain.VendorEngagementHistoryRow, error) {
+	panic("not implemented")
+}
+
+type fakeVendorMilestoneRepoForDuplicate struct{}
+
+func (f *fakeVendorMilestoneRepoForDuplicate) ListByProjectVendor(ctx context.Context, projectVendorID int64) ([]domain.VendorMilestone, error) {
+	panic("not implemented")
+}
+func (f *fakeVendorMilestoneRepoForDuplicate) ListByProjectVendors(ctx context.Context, projectVendorIDs []int64) ([]domain.VendorMilestone, error) {
+	panic("not implemented")
+}
+func (f *fakeVendorMilestoneRepoForDuplicate) FindByID(ctx context.Context, projectVendorID, id int64) (*domain.VendorMilestone, error) {
+	panic("not implemented")
+}
+func (f *fakeVendorMilestoneRepoForDuplicate) Create(ctx context.Context, m *domain.VendorMilestone) error {
+	panic("not implemented")
+}
+func (f *fakeVendorMilestoneRepoForDuplicate) Update(ctx context.Context, m *domain.VendorMilestone) error {
+	panic("not implemented")
+}
+func (f *fakeVendorMilestoneRepoForDuplicate) NextSortOrder(ctx context.Context, projectVendorID int64) (int, error) {
+	panic("not implemented")
+}
+
+// Duplicate membangun domain.Project field-demi-field (T-5) -- menambah kolom
+// tanpa menyentuhnya menghasilkan bug senyap: Jam Acara hilang saat duplikasi.
+func TestDuplicate_MenyalinJamAcara(t *testing.T) {
+	source := baseProject()
+	repo := &fakeProjectRepo{project: source}
+	svc := &ProjectService{
+		repo:              repo,
+		milestones:        &fakeMilestoneRepo{},
+		vendorEngagements: &fakeVendorEngagementRepoForDuplicate{},
+		vendorMilestones:  &fakeVendorMilestoneRepoForDuplicate{},
+		activity:          NewActivityService(&fakeActivityRepoForProject{}),
+	}
+
+	input := baseInputFor(source)
+	input.Name = "Aurelia & Bagas Wedding (Salinan)"
+	input.EventStartTime = strPtr("16:00")
+	input.EventEndTime = strPtr("21:00")
+
+	got, err := svc.Duplicate(context.Background(), source.TenantID, 1, source.ID, input)
+	if err != nil {
+		t.Fatalf("Duplicate() error = %v", err)
+	}
+	if got.EventStartTime == nil || got.EventEndTime == nil {
+		t.Fatalf("Jam Acara hilang saat duplikasi: start=%v end=%v", got.EventStartTime, got.EventEndTime)
+	}
+	if *got.EventStartTime != "16:00" || *got.EventEndTime != "21:00" {
+		t.Errorf("Jam Acara = %q-%q, want 16:00-21:00", *got.EventStartTime, *got.EventEndTime)
+	}
+	if repo.created == nil || repo.created.EventStartTime == nil || *repo.created.EventStartTime != "16:00" {
+		t.Error("Jam Acara tidak ikut ditulis ke repository")
 	}
 }

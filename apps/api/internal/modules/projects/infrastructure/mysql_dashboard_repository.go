@@ -231,7 +231,7 @@ func (r *MySQLDashboardRepository) ListRecentActivity(ctx context.Context, tenan
 func (r *MySQLDashboardRepository) ListClientTimelines(ctx context.Context, tenantID int64, picStaffID *int64) ([]domain.ClientTimelineRow, error) {
 	query := `
 		SELECT pm.id, pm.project_id, pm.sort_order, pm.name, pm.status, pm.target_date, pm.completed_date,
-		       p.id, p.name, p.bride_name, p.groom_name, p.event_date
+		       p.id, p.name, p.bride_name, p.groom_name, p.event_date, p.pic_staff_id
 		FROM project_milestones pm
 		JOIN projects p ON p.id = pm.project_id
 		WHERE p.tenant_id = ? AND p.status NOT IN ('Completed','Cancelled') AND p.is_archived = 0`
@@ -255,7 +255,7 @@ func (r *MySQLDashboardRepository) ListClientTimelines(ctx context.Context, tena
 		var completedDate sql.NullTime
 		if err := rows.Scan(&row.Milestone.ID, &row.Milestone.ProjectID, &row.Milestone.SortOrder, &row.Milestone.Name,
 			&status, &row.Milestone.TargetDate, &completedDate,
-			&row.ProjectID, &row.ProjectName, &row.BrideName, &row.GroomName, &row.EventDate); err != nil {
+			&row.ProjectID, &row.ProjectName, &row.BrideName, &row.GroomName, &row.EventDate, &row.PICStaffID); err != nil {
 			return nil, err
 		}
 		row.Milestone.Status = domain.MilestoneStatus(status)

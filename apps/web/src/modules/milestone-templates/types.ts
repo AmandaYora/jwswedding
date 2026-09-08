@@ -5,6 +5,9 @@
 export interface MilestoneTemplate {
   id: string;
   name: string;
+  // Display-grouping category seeded into each project milestone (Blok B).
+  // "" = "Tanpa Kategori".
+  category: string;
   daysBeforeEvent: number;
   sortOrder: number;
 }

@@ -34,6 +34,13 @@ type EvidenceRepository interface {
 	// bolted onto ListByProject, so this is trivial to audit as "only ever
 	// returns documents safe to show a client."
 	ListClientVisibleGeneral(ctx context.Context, projectID int64) ([]domain.Evidence, error)
+	// ListClientVisibleMilestoneDocs backs Client Portal's timeline lampiran
+	// (Blok E) — always filters related_kind='projectMilestone' AND
+	// is_client_visible=true, unconditionally, regardless of caller. Its own
+	// query (not a filter bolted onto ListByProject) for the same audit reason
+	// as ListClientVisibleGeneral: trivial to read as "only ever returns
+	// timeline attachments safe to show a client."
+	ListClientVisibleMilestoneDocs(ctx context.Context, projectID int64) ([]domain.Evidence, error)
 	FindByID(ctx context.Context, projectID, id int64) (*domain.Evidence, error)
 	Create(ctx context.Context, e *domain.Evidence) error
 	SetClientVisible(ctx context.Context, projectID, id int64, visible bool) error
@@ -89,12 +96,34 @@ func (s *EvidenceService) ListClientDocuments(ctx context.Context, projectID int
 	return s.repo.ListClientVisibleGeneral(ctx, projectID)
 }
 
-// ToggleClientVisible flips a `general`-kind document's client visibility
-// without needing to re-upload the file — rejected for any other
-// RelatedKind, since visibility only ever means anything for a document
-// with no other, already-visible-to-the-client context to inherit from
-// (every other kind stays unconditionally client-visible, unaffected by
-// this field entirely).
+// ListClientMilestoneDocuments backs GET /projects/{id}/milestone-documents —
+// the timeline lampiran a client is allowed to see in Client Portal (Blok E).
+// Same shape and safety property as ListClientDocuments: it ALWAYS returns only
+// projectMilestone-kind, client-visible rows, regardless of who calls it.
+func (s *EvidenceService) ListClientMilestoneDocuments(ctx context.Context, projectID int64) ([]domain.Evidence, error) {
+	return s.repo.ListClientVisibleMilestoneDocs(ctx, projectID)
+}
+
+// clientVisibilityApplies reports whether the is_client_visible flag is
+// meaningful for a given kind. Only `general` (project-level documents) and
+// `projectMilestone` (timeline attachments) are hidden-from-client by default
+// and individually opt in to visibility (Blok E). Every other kind stays
+// unconditionally client-visible and ignores the flag entirely, which is why
+// those tabs (Kendala, Pembayaran, Vendor) rely on it in Client Portal.
+func clientVisibilityApplies(kind domain.EvidenceRelatedKind) bool {
+	return kind == domain.RelatedGeneral || kind == domain.RelatedProjectMilestone
+}
+
+// ToggleClientVisible flips a document's client visibility without needing to
+// re-upload the file — accepted for `general` (project documents) and
+// `projectMilestone` (timeline lampiran, Blok E), the two kinds hidden from a
+// client by default. Rejected for every other RelatedKind, since visibility
+// only ever means anything for a document with no other,
+// already-visible-to-the-client context to inherit from (every other kind
+// stays unconditionally client-visible, unaffected by this field entirely).
+// Who may call this is unchanged (staff who passed the project gate, including
+// the WP that PICs it) — deliberate parity with the general-document toggle
+// already shipped; see PLAN.md revisi-putri-mom-25082026 §4.5.
 func (s *EvidenceService) ToggleClientVisible(ctx context.Context, projectID, id int64) (*domain.Evidence, error) {
 	e, err := s.repo.FindByID(ctx, projectID, id)
 	if err != nil {
@@ -103,9 +132,9 @@ func (s *EvidenceService) ToggleClientVisible(ctx context.Context, projectID, id
 	if e == nil {
 		return nil, apperror.NotFound("Evidence tidak ditemukan")
 	}
-	if e.RelatedKind != domain.RelatedGeneral {
-		return nil, apperror.Validation("Visibilitas hanya berlaku untuk dokumen umum", map[string][]string{
-			"relatedKind": {"Evidence ini bukan dokumen umum, visibilitasnya tidak dapat diubah"},
+	if !clientVisibilityApplies(e.RelatedKind) {
+		return nil, apperror.Validation("Visibilitas hanya berlaku untuk dokumen umum atau lampiran timeline", map[string][]string{
+			"relatedKind": {"Visibilitas evidence ini tidak dapat diubah"},
 		})
 	}
 	newVisible := !e.IsClientVisible
@@ -208,11 +237,12 @@ func (s *EvidenceService) Upload(ctx context.Context, tenantID, projectID int64,
 		return nil, apperror.Internal("Gagal mengunggah file ke object storage")
 	}
 
-	// Server-side, not just trusted from the request body: IsClientVisible
-	// can only ever be true for a general-kind document — a client-visible
-	// flag on any other kind would be meaningless (those stay unconditionally
-	// visible regardless) and misleading to display back.
-	isClientVisible := input.IsClientVisible && input.RelatedKind == domain.RelatedGeneral
+	// Server-side, not just trusted from the request body: IsClientVisible is
+	// only honored for the two kinds hidden from a client by default (`general`
+	// and `projectMilestone`, Blok E). On any other kind the flag would be
+	// meaningless (those stay unconditionally visible) and misleading to
+	// display back, so it is forced false.
+	isClientVisible := input.IsClientVisible && clientVisibilityApplies(input.RelatedKind)
 
 	e := &domain.Evidence{
 		ProjectID: projectID, Name: input.Name, Type: input.Type, StoragePath: key, FileName: input.FileName,

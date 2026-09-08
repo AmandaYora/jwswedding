@@ -9,6 +9,8 @@ import { z } from "zod";
 // daysBeforeEvent.
 export const milestoneTemplateSchema = z.object({
   name: z.string().min(3, "Nama timeline minimal 3 karakter"),
+  // Category grouping label (Blok B) — "" = "Tanpa Kategori".
+  category: z.string().optional().default(""),
   daysOffset: z.number().int("Harus berupa angka bulat").min(0, "Tidak boleh negatif"),
   daysDirection: z.enum(["before", "after"]),
 });
@@ -23,6 +25,7 @@ export type MilestoneTemplateFormValues = z.infer<typeof milestoneTemplateSchema
 // see PLAN.md's "KOREKSI" note for exactly why this split matters.
 export interface MilestoneTemplateSubmitValues {
   name: string;
+  category: string;
   daysBeforeEvent: number;
 }
 

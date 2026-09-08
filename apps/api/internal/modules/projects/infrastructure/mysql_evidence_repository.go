@@ -126,6 +126,29 @@ func (r *MySQLEvidenceRepository) ListClientVisibleGeneral(ctx context.Context, 
 	return list, rows.Err()
 }
 
+// ListClientVisibleMilestoneDocs backs Client Portal's timeline lampiran (Blok
+// E) — see EvidenceRepository.ListClientVisibleMilestoneDocs's doc comment.
+func (r *MySQLEvidenceRepository) ListClientVisibleMilestoneDocs(ctx context.Context, projectID int64) ([]domain.Evidence, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+evidenceColumns+` FROM evidence WHERE project_id = ? AND related_kind = ? AND is_client_visible = TRUE ORDER BY uploaded_at DESC, id DESC`,
+		projectID, string(domain.RelatedProjectMilestone),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []domain.Evidence
+	for rows.Next() {
+		e, err := scanEvidence(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, *e)
+	}
+	return list, rows.Err()
+}
+
 func (r *MySQLEvidenceRepository) FindByID(ctx context.Context, projectID, id int64) (*domain.Evidence, error) {
 	row := r.db.QueryRowContext(ctx, `SELECT `+evidenceColumns+` FROM evidence WHERE project_id = ? AND id = ? LIMIT 1`, projectID, id)
 	return scanEvidence(row.Scan)

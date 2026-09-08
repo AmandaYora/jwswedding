@@ -19,7 +19,7 @@ func NewMySQLProjectRepository(db *sql.DB) *MySQLProjectRepository {
 	return &MySQLProjectRepository{db: db}
 }
 
-const projectColumns = `id, tenant_id, name, bride_name, groom_name, event_date, venue, venue_id, venue_rental_price, venue_charge,
+const projectColumns = `id, tenant_id, name, bride_name, groom_name, event_date, event_start_time, event_end_time, venue, venue_id, venue_rental_price, venue_charge,
 	prep_start_date, package_name, contract_value, status, pic_staff_id, pic_sales_staff_id, description, is_archived, created_at, updated_at`
 
 func scanProject(scan func(dest ...interface{}) error) (*domain.Project, error) {
@@ -28,7 +28,8 @@ func scanProject(scan func(dest ...interface{}) error) (*domain.Project, error) 
 	var description sql.NullString
 	var venueID sql.NullInt64
 	var venueRentalPrice, venueCharge sql.NullInt64
-	err := scan(&p.ID, &p.TenantID, &p.Name, &p.BrideName, &p.GroomName, &p.EventDate, &p.Venue, &venueID, &venueRentalPrice, &venueCharge,
+	var eventStartTime, eventEndTime sql.NullString
+	err := scan(&p.ID, &p.TenantID, &p.Name, &p.BrideName, &p.GroomName, &p.EventDate, &eventStartTime, &eventEndTime, &p.Venue, &venueID, &venueRentalPrice, &venueCharge,
 		&p.PrepStartDate, &p.PackageName, &p.ContractValue, &status, &p.PICStaffID, &p.PICSalesStaffID, &description, &p.IsArchived, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -46,6 +47,16 @@ func scanProject(scan func(dest ...interface{}) error) (*domain.Project, error) 
 	}
 	if venueCharge.Valid {
 		p.VenueCharge = &venueCharge.Int64
+	}
+	// TIME columns arrive as "15:04:05"; normalize to the "HH:MM" shape the
+	// domain/API boundary carries -- same treatment as project_vendors' Jam Acara.
+	if eventStartTime.Valid {
+		v := timeToHHMM(eventStartTime.String)
+		p.EventStartTime = &v
+	}
+	if eventEndTime.Valid {
+		v := timeToHHMM(eventEndTime.String)
+		p.EventEndTime = &v
 	}
 	return &p, nil
 }
@@ -190,11 +201,38 @@ func (r *MySQLProjectRepository) ListForDashboard(ctx context.Context, tenantID 
 	return projects, rows.Err()
 }
 
+// eventMonthRange converts a validated "YYYY-MM" string into the half-open
+// [start, end) bounds of that calendar month, as plain "YYYY-MM-DD" date
+// strings.
+//
+// Date STRINGS, not time.Time, deliberately: go-sql-driver writes a time.Time
+// argument as v.In(cfg.Loc), and this pool is opened with loc=Local (see
+// shared/database.Open). A time.Time parsed from "2006-01" carries UTC
+// midnight, so on a UTC+7 host the driver would put "2026-09-01 07:00:00" on
+// the wire -- and against a DATE column (implicitly 00:00:00) that silently
+// drops every event on the 1st of the filtered month while pulling in the 1st
+// of the next one. A date string is compared by MySQL as a DATE, with no
+// timezone conversion anywhere in the path.
+func eventMonthRange(eventMonth string) (start, end string, err error) {
+	t, err := time.Parse("2006-01", eventMonth)
+	if err != nil {
+		return "", "", err
+	}
+	return t.Format("2006-01-02"), t.AddDate(0, 1, 0).Format("2006-01-02"), nil
+}
+
 // ListPaginated backs the real `GET /projects` list page — List above stays
 // as-is for dashboard/global-search consumers that need the full roster
 // (including archived projects; this method's showArchived split doesn't
 // apply there — see ProjectService.ListPaginated's doc comment).
-func (r *MySQLProjectRepository) ListPaginated(ctx context.Context, tenantID int64, picStaffID, picSalesStaffID *int64, params pagination.Params, search, status string, showArchived bool) ([]domain.Project, int64, error) {
+//
+// eventMonth (docs/plan/revisi-putri-lanjutan/PLAN.md Blok I, D12/D7), when
+// non-nil, is a validated "YYYY-MM" string scoping the result to that
+// calendar month of event_date. picStaffID/picSalesStaffID need no companion
+// parameter to support this feature (D6/T-2): the slots below already exist
+// for role-scoping, and the presentation layer fills them with the right
+// value per role/query-param.
+func (r *MySQLProjectRepository) ListPaginated(ctx context.Context, tenantID int64, picStaffID, picSalesStaffID *int64, params pagination.Params, search, status string, showArchived bool, eventMonth *string) ([]domain.Project, int64, error) {
 	countQuery := `SELECT COUNT(*) FROM projects WHERE tenant_id = ? AND is_archived = ?`
 	listQuery := `SELECT ` + projectColumns + ` FROM projects WHERE tenant_id = ? AND is_archived = ?`
 	args := []interface{}{tenantID, showArchived}
@@ -217,6 +255,16 @@ func (r *MySQLProjectRepository) ListPaginated(ctx context.Context, tenantID int
 	if status != "" {
 		conditions = append(conditions, `status = ?`)
 		args = append(args, status)
+	}
+	if eventMonth != nil {
+		// Half-open range, not YEAR()=? AND MONTH()=? -- the latter wraps the
+		// column in a function and disables any index on event_date (§8).
+		start, end, err := eventMonthRange(*eventMonth)
+		if err != nil {
+			return nil, 0, err
+		}
+		conditions = append(conditions, `event_date >= ? AND event_date < ?`)
+		args = append(args, start, end)
 	}
 	if len(conditions) > 0 {
 		where := ` AND ` + strings.Join(conditions, " AND ")
@@ -254,10 +302,10 @@ func (r *MySQLProjectRepository) FindByID(ctx context.Context, tenantID, id int6
 
 func (r *MySQLProjectRepository) Create(ctx context.Context, p *domain.Project) error {
 	result, err := r.db.ExecContext(ctx,
-		`INSERT INTO projects (tenant_id, name, bride_name, groom_name, event_date, venue, prep_start_date,
+		`INSERT INTO projects (tenant_id, name, bride_name, groom_name, event_date, event_start_time, event_end_time, venue, prep_start_date,
 		 package_name, contract_value, status, pic_staff_id, pic_sales_staff_id, description)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.TenantID, p.Name, p.BrideName, p.GroomName, p.EventDate, p.Venue, p.PrepStartDate,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.TenantID, p.Name, p.BrideName, p.GroomName, p.EventDate, p.EventStartTime, p.EventEndTime, p.Venue, p.PrepStartDate,
 		p.PackageName, p.ContractValue, string(p.Status), p.PICStaffID, p.PICSalesStaffID, p.Description,
 	)
 	if err != nil {
@@ -273,10 +321,10 @@ func (r *MySQLProjectRepository) Create(ctx context.Context, p *domain.Project) 
 
 func (r *MySQLProjectRepository) Update(ctx context.Context, p *domain.Project) error {
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE projects SET name = ?, bride_name = ?, groom_name = ?, event_date = ?, venue = ?, venue_id = ?, venue_rental_price = ?,
+		`UPDATE projects SET name = ?, bride_name = ?, groom_name = ?, event_date = ?, event_start_time = ?, event_end_time = ?, venue = ?, venue_id = ?, venue_rental_price = ?,
 		 venue_charge = ?, prep_start_date = ?, package_name = ?, contract_value = ?, status = ?, pic_staff_id = ?, pic_sales_staff_id = ?, description = ?
 		 WHERE tenant_id = ? AND id = ?`,
-		p.Name, p.BrideName, p.GroomName, p.EventDate, p.Venue, p.VenueID, p.VenueRentalPrice,
+		p.Name, p.BrideName, p.GroomName, p.EventDate, p.EventStartTime, p.EventEndTime, p.Venue, p.VenueID, p.VenueRentalPrice,
 		p.VenueCharge, p.PrepStartDate, p.PackageName, p.ContractValue, string(p.Status), p.PICStaffID, p.PICSalesStaffID, p.Description, p.TenantID, p.ID,
 	)
 	return err
@@ -370,13 +418,13 @@ func NewMySQLMilestoneRepository(db *sql.DB) *MySQLMilestoneRepository {
 	return &MySQLMilestoneRepository{db: db}
 }
 
-const milestoneColumns = `id, project_id, sort_order, name, status, target_date, completed_date`
+const milestoneColumns = `id, project_id, sort_order, name, category, status, target_date, completed_date`
 
 func scanMilestone(scan func(dest ...interface{}) error) (*domain.ProjectMilestone, error) {
 	var m domain.ProjectMilestone
 	var status string
 	var completedDate sql.NullTime
-	err := scan(&m.ID, &m.ProjectID, &m.SortOrder, &m.Name, &status, &m.TargetDate, &completedDate)
+	err := scan(&m.ID, &m.ProjectID, &m.SortOrder, &m.Name, &m.Category, &status, &m.TargetDate, &completedDate)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -440,8 +488,8 @@ func (r *MySQLMilestoneRepository) FindByID(ctx context.Context, projectID, id i
 
 func (r *MySQLMilestoneRepository) Create(ctx context.Context, m *domain.ProjectMilestone) error {
 	result, err := r.db.ExecContext(ctx,
-		`INSERT INTO project_milestones (project_id, sort_order, name, status, target_date) VALUES (?, ?, ?, ?, ?)`,
-		m.ProjectID, m.SortOrder, m.Name, string(m.Status), m.TargetDate,
+		`INSERT INTO project_milestones (project_id, sort_order, name, category, status, target_date) VALUES (?, ?, ?, ?, ?, ?)`,
+		m.ProjectID, m.SortOrder, m.Name, m.Category, string(m.Status), m.TargetDate,
 	)
 	if err != nil {
 		return err
@@ -456,8 +504,8 @@ func (r *MySQLMilestoneRepository) Create(ctx context.Context, m *domain.Project
 
 func (r *MySQLMilestoneRepository) Update(ctx context.Context, m *domain.ProjectMilestone) error {
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE project_milestones SET name = ?, status = ?, target_date = ?, completed_date = ? WHERE id = ?`,
-		m.Name, string(m.Status), m.TargetDate, m.CompletedDate, m.ID,
+		`UPDATE project_milestones SET name = ?, category = ?, status = ?, target_date = ?, completed_date = ? WHERE id = ?`,
+		m.Name, m.Category, string(m.Status), m.TargetDate, m.CompletedDate, m.ID,
 	)
 	return err
 }

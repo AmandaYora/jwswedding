@@ -42,6 +42,7 @@ func (s *MilestoneTemplateService) Get(ctx context.Context, tenantID, id int64) 
 
 type MilestoneTemplateInput struct {
 	Name            string
+	Category        string
 	DaysBeforeEvent int
 }
 
@@ -55,7 +56,7 @@ func (s *MilestoneTemplateService) Create(ctx context.Context, tenantID int64, i
 	if err != nil {
 		return nil, err
 	}
-	t := &domain.ProjectMilestoneTemplate{TenantID: tenantID, SortOrder: order, Name: input.Name, DaysBeforeEvent: input.DaysBeforeEvent}
+	t := &domain.ProjectMilestoneTemplate{TenantID: tenantID, SortOrder: order, Name: input.Name, Category: input.Category, DaysBeforeEvent: input.DaysBeforeEvent}
 	if err := s.repo.Create(ctx, t); err != nil {
 		return nil, err
 	}
@@ -69,6 +70,7 @@ func (s *MilestoneTemplateService) Update(ctx context.Context, tenantID, id int6
 		return nil, err
 	}
 	t.Name = input.Name
+	t.Category = input.Category
 	t.DaysBeforeEvent = input.DaysBeforeEvent
 	if err := s.repo.Update(ctx, t); err != nil {
 		return nil, err

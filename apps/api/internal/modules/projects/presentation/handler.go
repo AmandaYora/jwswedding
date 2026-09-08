@@ -204,15 +204,17 @@ func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 	case len(rest) == 2 && rest[0] == "issues" && r.Method == http.MethodPatch:
 		h.updateIssue(w, r, claims, projectID, rest[1])
 	case len(rest) == 1 && rest[0] == "evidence" && r.Method == http.MethodGet:
-		h.listEvidence(w, r, projectID)
+		h.listEvidence(w, r, claims, projectID)
 	case len(rest) == 1 && rest[0] == "evidence" && r.Method == http.MethodPost:
 		h.uploadEvidence(w, r, claims, projectID)
 	case len(rest) == 3 && rest[0] == "evidence" && rest[2] == "file" && r.Method == http.MethodGet:
-		h.downloadEvidence(w, r, projectID, rest[1])
+		h.downloadEvidence(w, r, claims, projectID, rest[1])
 	case len(rest) == 3 && rest[0] == "evidence" && rest[2] == "toggle-client-visible" && r.Method == http.MethodPost:
 		h.toggleEvidenceClientVisible(w, r, projectID, rest[1])
 	case len(rest) == 1 && rest[0] == "documents" && r.Method == http.MethodGet:
 		h.listDocuments(w, r, projectID)
+	case len(rest) == 1 && rest[0] == "milestone-documents" && r.Method == http.MethodGet:
+		h.listMilestoneDocuments(w, r, projectID)
 	case len(rest) == 1 && rest[0] == "activity" && r.Method == http.MethodGet:
 		h.listActivity(w, r, projectID)
 	case len(rest) == 1 && rest[0] == "venue" && r.Method == http.MethodGet:
@@ -229,6 +231,11 @@ type staffClaims struct {
 	tenantID int64
 	staffID  int64
 	role     string
+	// principalType is "staff" or "client" — the only way handlers downstream
+	// of resolveProjectAccess can tell who is calling without re-reading the
+	// request context. Used by listEvidence/downloadEvidence to filter/deny the
+	// client-hidden evidence kinds (general, projectMilestone) — see T-4, Blok E.
+	principalType string
 }
 
 func requireStaff(w http.ResponseWriter, r *http.Request) (staffClaims, bool) {
@@ -294,6 +301,7 @@ func (h *Handler) resolveProjectAccess(w http.ResponseWriter, r *http.Request, p
 			response.Error(w, http.StatusForbidden, "Anda tidak memiliki akses ke project ini", nil)
 			return staffClaims{}, false
 		}
+		sc.principalType = "staff"
 		return sc, true
 	case "client":
 		if r.Method != http.MethodGet {
@@ -319,7 +327,7 @@ func (h *Handler) resolveProjectAccess(w http.ResponseWriter, r *http.Request, p
 			response.Error(w, http.StatusForbidden, "Anda tidak memiliki akses ke project ini", nil)
 			return staffClaims{}, false
 		}
-		return staffClaims{tenantID: tenantID}, true
+		return staffClaims{tenantID: tenantID, principalType: "client"}, true
 	default:
 		response.Error(w, http.StatusForbidden, "Prinsipal ini tidak dapat mengakses project", nil)
 		return staffClaims{}, false

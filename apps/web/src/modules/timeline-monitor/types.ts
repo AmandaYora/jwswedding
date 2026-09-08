@@ -17,4 +17,7 @@ export interface ClientTimeline {
   brideName: string;
   groomName: string;
   eventDate: string;
+  // The project's PIC Wedding Planner (Blok D) — "0" = "Belum ditugaskan".
+  // Name resolved client-side via useStaffStore.
+  picStaffId: string;
 }

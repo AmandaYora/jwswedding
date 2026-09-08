@@ -18,20 +18,24 @@ func formatDatePtr(t *time.Time) *string {
 }
 
 type projectResponse struct {
-	ID               int64  `json:"id"`
-	Name             string `json:"name"`
-	BrideName        string `json:"brideName"`
-	GroomName        string `json:"groomName"`
-	EventDate        string `json:"eventDate"`
-	Venue            string `json:"venue"`
-	VenueID          *int64 `json:"venueId"`
-	VenueRentalPrice *int64 `json:"venueRentalPrice"`
-	VenueCharge      *int64 `json:"venueCharge"`
-	PrepStartDate    string `json:"prepStartDate"`
-	PackageName      string `json:"packageName"`
-	ContractValue    int64  `json:"contractValue"`
-	Status           string `json:"status"`
-	PICStaffID       int64  `json:"picStaffId"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	BrideName string `json:"brideName"`
+	GroomName string `json:"groomName"`
+	EventDate string `json:"eventDate"`
+	// EventStartTime/EventEndTime are the project-level Jam Acara ("HH:MM"),
+	// null when "Belum ditentukan" -- Blok A, PLAN.md revisi-putri-mom-25082026.
+	EventStartTime   *string `json:"eventStartTime"`
+	EventEndTime     *string `json:"eventEndTime"`
+	Venue            string  `json:"venue"`
+	VenueID          *int64  `json:"venueId"`
+	VenueRentalPrice *int64  `json:"venueRentalPrice"`
+	VenueCharge      *int64  `json:"venueCharge"`
+	PrepStartDate    string  `json:"prepStartDate"`
+	PackageName      string  `json:"packageName"`
+	ContractValue    int64   `json:"contractValue"`
+	Status           string  `json:"status"`
+	PICStaffID       int64   `json:"picStaffId"`
 	// PICSalesStaffID is the "PIC Sales" slot -- see
 	// domain.Project.PICSalesStaffID's doc comment. 0 means "belum
 	// ditugaskan", same sentinel convention as PICStaffID.
@@ -50,7 +54,9 @@ type projectResponse struct {
 func toProjectResponse(p domain.Project) projectResponse {
 	return projectResponse{
 		ID: p.ID, Name: p.Name, BrideName: p.BrideName, GroomName: p.GroomName,
-		EventDate: p.EventDate.Format(dateLayout), Venue: p.Venue, VenueID: p.VenueID,
+		EventDate:      p.EventDate.Format(dateLayout),
+		EventStartTime: p.EventStartTime, EventEndTime: p.EventEndTime,
+		Venue: p.Venue, VenueID: p.VenueID,
 		VenueRentalPrice: p.VenueRentalPrice, VenueCharge: p.VenueCharge,
 		PrepStartDate: p.PrepStartDate.Format(dateLayout),
 		PackageName:   p.PackageName, ContractValue: p.ContractValue, Status: string(p.Status),
@@ -123,6 +129,7 @@ type milestoneResponse struct {
 	ID            int64   `json:"id"`
 	SortOrder     int     `json:"order"`
 	Name          string  `json:"name"`
+	Category      string  `json:"category"`
 	Status        string  `json:"status"`
 	TargetDate    string  `json:"targetDate"`
 	CompletedDate *string `json:"completedDate"`
@@ -130,7 +137,7 @@ type milestoneResponse struct {
 
 func toMilestoneResponse(m domain.ProjectMilestone) milestoneResponse {
 	return milestoneResponse{
-		ID: m.ID, SortOrder: m.SortOrder, Name: m.Name, Status: string(m.Status),
+		ID: m.ID, SortOrder: m.SortOrder, Name: m.Name, Category: m.Category, Status: string(m.Status),
 		TargetDate: m.TargetDate.Format(dateLayout), CompletedDate: formatDatePtr(m.CompletedDate),
 	}
 }

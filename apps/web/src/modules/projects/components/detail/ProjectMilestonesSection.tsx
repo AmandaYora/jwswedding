@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Plus, Ban, CheckCircle2, Pencil, ArrowUp, ArrowDown, Eye, List as ListIcon, GanttChartSquare } from "lucide-react";
 import { Card, CardHeader, CardContent } from "@/shared/components/ui/Card";
 import { Button } from "@/shared/components/ui/Button";
-import { Input, Select } from "@/shared/components/ui/Input";
+import { Select } from "@/shared/components/ui/Input";
+import { MonthSelect } from "@/shared/components/ui/MonthSelect";
 import { SearchInput } from "@/shared/components/ui/SearchInput";
 import { Table, THead, TBody, TR, TH, TD } from "@/shared/components/ui/Table";
 import { CardList, CardListField } from "@/shared/components/ui/CardList";
@@ -19,6 +20,8 @@ import {
 import { ProjectMilestoneGanttView } from "@/modules/projects/components/detail/ProjectMilestoneGanttView";
 import type { ProjectMilestoneFormValues } from "@/modules/projects/schemas/project-milestone.schema";
 import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
+import { categoryOptions } from "@/modules/projects/lib/milestone-categories";
+import { monthOptionsFromDates } from "@/shared/lib/month-options";
 import { computeMilestoneStats, isMilestoneOverdue } from "@/modules/projects/lib/dates";
 import { compressFileForUpload } from "@/shared/lib/image-compression";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
@@ -27,6 +30,10 @@ import { formatDate } from "@/shared/lib/formatters";
 import { cn } from "@/shared/lib/cn";
 
 const STATUS_OPTIONS: MilestoneStatus[] = ["Not Started", "In Progress", "Completed", "Blocked", "Cancelled"];
+
+// Sentinel value for the "Tanpa Kategori" filter option — distinct from ""
+// (which is "Semua Kategori" / no filter) so both can coexist in one Select.
+const UNCATEGORIZED_FILTER = "__none__";
 
 function sortMilestones(list: ProjectMilestone[]): ProjectMilestone[] {
   return [...list].sort((a, b) => {
@@ -53,9 +60,18 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
   const [viewMode, setViewMode] = useState<"list" | "gantt">("list");
   const [query, setQuery] = useState("");
   const [monthFilter, setMonthFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
   const sortedMilestones = sortMilestones(milestones);
   const stats = computeMilestoneStats(milestones);
-  const isFilterActive = query.trim().length > 0 || monthFilter.length > 0;
+  const isFilterActive = query.trim().length > 0 || monthFilter.length > 0 || categoryFilter.length > 0;
+  const monthOptions = monthOptionsFromDates(milestones.map((m) => m.targetDate));
+  // Category filter options: only categories actually present on this project's
+  // milestones, ordered built-ins-first (Blok B). "" (Tanpa Kategori) is
+  // offered separately below when any milestone is uncategorized.
+  const presentCategories = categoryOptions(milestones.map((m) => m.category)).filter((c) =>
+    milestones.some((m) => m.category === c)
+  );
+  const hasUncategorized = milestones.some((m) => m.category === "");
   // Search cocok pada nama timeline saja -- satu-satunya teks bebas pada
   // ProjectMilestone (PLAN.md mom-25082026-item-belum item 4). Filter bulan
   // menyaring target_date, bukan tanggal selesai -- MOM-nya bicara "timeline
@@ -65,9 +81,12 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
     return sortedMilestones.filter((m) => {
       const matchesQuery = q.length === 0 || m.name.toLowerCase().includes(q);
       const matchesMonth = monthFilter.length === 0 || m.targetDate.slice(0, 7) === monthFilter;
-      return matchesQuery && matchesMonth;
+      const matchesCategory =
+        categoryFilter.length === 0 ||
+        (categoryFilter === UNCATEGORIZED_FILTER ? m.category === "" : m.category === categoryFilter);
+      return matchesQuery && matchesMonth && matchesCategory;
     });
-  }, [sortedMilestones, query, monthFilter]);
+  }, [sortedMilestones, query, monthFilter, categoryFilter]);
   const { page, setPage, totalPages, totalItems, pageSize, pageItems } = usePagination(filteredMilestones);
   // Up/down only makes sense within the active (non-cancelled) set — a
   // cancelled milestone's on-screen position is always forced to the bottom
@@ -137,6 +156,7 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
       description: values.description,
       relatedKind: "projectMilestone",
       relatedId: editingMilestone.id,
+      isClientVisible: values.isClientVisible,
     });
   }
 
@@ -213,7 +233,20 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
-              <Input type="month" className="w-40" value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} />
+              <MonthSelect
+                className="w-44"
+                value={monthFilter}
+                onChange={setMonthFilter}
+                options={monthOptions}
+                allLabel="Semua Bulan Target"
+              />
+              <Select className="w-44" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+                <option value="">Semua Kategori</option>
+                {presentCategories.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+                {hasUncategorized && <option value={UNCATEGORIZED_FILTER}>Tanpa Kategori</option>}
+              </Select>
             </div>
           )}
 
@@ -290,6 +323,7 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
                         </span>
                       }
                     />
+                    <CardListField label="Kategori" value={m.category || "Tanpa Kategori"} />
                     <CardListField label="Tanggal Selesai" value={formatDate(m.completedDate)} />
                     <CardListField
                       label="Lampiran"
@@ -323,6 +357,7 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
             <THead>
               <TR>
                 <TH>Timeline</TH>
+                <TH>Kategori</TH>
                 <TH>Status</TH>
                 <TH>Target Tanggal</TH>
                 <TH>Tanggal Selesai</TH>
@@ -338,6 +373,7 @@ export function ProjectMilestonesSection({ projectId }: { projectId: string }) {
                 return (
                   <TR key={m.id} className={cancelled ? "opacity-50" : undefined}>
                     <TD className={cn("font-medium", cancelled && "line-through")}>{m.order}. {m.name}</TD>
+                    <TD className="text-text-secondary">{m.category || "Tanpa Kategori"}</TD>
                     <TD>
                       <Select
                         value={m.status}

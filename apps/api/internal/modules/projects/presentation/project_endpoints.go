@@ -17,17 +17,75 @@ func parseDate(s string) (time.Time, error) {
 	return time.Parse(dateLayout, s)
 }
 
+// effectivePICFilter computes the single picStaffID/picSalesStaffID value to
+// scope this request by, per role (docs/plan/revisi-putri-lanjutan/PLAN.md
+// Blok I, D6): a "Staff" (Wedding Planner) or "Sales" caller is ALWAYS
+// scoped to themselves and their own ?picStaffId/?picSalesStaffId query
+// param is never even read — there is exactly one slot per column
+// (mysql_project_repository.go's `pic_staff_id = ?` / `pic_sales_staff_id =
+// ?`, already used for this same role-scoping, T-2), so there is no second
+// value that could ever widen their own access by construction, not by a
+// check that must be remembered. Owner/Admin may narrow the result with
+// either query param — 0 is the "Belum ditugaskan" sentinel, a real filter
+// value, not "no filter" (that's the param simply absent) — or see
+// everything when neither is sent.
+func effectivePICFilter(w http.ResponseWriter, r *http.Request, claims staffClaims) (picStaffID, picSalesStaffID *int64, ok bool) {
+	if claims.role == "Staff" {
+		return &claims.staffID, nil, true
+	}
+	if claims.role == "Sales" {
+		return nil, &claims.staffID, true
+	}
+	if raw := r.URL.Query().Get("picStaffId"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, "Parameter picStaffId tidak valid", nil)
+			return nil, nil, false
+		}
+		picStaffID = &id
+	}
+	if raw := r.URL.Query().Get("picSalesStaffId"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, "Parameter picSalesStaffId tidak valid", nil)
+			return nil, nil, false
+		}
+		picSalesStaffID = &id
+	}
+	return picStaffID, picSalesStaffID, true
+}
+
+// parseEventMonthFilter reads the optional ?eventMonth=YYYY-MM query param
+// (Blok I, D12/D7) — applies to every role, unlike the PIC filters above; it
+// scopes ownership of nothing. A malformed value is answered 422 (same
+// error shape as parseDate's callers below) rather than silently ignored:
+// treating "September" as "no filter" would return every project and look
+// like the filter itself is broken, not like a typo.
+func parseEventMonthFilter(w http.ResponseWriter, r *http.Request) (*string, bool) {
+	raw := r.URL.Query().Get("eventMonth")
+	if raw == "" {
+		return nil, true
+	}
+	if _, err := time.Parse("2006-01", raw); err != nil {
+		response.Error(w, http.StatusUnprocessableEntity, "Format bulan tidak valid", map[string][]string{"eventMonth": {"Gunakan format YYYY-MM"}})
+		return nil, false
+	}
+	return &raw, true
+}
+
 // listProjects scopes the result to the caller's own PIC'd projects when
 // their role is "Staff" (Wedding Planner) or "Sales" — nil/nil (Owner/Admin)
 // means every project in the tenant, unchanged from before either role
-// existed.
+// existed. Also backs Blok I's server-side filter bar (PIC/Sales/Bulan
+// Event) — see effectivePICFilter/parseEventMonthFilter above for the gate.
 func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request, claims staffClaims) {
-	var picStaffID, picSalesStaffID *int64
-	if claims.role == "Staff" {
-		picStaffID = &claims.staffID
+	picStaffID, picSalesStaffID, ok := effectivePICFilter(w, r, claims)
+	if !ok {
+		return
 	}
-	if claims.role == "Sales" {
-		picSalesStaffID = &claims.staffID
+	eventMonth, ok := parseEventMonthFilter(w, r)
+	if !ok {
+		return
 	}
 	if r.URL.Query().Get("all") == "true" {
 		projects, err := h.projects.List(r.Context(), claims.tenantID, picStaffID, picSalesStaffID)
@@ -47,7 +105,7 @@ func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request, claims st
 	search := r.URL.Query().Get("search")
 	status := r.URL.Query().Get("status")
 	showArchived := r.URL.Query().Get("archived") == "true"
-	projects, total, err := h.projects.ListPaginated(r.Context(), claims.tenantID, picStaffID, picSalesStaffID, params, search, status, showArchived)
+	projects, total, err := h.projects.ListPaginated(r.Context(), claims.tenantID, picStaffID, picSalesStaffID, params, search, status, showArchived, eventMonth)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -92,16 +150,21 @@ func (h *Handler) toProjectResponsesWithProgress(r *http.Request, tenantID int64
 }
 
 type projectInputBody struct {
-	Name          string `json:"name"`
-	BrideName     string `json:"brideName"`
-	GroomName     string `json:"groomName"`
-	EventDate     string `json:"eventDate"`
-	Venue         string `json:"venue"`
-	PrepStartDate string `json:"prepStartDate"`
-	PackageName   string `json:"packageName"`
-	ContractValue int64  `json:"contractValue"`
-	Status        string `json:"status"`
-	PICStaffID    int64  `json:"picStaffId"`
+	Name      string `json:"name"`
+	BrideName string `json:"brideName"`
+	GroomName string `json:"groomName"`
+	EventDate string `json:"eventDate"`
+	// EventStartTime/EventEndTime are the project-level Jam Acara ("HH:MM"),
+	// Blok A. The frontend schema always sends both keys as strings (default
+	// ""); toProjectInput converts "" to a nil pointer ("Belum ditentukan").
+	EventStartTime string `json:"eventStartTime"`
+	EventEndTime   string `json:"eventEndTime"`
+	Venue          string `json:"venue"`
+	PrepStartDate  string `json:"prepStartDate"`
+	PackageName    string `json:"packageName"`
+	ContractValue  int64  `json:"contractValue"`
+	Status         string `json:"status"`
+	PICStaffID     int64  `json:"picStaffId"`
 	// PICSalesStaffID is the "PIC Sales" slot -- see
 	// application.ProjectInput.PICSalesStaffID's doc comment for how Create
 	// enforces it for a Sales caller.
@@ -122,6 +185,16 @@ type projectInputBody struct {
 	VenueCharge      *int64 `json:"venueCharge"`
 }
 
+// emptyStrToNilPtr maps an empty string to a nil *string, and any other value
+// to a pointer to it -- used for the project-level Jam Acara (Blok A) where ""
+// from the body means "Belum ditentukan" (stored NULL), not the string "".
+func emptyStrToNilPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 func toProjectInput(body projectInputBody) (application.ProjectInput, error) {
 	eventDate, err := parseDate(body.EventDate)
 	if err != nil {
@@ -133,6 +206,7 @@ func toProjectInput(body projectInputBody) (application.ProjectInput, error) {
 	}
 	return application.ProjectInput{
 		Name: body.Name, BrideName: body.BrideName, GroomName: body.GroomName, EventDate: eventDate,
+		EventStartTime: emptyStrToNilPtr(body.EventStartTime), EventEndTime: emptyStrToNilPtr(body.EventEndTime),
 		Venue: body.Venue, PrepStartDate: prepStartDate, PackageName: body.PackageName,
 		ContractValue: body.ContractValue, Status: domain.ProjectStatus(body.Status),
 		PICStaffID: body.PICStaffID, PICSalesStaffID: body.PICSalesStaffID, Description: body.Description, VenueID: body.VenueID,
@@ -363,6 +437,7 @@ func (h *Handler) listMilestones(w http.ResponseWriter, r *http.Request, tenantI
 
 type milestoneInputBody struct {
 	Name       string `json:"name"`
+	Category   string `json:"category"`
 	TargetDate string `json:"targetDate"`
 }
 
@@ -377,7 +452,7 @@ func (h *Handler) createMilestone(w http.ResponseWriter, r *http.Request, claims
 		response.Error(w, http.StatusUnprocessableEntity, "Format tanggal tidak valid", map[string][]string{"targetDate": {"Gunakan format YYYY-MM-DD"}})
 		return
 	}
-	m, err := h.projects.CreateMilestone(r.Context(), claims.tenantID, projectID, claims.staffID, application.MilestoneInput{Name: body.Name, TargetDate: targetDate})
+	m, err := h.projects.CreateMilestone(r.Context(), claims.tenantID, projectID, claims.staffID, application.MilestoneInput{Name: body.Name, Category: body.Category, TargetDate: targetDate})
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -386,6 +461,7 @@ func (h *Handler) createMilestone(w http.ResponseWriter, r *http.Request, claims
 }
 
 type milestoneUpdateBody struct {
+	Category      string `json:"category"`
 	Status        string `json:"status"`
 	TargetDate    string `json:"targetDate"`
 	CompletedDate string `json:"completedDate"`
@@ -408,7 +484,7 @@ func (h *Handler) updateMilestone(w http.ResponseWriter, r *http.Request, claims
 		return
 	}
 	m, err := h.projects.UpdateMilestone(r.Context(), claims.tenantID, projectID, milestoneID, claims.staffID, application.MilestoneUpdateInput{
-		Status: domain.MilestoneStatus(body.Status), TargetDate: targetDate, CompletedDate: parseOptionalDate(body.CompletedDate),
+		Category: body.Category, Status: domain.MilestoneStatus(body.Status), TargetDate: targetDate, CompletedDate: parseOptionalDate(body.CompletedDate),
 	})
 	if err != nil {
 		writeAppError(w, err)

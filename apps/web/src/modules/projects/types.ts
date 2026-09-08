@@ -95,6 +95,11 @@ export interface Project {
   brideName: string;
   groomName: string;
   eventDate: string;
+  // Project-level Jam Acara ("HH:MM"), null = "Belum ditentukan" (Blok A,
+  // revisi-putri-mom-25082026). Independent of a vendor engagement's own
+  // eventStartTime/eventEndTime.
+  eventStartTime: string | null;
+  eventEndTime: string | null;
   venue: string;
   // Cross-module reference into the vendors module's Venue directory
   // (ADR-0016) — null means no structured venue attached yet; `venue`
@@ -131,6 +136,8 @@ export interface ProjectMilestone {
   id: string;
   order: number;
   name: string;
+  // Display-grouping label (Blok B). "" = "Tanpa Kategori".
+  category: string;
   status: MilestoneStatus;
   targetDate: string;
   completedDate: string | null;
