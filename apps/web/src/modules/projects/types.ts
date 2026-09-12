@@ -100,6 +100,8 @@ export interface Project {
   // eventStartTime/eventEndTime.
   eventStartTime: string | null;
   eventEndTime: string | null;
+  /** Jumlah tamu pada kop PO Paket. 0 = belum ditentukan. */
+  pax: number;
   venue: string;
   // Cross-module reference into the vendors module's Venue directory
   // (ADR-0016) — null means no structured venue attached yet; `venue`

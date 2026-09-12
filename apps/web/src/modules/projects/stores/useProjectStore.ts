@@ -94,6 +94,7 @@ export interface RawProject {
   eventDate: string;
   eventStartTime: string | null;
   eventEndTime: string | null;
+  pax: number;
   venue: string;
   venueId: number | null;
   venueRentalPrice: number | null;
@@ -132,6 +133,7 @@ export function toProject(raw: RawProject): Project {
     eventDate: raw.eventDate,
     eventStartTime: raw.eventStartTime,
     eventEndTime: raw.eventEndTime,
+    pax: raw.pax ?? 0,
     venue: raw.venue,
     venueId: raw.venueId !== null ? String(raw.venueId) : null,
     venueRentalPrice: raw.venueRentalPrice,
@@ -159,10 +161,13 @@ function projectInputBody(values: ProjectFormValues) {
     // backend converts "" to NULL ("Belum ditentukan").
     eventStartTime: values.eventStartTime,
     eventEndTime: values.eventEndTime,
+    pax: values.pax,
     venue: values.venue,
     prepStartDate: values.prepStartDate,
     packageName: values.packageName,
     contractValue: values.contractValue,
+    // Dibaca backend hanya pada createProject; diabaikan pada update.
+    packageTemplateId: values.packageTemplateId ? Number(values.packageTemplateId) : 0,
     status: values.status,
     // "" (belum ditugaskan) -> 0, the backend's sentinel for both PIC slots.
     picStaffId: values.picStaffId ? Number(values.picStaffId) : 0,

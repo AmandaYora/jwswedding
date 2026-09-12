@@ -195,6 +195,15 @@ var truncateTables = []string{
 	"venue_payments",
 	"venues",
 	"project_milestone_templates",
+	// PO Paket (PLAN.md po-paket-client, migrations 000052-000054). Order is
+	// cosmetic here — truncateAll disables FK checks — but children are listed
+	// before parents to match the rest of this list.
+	"project_package_adjustments",
+	"project_package_blocks",
+	"project_package_orders",
+	"package_template_blocks",
+	"package_template_terms",
+	"package_templates",
 	// platform's own pending-charge index (D8/D11) — not a business ledger,
 	// safe to wipe along with everything else.
 	"pending_subscription_charges",

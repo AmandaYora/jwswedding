@@ -30,7 +30,13 @@ type Project struct {
 	// guarded by guardKonteksUmum (D3).
 	EventStartTime *string
 	EventEndTime   *string
-	Venue          string
+	// Pax is the guest count shown on the PO Paket's header box (PLAN.md
+	// po-paket-client, blok B1). 0 means "Belum ditentukan" -- the same
+	// sentinel convention as PICSalesStaffID below, not a real headcount of
+	// zero. Part of "konteks umum", so guarded by guardKonteksUmum like the
+	// event-hour fields above.
+	Pax   int
+	Venue string
 	// VenueID is a cross-module primitive reference into vendors' Venue
 	// directory (ADR-0016) -- resolved via a module contract, never a SQL
 	// foreign key. nil means no structured venue is attached yet; Venue

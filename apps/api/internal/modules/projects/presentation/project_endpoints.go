@@ -8,6 +8,7 @@ import (
 
 	"jwswedding/internal/modules/projects/application"
 	"jwswedding/internal/modules/projects/domain"
+	"jwswedding/internal/shared/logger"
 	"jwswedding/internal/shared/middleware"
 	"jwswedding/internal/shared/pagination"
 	"jwswedding/internal/shared/response"
@@ -159,12 +160,16 @@ type projectInputBody struct {
 	// ""); toProjectInput converts "" to a nil pointer ("Belum ditentukan").
 	EventStartTime string `json:"eventStartTime"`
 	EventEndTime   string `json:"eventEndTime"`
-	Venue          string `json:"venue"`
-	PrepStartDate  string `json:"prepStartDate"`
-	PackageName    string `json:"packageName"`
-	ContractValue  int64  `json:"contractValue"`
-	Status         string `json:"status"`
-	PICStaffID     int64  `json:"picStaffId"`
+	// Pax is the guest count on the PO Paket header (blok B1). 0 = belum
+	// ditentukan; guardKonteksUmum treats it as konteks umum like the fields
+	// above, so a Wedding Planner may not change it.
+	Pax           int    `json:"pax"`
+	Venue         string `json:"venue"`
+	PrepStartDate string `json:"prepStartDate"`
+	PackageName   string `json:"packageName"`
+	ContractValue int64  `json:"contractValue"`
+	Status        string `json:"status"`
+	PICStaffID    int64  `json:"picStaffId"`
 	// PICSalesStaffID is the "PIC Sales" slot -- see
 	// application.ProjectInput.PICSalesStaffID's doc comment for how Create
 	// enforces it for a Sales caller.
@@ -176,6 +181,12 @@ type projectInputBody struct {
 	// reads it (ADR-0016: attaching a venue is a separate, post-creation
 	// action).
 	VenueID *int64 `json:"venueId"`
+	// PackageTemplateID applies a Template Paket at creation time (D10): it
+	// seeds the composition, the terms text and the payment-schedule preset
+	// in one step, and writes the template's name into PackageName (D28).
+	// Only read by createProject; 0 or absent means "Tanpa template", which
+	// leaves the project on the empty-state path (D23).
+	PackageTemplateID int64 `json:"packageTemplateId"`
 	// VenueRentalPrice/VenueCharge ride along with VenueID whenever it's
 	// present at all -- the per-project cost snapshot (PLAN.md "Financial
 	// Calculation Correctness"). Meaningless (and ignored by
@@ -207,6 +218,7 @@ func toProjectInput(body projectInputBody) (application.ProjectInput, error) {
 	return application.ProjectInput{
 		Name: body.Name, BrideName: body.BrideName, GroomName: body.GroomName, EventDate: eventDate,
 		EventStartTime: emptyStrToNilPtr(body.EventStartTime), EventEndTime: emptyStrToNilPtr(body.EventEndTime),
+		Pax:   body.Pax,
 		Venue: body.Venue, PrepStartDate: prepStartDate, PackageName: body.PackageName,
 		ContractValue: body.ContractValue, Status: domain.ProjectStatus(body.Status),
 		PICStaffID: body.PICStaffID, PICSalesStaffID: body.PICSalesStaffID, Description: body.Description, VenueID: body.VenueID,
@@ -238,6 +250,24 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request, claims s
 	if err != nil {
 		writeAppError(w, err)
 		return
+	}
+	// D10 -- applying the chosen Template Paket is orchestrated here, not
+	// inside ProjectService.Create, for the same layering reason as the
+	// duplicate path below: package composition belongs to
+	// PackageOrderService. Non-fatal, because the project itself already
+	// exists: a failure leaves it on the empty-state path (D23), which the
+	// "Paket & PO" tab handles, instead of reporting a created project as an
+	// error. ApplyTemplate reads the project's ContractValue, already written
+	// by Create above, so a manually negotiated figure wins over the
+	// template's list price.
+	if body.PackageTemplateID > 0 {
+		if _, err := h.packageOrders.ApplyTemplate(r.Context(), claims.tenantID, p.ID, body.PackageTemplateID, claims.staffID); err != nil {
+			logger.Error("gagal menerapkan template paket %d ke project %d: %v", body.PackageTemplateID, p.ID, err)
+		} else if refreshed, err := h.projects.Get(r.Context(), claims.tenantID, p.ID); err == nil {
+			// Re-read so the response carries PackageName/ContractValue as
+			// ApplyTemplate left them, not as they were a moment earlier.
+			p = refreshed
+		}
 	}
 	resp := toProjectResponse(*p)
 	resp.PICName = h.projects.ResolvePICName(r.Context(), claims.tenantID, p.PICStaffID)
@@ -414,6 +444,20 @@ func (h *Handler) duplicateProject(w http.ResponseWriter, r *http.Request, claim
 	if err != nil {
 		writeAppError(w, err)
 		return
+	}
+	// Package composition is cloned here rather than inside
+	// ProjectService.Duplicate (D19): those tables belong to
+	// PackageOrderService, and ProjectService reaching into them would put
+	// package logic in two places. Orchestrating at the edge matches how the
+	// duplicate already works — each clone step is its own call, not one
+	// transaction.
+	//
+	// Non-fatal: the project is already created and returned either way. A
+	// failure here leaves the copy without a composition, which the tab's own
+	// empty state handles, rather than reporting a duplicate that did happen
+	// as a failure.
+	if err := h.packageOrders.CloneComposition(r.Context(), claims.tenantID, projectID, p.ID, claims.staffID); err != nil {
+		logger.Error("gagal menyalin komposisi paket saat duplikasi project %d -> %d: %v", projectID, p.ID, err)
 	}
 	resp := toProjectResponse(*p)
 	resp.PICName = h.projects.ResolvePICName(r.Context(), claims.tenantID, p.PICStaffID)

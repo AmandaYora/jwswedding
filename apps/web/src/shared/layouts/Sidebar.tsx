@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
-import { LayoutDashboard, FolderKanban, Users, Tags, Store, Building2, UserCog, Sparkles, Settings, CalendarClock, CalendarCheck, Landmark, ChevronDown, LogOut, X } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Users, Tags, Store, Building2, UserCog, Sparkles, Settings, CalendarClock, CalendarCheck, Landmark, Package, ChevronDown, LogOut, X } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { Avatar } from "@/shared/components/ui/Avatar";
@@ -52,6 +52,7 @@ const NAV_ITEMS: NavEntry[] = [
       { kind: "link", to: ROUTE_PATHS.subscription, label: "Langganan", icon: Sparkles, allowedRoles: ["Owner"] },
       { kind: "link", to: ROUTE_PATHS.vendorCategories, label: "Kategori Vendor", icon: Tags, allowedRoles: ["Owner"] },
       { kind: "link", to: ROUTE_PATHS.milestoneTemplates, label: "Timeline Default", icon: CalendarClock, allowedRoles: ["Owner"] },
+      { kind: "link", to: ROUTE_PATHS.packageTemplates, label: "Template Paket", icon: Package, allowedRoles: ["Owner"] },
     ],
   },
 ];

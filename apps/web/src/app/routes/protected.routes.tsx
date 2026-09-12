@@ -18,9 +18,11 @@ const PembayaranVenueTabPage = lazy(() => import("@/modules/projects/pages/tabs/
 const ProjectEvidenceTabPage = lazy(() => import("@/modules/projects/pages/tabs/ProjectEvidenceTabPage"));
 const ProjectActivityTabPage = lazy(() => import("@/modules/projects/pages/tabs/ProjectActivityTabPage"));
 const ProjectVenueTabPage = lazy(() => import("@/modules/projects/pages/tabs/ProjectVenueTabPage"));
+const ProjectPackageTabPage = lazy(() => import("@/modules/projects/pages/tabs/ProjectPackageTabPage"));
 const ClientListPage = lazy(() => import("@/modules/clients/pages/ClientListPage"));
 const VendorCategoryListPage = lazy(() => import("@/modules/vendor-categories/pages/VendorCategoryListPage"));
 const MilestoneTemplateListPage = lazy(() => import("@/modules/milestone-templates/pages/MilestoneTemplateListPage"));
+const PackageTemplateListPage = lazy(() => import("@/modules/package-templates/pages/PackageTemplateListPage"));
 const VendorListPage = lazy(() => import("@/modules/vendors/pages/VendorListPage"));
 const VenueListPage = lazy(() => import("@/modules/venues/pages/VenueListPage"));
 const UserListPage = lazy(() => import("@/modules/users/pages/UserListPage"));
@@ -59,6 +61,7 @@ export const protectedRoutes: RouteObject = {
             { path: "dokumen", element: <ProjectEvidenceTabPage /> },
             { path: "aktivitas", element: <ProjectActivityTabPage /> },
             { path: "venue", element: <ProjectVenueTabPage /> },
+            { path: "paket", element: <ProjectPackageTabPage /> },
           ],
         },
         {
@@ -84,6 +87,7 @@ export const protectedRoutes: RouteObject = {
           children: [
             { path: ROUTE_PATHS.vendorCategories, element: <VendorCategoryListPage /> },
             { path: ROUTE_PATHS.milestoneTemplates, element: <MilestoneTemplateListPage /> },
+            { path: ROUTE_PATHS.packageTemplates, element: <PackageTemplateListPage /> },
             { path: ROUTE_PATHS.users, element: <UserListPage /> },
             { path: ROUTE_PATHS.companyProfile, element: <CompanyProfilePage /> },
             { path: ROUTE_PATHS.subscription, element: <SubscriptionPage /> },

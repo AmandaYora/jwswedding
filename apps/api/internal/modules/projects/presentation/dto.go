@@ -25,17 +25,20 @@ type projectResponse struct {
 	EventDate string `json:"eventDate"`
 	// EventStartTime/EventEndTime are the project-level Jam Acara ("HH:MM"),
 	// null when "Belum ditentukan" -- Blok A, PLAN.md revisi-putri-mom-25082026.
-	EventStartTime   *string `json:"eventStartTime"`
-	EventEndTime     *string `json:"eventEndTime"`
-	Venue            string  `json:"venue"`
-	VenueID          *int64  `json:"venueId"`
-	VenueRentalPrice *int64  `json:"venueRentalPrice"`
-	VenueCharge      *int64  `json:"venueCharge"`
-	PrepStartDate    string  `json:"prepStartDate"`
-	PackageName      string  `json:"packageName"`
-	ContractValue    int64   `json:"contractValue"`
-	Status           string  `json:"status"`
-	PICStaffID       int64   `json:"picStaffId"`
+	EventStartTime *string `json:"eventStartTime"`
+	EventEndTime   *string `json:"eventEndTime"`
+	// Pax is the guest count on the PO Paket header (blok B1). 0 = belum
+	// ditentukan -- same sentinel convention as PICSalesStaffID below.
+	Pax              int    `json:"pax"`
+	Venue            string `json:"venue"`
+	VenueID          *int64 `json:"venueId"`
+	VenueRentalPrice *int64 `json:"venueRentalPrice"`
+	VenueCharge      *int64 `json:"venueCharge"`
+	PrepStartDate    string `json:"prepStartDate"`
+	PackageName      string `json:"packageName"`
+	ContractValue    int64  `json:"contractValue"`
+	Status           string `json:"status"`
+	PICStaffID       int64  `json:"picStaffId"`
 	// PICSalesStaffID is the "PIC Sales" slot -- see
 	// domain.Project.PICSalesStaffID's doc comment. 0 means "belum
 	// ditugaskan", same sentinel convention as PICStaffID.
@@ -55,7 +58,7 @@ func toProjectResponse(p domain.Project) projectResponse {
 	return projectResponse{
 		ID: p.ID, Name: p.Name, BrideName: p.BrideName, GroomName: p.GroomName,
 		EventDate:      p.EventDate.Format(dateLayout),
-		EventStartTime: p.EventStartTime, EventEndTime: p.EventEndTime,
+		EventStartTime: p.EventStartTime, EventEndTime: p.EventEndTime, Pax: p.Pax,
 		Venue: p.Venue, VenueID: p.VenueID,
 		VenueRentalPrice: p.VenueRentalPrice, VenueCharge: p.VenueCharge,
 		PrepStartDate: p.PrepStartDate.Format(dateLayout),

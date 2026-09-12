@@ -239,6 +239,10 @@ func serve(cfg config.Config) {
 	// scoping) but clients.NewModule already needs projects.Contracts() to
 	// exist first, so this can't be a constructor argument either direction.
 	projectsModule.SetClientAccessResolver(clientsModule.Contracts())
+	// Same object, second narrow interface — the PO Paket header's phone
+	// number (PLAN.md po-paket-client). Split rather than folded into
+	// ClientAccessResolver for the reason ADR-0013 split out ClientCleaner.
+	projectsModule.SetClientContactResolver(clientsModule.Contracts())
 	// Same bridge, second interface (ADR-0013's hard-delete client cleanup) —
 	// clientsModule.Contracts() satisfies both ClientAccessResolver and
 	// ClientCleaner, so this is the same object as the call above.

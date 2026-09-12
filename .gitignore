@@ -17,6 +17,12 @@ apps/api/public/
 # Prisma
 apps/api/prisma/*.db
 
+# Dokumen PO asli dari klien, dipakai sebagai acuan saat membangun fitur PO
+# Paket. Memuat nama klien, nomor telepon, dan tanda tangan basah -- repo ini
+# publik, jadi jangan pernah ter-commit. Idiom sama dengan kebutuhan_login_jws/
+# di bawah.
+/Invoice-PO.pdf
+
 # One-off source photos for `api upload-login-slides` — uploaded to object
 # storage, never shipped in the repo/frontend bundle.
 kebutuhan_login_jws/

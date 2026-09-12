@@ -29,6 +29,19 @@ type ClientAccessResolver interface {
 	ProjectIDForClient(ctx context.Context, tenantID, clientID int64) (int64, error)
 }
 
+// ClientContactResolver is the second narrow shape this module needs from
+// `clients`: the phone number printed on the PO Paket's header box (PLAN.md
+// po-paket-client, blok B1).
+//
+// Deliberately a SEPARATE interface rather than another method on
+// ClientAccessResolver above — that one is a read-access-control concern, and
+// ADR-0013 already set the precedent of splitting rather than overloading it
+// when ClientCleaner was needed. clients.Contracts satisfies both structurally,
+// so main.go bridges the same object into both setters.
+type ClientContactResolver interface {
+	PhoneForProject(ctx context.Context, tenantID, projectID int64) (string, error)
+}
+
 type Handler struct {
 	projects       *application.ProjectService
 	vendors        *application.VendorEngagementService
@@ -45,8 +58,10 @@ type Handler struct {
 	// no dependency back on `projects`, so there's no construction cycle to
 	// break here (unlike ClientAccessResolver/VenueResolver above). See
 	// PLAN.md invoice-kwitansi-client §4.6.
-	platform     platformcontracts.Contracts
-	clientAccess ClientAccessResolver
+	platform      platformcontracts.Contracts
+	clientAccess  ClientAccessResolver
+	clientContact ClientContactResolver
+	packageOrders *application.PackageOrderService
 }
 
 func NewHandler(
@@ -61,11 +76,13 @@ func NewHandler(
 	activity *application.ActivityService,
 	dashboard *application.DashboardService,
 	platform platformcontracts.Contracts,
+	packageOrders *application.PackageOrderService,
 ) *Handler {
 	return &Handler{
 		projects: projects, vendors: vendors, payments: payments, clientPayments: clientPayments,
 		clientInvoices: clientInvoices, venuePayments: venuePayments,
 		issues: issues, evidence: evidence, activity: activity, dashboard: dashboard, platform: platform,
+		packageOrders: packageOrders,
 	}
 }
 
@@ -75,6 +92,25 @@ func NewHandler(
 // dependency at construction time) — see projects.module.go.
 func (h *Handler) SetClientAccessResolver(resolver ClientAccessResolver) {
 	h.clientAccess = resolver
+}
+
+// SetClientContactResolver is the twin of SetClientAccessResolver, bridged
+// from the same clients.Contracts object in main.go.
+func (h *Handler) SetClientContactResolver(resolver ClientContactResolver) {
+	h.clientContact = resolver
+}
+
+// resolveClientPhone degrades to "" on any failure. A missing phone must never
+// stop a PO from printing — the header simply shows a dash.
+func (h *Handler) resolveClientPhone(ctx context.Context, tenantID, projectID int64) string {
+	if h.clientContact == nil {
+		return ""
+	}
+	phone, err := h.clientContact.PhoneForProject(ctx, tenantID, projectID)
+	if err != nil {
+		return ""
+	}
+	return phone
 }
 
 func (h *Handler) Collection(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +212,7 @@ func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 	case len(rest) == 3 && rest[0] == "client-payments" && rest[2] == "receipt-pdf" && r.Method == http.MethodGet:
 		h.downloadClientPaymentReceiptPDF(w, r, claims, projectID, rest[1])
 	case len(rest) == 1 && rest[0] == "client-invoices" && r.Method == http.MethodGet:
-		h.listClientInvoices(w, r, projectID)
+		h.listClientInvoices(w, r, claims, projectID)
 	case len(rest) == 1 && rest[0] == "client-invoices" && r.Method == http.MethodPost:
 		h.createClientInvoice(w, r, claims, projectID)
 	case len(rest) == 2 && rest[0] == "client-invoices" && r.Method == http.MethodPatch:
@@ -189,6 +225,29 @@ func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 		h.unmarkClientInvoicePaid(w, r, claims, projectID, rest[1])
 	case len(rest) == 3 && rest[0] == "client-invoices" && rest[2] == "pdf" && r.Method == http.MethodGet:
 		h.downloadClientInvoicePDF(w, r, claims, projectID, rest[1])
+	// PO Paket (PLAN.md po-paket-client). GET is open to every principal that
+	// can read the project -- clients included, it is the document they signed.
+	// Every write below gates on isOwnerOrAdmin inside its own handler (D18).
+	case len(rest) == 1 && rest[0] == "package-order" && r.Method == http.MethodGet:
+		h.getPackageOrder(w, r, claims, projectID)
+	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "apply-template" && r.Method == http.MethodPost:
+		h.applyPackageTemplate(w, r, claims, projectID)
+	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "start-blank" && r.Method == http.MethodPost:
+		h.startBlankPackageOrder(w, r, claims, projectID)
+	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "header" && r.Method == http.MethodPut:
+		h.updatePackageHeader(w, r, claims, projectID)
+	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "blocks" && r.Method == http.MethodPut:
+		h.replacePackageBlocks(w, r, claims, projectID)
+	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "adjustments" && r.Method == http.MethodPut:
+		h.replacePackageAdjustments(w, r, claims, projectID)
+	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "issue" && r.Method == http.MethodPost:
+		h.issuePackageOrder(w, r, claims, projectID)
+	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "revise" && r.Method == http.MethodPost:
+		h.revisePackageOrder(w, r, claims, projectID)
+	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "cancel" && r.Method == http.MethodPost:
+		h.cancelPackageOrder(w, r, claims, projectID)
+	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "pdf" && r.Method == http.MethodGet:
+		h.downloadPackageOrderPDF(w, r, claims, projectID)
 	case len(rest) == 1 && rest[0] == "venue-payments" && r.Method == http.MethodGet:
 		h.listVenuePayments(w, r, projectID)
 	case len(rest) == 1 && rest[0] == "venue-payments" && r.Method == http.MethodPost:

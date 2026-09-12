@@ -260,12 +260,16 @@ type ProjectInput struct {
 	// venueRefChanged).
 	EventStartTime *string
 	EventEndTime   *string
-	Venue          string
-	PrepStartDate  time.Time
-	PackageName    string
-	ContractValue  int64
-	Status         domain.ProjectStatus
-	PICStaffID     int64
+	// Pax is the guest count (blok B1 of the PO Paket). 0 = belum ditentukan,
+	// so an absent key is indistinguishable from an explicit 0 -- deliberate,
+	// same as Project.Pax's own sentinel.
+	Pax           int
+	Venue         string
+	PrepStartDate time.Time
+	PackageName   string
+	ContractValue int64
+	Status        domain.ProjectStatus
+	PICStaffID    int64
 	// PICSalesStaffID is the "PIC Sales" slot -- see Project.PICSalesStaffID's
 	// doc comment. Create forces this to the caller's own staff id when
 	// callerRole is "Sales" (ignoring whatever's sent here); Owner/Admin's
@@ -303,7 +307,7 @@ func (s *ProjectService) Create(ctx context.Context, tenantID int64, actorStaffI
 	p := &domain.Project{
 		TenantID: tenantID, Name: input.Name, BrideName: input.BrideName, GroomName: input.GroomName,
 		EventDate: input.EventDate, EventStartTime: input.EventStartTime, EventEndTime: input.EventEndTime,
-		Venue: input.Venue, PrepStartDate: input.PrepStartDate,
+		Pax: input.Pax, Venue: input.Venue, PrepStartDate: input.PrepStartDate,
 		PackageName: input.PackageName, ContractValue: input.ContractValue, Status: input.Status,
 		PICStaffID: input.PICStaffID, PICSalesStaffID: picSalesStaffID, Description: input.Description,
 	}
@@ -350,6 +354,7 @@ func (s *ProjectService) Update(ctx context.Context, tenantID, id int64, actorSt
 	p.EventEndTime = input.EventEndTime
 	p.Venue = input.Venue
 	p.PrepStartDate = input.PrepStartDate
+	p.Pax = input.Pax
 	p.PackageName = input.PackageName
 	p.ContractValue = input.ContractValue
 	p.Status = input.Status
@@ -419,6 +424,7 @@ func guardKonteksUmum(callerRole string, p *domain.Project, input ProjectInput) 
 		!sameCalendarDate(input.EventDate, p.EventDate) ||
 		!sameOptionalString(input.EventStartTime, p.EventStartTime) ||
 		!sameOptionalString(input.EventEndTime, p.EventEndTime) ||
+		input.Pax != p.Pax ||
 		input.Venue != p.Venue ||
 		!sameCalendarDate(input.PrepStartDate, p.PrepStartDate) ||
 		input.PackageName != p.PackageName ||
@@ -566,7 +572,7 @@ func (s *ProjectService) Duplicate(ctx context.Context, tenantID int64, actorSta
 	p := &domain.Project{
 		TenantID: tenantID, Name: input.Name, BrideName: input.BrideName, GroomName: input.GroomName,
 		EventDate: input.EventDate, EventStartTime: input.EventStartTime, EventEndTime: input.EventEndTime,
-		Venue: input.Venue, PrepStartDate: input.PrepStartDate,
+		Pax: input.Pax, Venue: input.Venue, PrepStartDate: input.PrepStartDate,
 		PackageName: input.PackageName, ContractValue: input.ContractValue, Status: input.Status,
 		PICStaffID: input.PICStaffID, PICSalesStaffID: input.PICSalesStaffID, Description: input.Description,
 	}

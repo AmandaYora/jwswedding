@@ -106,6 +106,18 @@ export const API = {
     clientPayments: (id: string) => `/api/v1/projects/${id}/client-payments`,
     clientPayment: (id: string, paymentId: string) => `/api/v1/projects/${id}/client-payments/${paymentId}`,
     clientPaymentReceiptPdf: (id: string, paymentId: string) => `/api/v1/projects/${id}/client-payments/${paymentId}/receipt-pdf`,
+    // PO Paket (PLAN.md po-paket-client). One PO per project, so these are
+    // project-scoped singletons, not an id-addressed collection.
+    packageOrder: (id: string) => `/api/v1/projects/${id}/package-order`,
+    packageOrderApplyTemplate: (id: string) => `/api/v1/projects/${id}/package-order/apply-template`,
+    packageOrderStartBlank: (id: string) => `/api/v1/projects/${id}/package-order/start-blank`,
+    packageOrderHeader: (id: string) => `/api/v1/projects/${id}/package-order/header`,
+    packageOrderBlocks: (id: string) => `/api/v1/projects/${id}/package-order/blocks`,
+    packageOrderAdjustments: (id: string) => `/api/v1/projects/${id}/package-order/adjustments`,
+    packageOrderIssue: (id: string) => `/api/v1/projects/${id}/package-order/issue`,
+    packageOrderRevise: (id: string) => `/api/v1/projects/${id}/package-order/revise`,
+    packageOrderCancel: (id: string) => `/api/v1/projects/${id}/package-order/cancel`,
+    packageOrderPdf: (id: string) => `/api/v1/projects/${id}/package-order/pdf`,
     clientInvoices: (id: string) => `/api/v1/projects/${id}/client-invoices`,
     clientInvoice: (id: string, invoiceId: string) => `/api/v1/projects/${id}/client-invoices/${invoiceId}`,
     clientInvoiceMarkPaid: (id: string, invoiceId: string) => `/api/v1/projects/${id}/client-invoices/${invoiceId}/mark-paid`,
@@ -134,6 +146,12 @@ export const API = {
   milestoneTemplates: {
     base: "/api/v1/milestone-templates",
     item: (id: string) => `/api/v1/milestone-templates/${id}`,
+  },
+  packageTemplates: {
+    base: "/api/v1/package-templates",
+    item: (id: string) => `/api/v1/package-templates/${id}`,
+    blocks: (id: string) => `/api/v1/package-templates/${id}/blocks`,
+    terms: (id: string) => `/api/v1/package-templates/${id}/terms`,
   },
   dashboard: "/api/v1/dashboard",
   clientTimelines: "/api/v1/client-timelines",

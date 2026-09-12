@@ -18,6 +18,7 @@ import (
 type Module struct {
 	handler                  *presentation.Handler
 	milestoneTemplateHandler *presentation.MilestoneTemplateHandler
+	packageTemplateHandler   *presentation.PackageTemplateHandler
 	contracts                contracts.Contracts
 	projectService           *application.ProjectService
 }
@@ -36,6 +37,8 @@ func NewModule(db *sql.DB, storageClient *storage.Client, staff application.Staf
 	evidenceRepo := infrastructure.NewMySQLEvidenceRepository(db)
 	activityRepo := infrastructure.NewMySQLActivityRepository(db)
 	dashboardRepo := infrastructure.NewMySQLDashboardRepository(db)
+	packageTemplateRepo := infrastructure.NewMySQLPackageTemplateRepository(db)
+	packageOrderRepo := infrastructure.NewMySQLPackageOrderRepository(db)
 
 	activityService := application.NewActivityService(activityRepo)
 	evidenceService := application.NewEvidenceService(evidenceRepo, storageClient, storage.BuildKey, activityService)
@@ -48,12 +51,20 @@ func NewModule(db *sql.DB, storageClient *storage.Client, staff application.Staf
 	venuePaymentService := application.NewVenuePaymentService(venuePaymentRepo, evidenceService, activityService)
 	issueService := application.NewIssueService(issueRepo, vendorMilestoneRepo, activityService)
 	dashboardService := application.NewDashboardService(projectService, dashboardRepo, evidenceService)
+	packageTemplateService := application.NewPackageTemplateService(packageTemplateRepo)
+	// packageOrderService takes projectRepo directly (as its narrow
+	// PackageOrderProjectStore) rather than projectService: the only project
+	// state it writes is contract_value and package_name, and going through
+	// ProjectService.Update would drag in RBAC and konteks-umum validation
+	// meant for a user editing the form, not for a derived recompute.
+	packageOrderService := application.NewPackageOrderService(packageOrderRepo, packageTemplateRepo, projectRepo, clientInvoiceService, activityService)
 
-	handler := presentation.NewHandler(projectService, vendorEngagementService, paymentService, clientPaymentService, clientInvoiceService, venuePaymentService, issueService, evidenceService, activityService, dashboardService, platform)
+	handler := presentation.NewHandler(projectService, vendorEngagementService, paymentService, clientPaymentService, clientInvoiceService, venuePaymentService, issueService, evidenceService, activityService, dashboardService, platform, packageOrderService)
 
 	return &Module{
 		handler:                  handler,
 		milestoneTemplateHandler: presentation.NewMilestoneTemplateHandler(milestoneTemplateService),
+		packageTemplateHandler:   presentation.NewPackageTemplateHandler(packageTemplateService),
 		contracts:                contracts.New(projectService, vendorEngagementService, milestoneTemplateService),
 		projectService:           projectService,
 	}
@@ -71,6 +82,13 @@ func (m *Module) Contracts() contracts.Contracts {
 // with a direct constructor dependency both ways).
 func (m *Module) SetClientAccessResolver(resolver presentation.ClientAccessResolver) {
 	m.handler.SetClientAccessResolver(resolver)
+}
+
+// SetClientContactResolver is the twin of SetClientAccessResolver, for the
+// phone number on the PO Paket header (PLAN.md po-paket-client, blok B1).
+// main.go passes the same clients.Contracts object into both.
+func (m *Module) SetClientContactResolver(resolver presentation.ClientContactResolver) {
+	m.handler.SetClientContactResolver(resolver)
 }
 
 // SetClientCleaner completes the same two-phase wiring as
@@ -94,4 +112,6 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux, authed func(http.Handler) ht
 	mux.Handle("/api/v1/client-timelines", authed(http.HandlerFunc(m.handler.ClientTimelines)))
 	mux.Handle("/api/v1/milestone-templates", authed(http.HandlerFunc(m.milestoneTemplateHandler.Collection)))
 	mux.Handle("/api/v1/milestone-templates/", authed(http.HandlerFunc(m.milestoneTemplateHandler.Item)))
+	mux.Handle("/api/v1/package-templates", authed(http.HandlerFunc(m.packageTemplateHandler.Collection)))
+	mux.Handle("/api/v1/package-templates/", authed(http.HandlerFunc(m.packageTemplateHandler.Item)))
 }

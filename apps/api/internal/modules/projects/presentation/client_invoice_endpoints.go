@@ -31,17 +31,46 @@ func toClientInvoiceResponse(inv domain.ClientInvoice) clientInvoiceResponse {
 	}
 }
 
-func (h *Handler) listClientInvoices(w http.ResponseWriter, r *http.Request, projectID int64) {
+// listClientInvoices hides Draft rows from a `client` principal (PLAN.md
+// po-paket-client D9). Draft is now two things at once: a bill the WO has not
+// sent yet, and — since issuing a PO Paket seeds the whole payment schedule as
+// Draft rows (D8) — the forward plan itself. Showing those to the client would
+// present four or five instalments as if every one were already due.
+//
+// The filter lives here rather than in the service because only this layer
+// knows which principal is asking; the WO Console must keep seeing Draft.
+func (h *Handler) listClientInvoices(w http.ResponseWriter, r *http.Request, claims staffClaims, projectID int64) {
 	list, err := h.clientInvoices.List(r.Context(), projectID)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	result := make([]clientInvoiceResponse, 0, len(list))
-	for _, inv := range list {
+	visible := visibleInvoicesFor(claims.principalType, list)
+	result := make([]clientInvoiceResponse, 0, len(visible))
+	for _, inv := range visible {
 		result = append(result, toClientInvoiceResponse(inv))
 	}
 	response.OK(w, "ok", result)
+}
+
+// visibleInvoicesFor applies D9. Extracted as a pure function because the rule
+// it encodes is short but its failure mode is not: getting it wrong shows a
+// client every unsent instalment as an apparently-due bill.
+//
+// Anything that is not a `client` principal (staff of every role) sees the
+// full list unchanged — the WO Console depends on Draft rows being visible.
+func visibleInvoicesFor(principalType string, list []domain.ClientInvoice) []domain.ClientInvoice {
+	if principalType != "client" {
+		return list
+	}
+	visible := make([]domain.ClientInvoice, 0, len(list))
+	for _, inv := range list {
+		if inv.Status == domain.InvoiceDraft {
+			continue
+		}
+		visible = append(visible, inv)
+	}
+	return visible
 }
 
 type clientInvoiceInputBody struct {

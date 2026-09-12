@@ -29,6 +29,13 @@ const (
 	ActivityInvoiceMarkedPaid   ActivityType = "invoice_marked_paid"
 	ActivityInvoiceUnmarkedPaid ActivityType = "invoice_unmarked_paid"
 	ActivityInvoiceDeleted      ActivityType = "invoice_deleted"
+
+	// PO Paket (PLAN.md po-paket-client). activity_log.type is VARCHAR(50),
+	// not an ENUM, so new kinds need no migration.
+	ActivityPackageOrderApplied   ActivityType = "package_order_applied"
+	ActivityPackageOrderIssued    ActivityType = "package_order_issued"
+	ActivityPackageOrderRevised   ActivityType = "package_order_revised"
+	ActivityPackageOrderCancelled ActivityType = "package_order_cancelled"
 )
 
 // ActivityLogEntry is append-only — see ADR-0007. Every mutating use case in

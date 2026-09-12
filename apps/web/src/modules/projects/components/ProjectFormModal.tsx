@@ -7,6 +7,7 @@ import { projectSchema, PROJECT_STATUS_OPTIONS, EVENT_SESSION_PRESETS, type Proj
 import type { Project } from "@/modules/projects/types";
 import { useStaffStore } from "@/modules/users/stores/useStaffStore";
 import { useAuthStore } from "@/shared/stores/useAuthStore";
+import { usePackageTemplateStore } from "@/modules/package-templates/stores/usePackageTemplateStore";
 
 interface ProjectFormModalProps {
   open: boolean;
@@ -18,6 +19,12 @@ interface ProjectFormModalProps {
   // suffix and status resets to Draft as safer defaults; everything else
   // (including dates) is copied verbatim for the user to adjust as needed.
   mode?: "edit" | "duplicate";
+  // D15/F7 — once a project has a PO Paket, its contract value is DERIVED
+  // (harga paket + penyesuaian) and recomputed backend-side on every
+  // composition change. Leaving the field writable here would let someone
+  // type a number that silently reverts the next time a block is edited, so
+  // it becomes read-only with the reason stated inline.
+  contractValueLocked?: boolean;
   // canEditGeneral gates every field except Status Project and Deskripsi —
   // confirmed role rule, PLAN.md mom-25082026-item-sebagian §3c: a
   // Wedding Planner or Sales caller may only change a project's status and
@@ -49,10 +56,12 @@ function toFormValues(project?: Project, defaultStaffId = "", mode?: "edit" | "d
       eventDate: "",
       eventStartTime: "",
       eventEndTime: "",
+      pax: 0,
       venue: "",
       prepStartDate: "",
       packageName: "",
       contractValue: 0,
+      packageTemplateId: "",
       status: "Draft",
       picStaffId: defaultStaffId,
       picSalesStaffId: "",
@@ -66,10 +75,12 @@ function toFormValues(project?: Project, defaultStaffId = "", mode?: "edit" | "d
     eventDate: project.eventDate,
     eventStartTime: project.eventStartTime ?? "",
     eventEndTime: project.eventEndTime ?? "",
+    pax: project.pax,
     venue: project.venue,
     prepStartDate: project.prepStartDate,
     packageName: project.packageName,
     contractValue: project.contractValue,
+    packageTemplateId: "",
     status: mode === "duplicate" ? "Draft" : project.status,
     picStaffId: project.picStaffId,
     picSalesStaffId: project.picSalesStaffId,
@@ -77,13 +88,31 @@ function toFormValues(project?: Project, defaultStaffId = "", mode?: "edit" | "d
   };
 }
 
-export function ProjectFormModal({ open, onClose, onSubmit, initialProject, mode, canEditGeneral = true }: ProjectFormModalProps) {
+export function ProjectFormModal({
+  open,
+  onClose,
+  onSubmit,
+  initialProject,
+  mode,
+  canEditGeneral = true,
+  contractValueLocked = false,
+}: ProjectFormModalProps) {
   const staffList = useStaffStore((s) => s.staffSummaries);
   const fetchStaff = useStaffStore((s) => s.fetchStaffSummaries);
   const role = useAuthStore((s) => s.session?.role);
   const currentStaffId = useAuthStore((s) => s.currentStaffId);
   const [values, setValues] = useState<ProjectFormValues>(() => toFormValues(initialProject, "", mode));
   const [errors, setErrors] = useState<Partial<Record<keyof ProjectFormValues, string>>>({});
+
+  // D10 — the template picker only appears on create. On edit it would be
+  // meaningless (the composition is already copied and lives on the PO), and
+  // on duplicate the composition comes from the source project instead (D19).
+  const isCreate = !initialProject;
+  const packageTemplates = usePackageTemplateStore((s) => s.templates);
+  const fetchPackageTemplates = usePackageTemplateStore((s) => s.fetchTemplates);
+  useEffect(() => {
+    if (open && isCreate) void fetchPackageTemplates(true);
+  }, [open, isCreate, fetchPackageTemplates]);
 
   // Wedding Planner never reassigns a project's PIC, even their own project's
   // (only Owner/Admin do — see PLAN.md's RBAC section); the backend already
@@ -211,11 +240,56 @@ export function ProjectFormModal({ open, onClose, onSubmit, initialProject, mode
         <Field label="Lokasi / Venue" required hint={errors.venue}>
           <Input value={values.venue} onChange={(e) => set("venue", e.target.value)} disabled={!canEditGeneral} />
         </Field>
+        <Field label="Jumlah Pax" hint={errors.pax ?? "Tercetak pada kop PO Paket. Kosongkan bila belum ditentukan."}>
+          <Input
+            type="number"
+            min={0}
+            value={values.pax || ""}
+            onChange={(e) => set("pax", Number(e.target.value || 0))}
+            disabled={!canEditGeneral}
+          />
+        </Field>
+        {isCreate && (
+          <Field
+            label="Template Paket"
+            hint="Mengisi komposisi, syarat & ketentuan, dan rencana termin PO sekaligus. Pilih “Tanpa template” untuk mengisinya sendiri nanti."
+          >
+            <Select
+              value={values.packageTemplateId ?? ""}
+              placeholder="Tanpa template"
+              onChange={(e) => {
+                const picked = packageTemplates.find((t) => t.id === e.target.value);
+                set("packageTemplateId", e.target.value);
+                // Prefill, never lock: the agreed figure is a negotiation
+                // result, so the consultant can still type over it and D23
+                // makes that typed value win over the template's list price.
+                if (picked) {
+                  set("packageName", picked.name);
+                  set("contractValue", picked.basePrice);
+                }
+              }}
+            >
+              {packageTemplates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
         <Field label="Paket / Layanan" required hint={errors.packageName}>
           <Input value={values.packageName} onChange={(e) => set("packageName", e.target.value)} disabled={!canEditGeneral} />
         </Field>
-        <Field label="Nilai Kontrak (Rp)" required hint={errors.contractValue}>
-          <CurrencyInput value={values.contractValue} onChange={(n) => set("contractValue", n)} disabled={!canEditGeneral} />
+        <Field
+          label="Nilai Kontrak (Rp)"
+          required
+          hint={errors.contractValue ?? (contractValueLocked ? "Dihitung dari tab Paket & PO." : undefined)}
+        >
+          <CurrencyInput
+            value={values.contractValue}
+            onChange={(n) => set("contractValue", n)}
+            disabled={!canEditGeneral || contractValueLocked}
+          />
         </Field>
         <Field label="Penanggung Jawab WO (PIC Wedding Planner)" hint={errors.picStaffId}>
           {picLocked ? (

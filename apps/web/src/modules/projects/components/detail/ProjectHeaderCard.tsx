@@ -7,6 +7,7 @@ import { Badge } from "@/shared/components/ui/Badge";
 import { ProgressMeter } from "@/shared/components/ui/ProgressMeter";
 import { ProjectStatusBadge, ConditionBadge } from "@/modules/projects/components/StatusBadges";
 import { ProjectFormModal } from "@/modules/projects/components/ProjectFormModal";
+import { usePackageOrderStore } from "@/modules/projects/stores/usePackageOrderStore";
 import type { ProjectFormValues } from "@/modules/projects/schemas/project.schema";
 import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
 import { useStaffStore } from "@/modules/users/stores/useStaffStore";
@@ -19,6 +20,10 @@ import { ROUTE_PATHS } from "@/app/routes/route-paths";
 export function ProjectHeaderCard({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const project = useProjectStore((s) => s.currentProject);
+  // Populated by the "Paket & PO" tab. Null when that tab has not been opened
+  // in this session, so the lock is best-effort UI guidance -- the backend
+  // recompute is what actually keeps contract_value correct (D15).
+  const hasPackageOrder = usePackageOrderStore((s) => s.order !== null);
   const milestones = useProjectStore((s) => s.milestones);
   const vendorMilestones = useProjectStore((s) => s.vendorMilestones);
   const vendorEngagements = useProjectStore((s) => s.vendorEngagements);
@@ -280,6 +285,7 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
         onSubmit={(values) => void handleEdit(values)}
         initialProject={project}
         canEditGeneral={canEditGeneral}
+        contractValueLocked={hasPackageOrder}
       />
       <ProjectFormModal
         open={duplicateOpen}

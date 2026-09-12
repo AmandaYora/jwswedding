@@ -89,7 +89,10 @@ func baseProject() *domain.Project {
 	return &domain.Project{
 		ID: 1, TenantID: 1,
 		Name: "Aurelia & Bagas Wedding", BrideName: "Aurelia", GroomName: "Bagas",
-		EventDate:       time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		EventDate: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		// Sengaja non-nol: dengan Pax 0 di kedua sisi, setiap tes "Berhasil" di
+		// bawah akan lolos tanpa pernah benar-benar menguji field ini.
+		Pax:             800,
 		Venue:           "Grand Ballroom",
 		PrepStartDate:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		PackageName:     "Paket Premium",
@@ -105,6 +108,7 @@ func baseInputFor(p *domain.Project) ProjectInput {
 	return ProjectInput{
 		Name: p.Name, BrideName: p.BrideName, GroomName: p.GroomName, EventDate: p.EventDate,
 		EventStartTime: p.EventStartTime, EventEndTime: p.EventEndTime,
+		Pax:   p.Pax,
 		Venue: p.Venue, PrepStartDate: p.PrepStartDate, PackageName: p.PackageName,
 		ContractValue: p.ContractValue, Status: p.Status, PICStaffID: p.PICStaffID,
 		PICSalesStaffID: p.PICSalesStaffID, Description: p.Description,
@@ -124,6 +128,33 @@ func assertForbidden(t *testing.T, err error) {
 	var appErr *apperror.AppError
 	if !errors.As(err, &appErr) || appErr.Kind != apperror.KindForbidden {
 		t.Fatalf("Update() error = %v, want a Forbidden apperror", err)
+	}
+}
+
+// Jumlah Pax rides guardKonteksUmum alongside the event hours (PLAN.md
+// po-paket-client): it prints on the PO header, so a Wedding Planner changing
+// it would alter a contract document.
+func TestProjectServiceUpdate_StaffMengubahPax_Forbidden(t *testing.T) {
+	p := baseProject()
+	svc := newProjectServiceForTest(p)
+	input := baseInputFor(p)
+	input.Pax = 900
+
+	_, err := svc.Update(context.Background(), p.TenantID, p.ID, 99, "Staff", input)
+	assertForbidden(t, err)
+}
+
+// The regression this guards: adding Pax to guardKonteksUmum must not start
+// rejecting a Wedding Planner who only touched Status on a project that HAS a
+// pax value.
+func TestProjectServiceUpdate_StaffStatusPaxTidakBerubah_Berhasil(t *testing.T) {
+	p := baseProject()
+	svc := newProjectServiceForTest(p)
+	input := baseInputFor(p)
+	input.Status = domain.StatusReady
+
+	if _, err := svc.Update(context.Background(), p.TenantID, p.ID, 99, "Staff", input); err != nil {
+		t.Fatalf("Update() error = %v, want nil — WP hanya mengubah status pada project ber-pax", err)
 	}
 }
 

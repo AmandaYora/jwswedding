@@ -26,8 +26,13 @@ export const projectSchema = z.object({
   // Field name stays prepStartDate (display-text-only rename to "Tanggal
   // Booking" — see DOMAIN_GLOSSARY.md and PLAN.md).
   prepStartDate: z.string().min(1, "Tanggal booking wajib diisi"),
+  // Jumlah tamu pada kop PO Paket. 0 = belum ditentukan.
+  pax: z.coerce.number().min(0, "Jumlah pax tidak valid").default(0),
   packageName: z.string().min(2, "Paket/layanan wajib diisi"),
   contractValue: z.coerce.number().min(0, "Nilai kontrak tidak valid"),
+  // Hanya dipakai saat membuat project (D10): menerapkan Template Paket
+  // sekaligus mengisi komposisi, S&K, dan preset termin. "" = tanpa template.
+  packageTemplateId: z.string().optional().default(""),
   status: z.enum(PROJECT_STATUS_OPTIONS),
   // Optional now (PLAN.md revisi-timeline-vendor-role-sales) — a project
   // created by Sales may have no Wedding Planner assigned yet, until
