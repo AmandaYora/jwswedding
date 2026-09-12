@@ -112,8 +112,8 @@ func (s *PackageTemplateService) ReplaceBlocks(ctx context.Context, tenantID, id
 	}
 	for i, b := range blocks {
 		if b.Category == "" {
-			return apperror.Validation("Kategori blok wajib diisi", map[string][]string{
-				"blocks": {"Blok ke-" + strconv.Itoa(i+1) + " belum punya kategori"},
+			return apperror.Validation("Kategori wajib diisi", map[string][]string{
+				"blocks": {"Rincian ke-" + strconv.Itoa(i+1) + " belum diberi kategori"},
 			})
 		}
 	}
@@ -152,29 +152,29 @@ func validateTemplateInput(input PackageTemplateInput) error {
 // (D24), never from a preset — and Refund is not a bill at all.
 func validateTerms(terms []domain.PackageTemplateTerm) error {
 	for i, t := range terms {
-		pos := "Termin ke-" + strconv.Itoa(i+1)
+		pos := "Tahap pembayaran ke-" + strconv.Itoa(i+1)
 		switch t.Type {
 		case domain.PaymentDP, domain.PaymentTermin, domain.PaymentPelunasan:
 		default:
-			return apperror.Validation("Jenis termin tidak valid", map[string][]string{
-				"terms": {pos + " berjenis tidak valid (hanya DP, Termin, Pelunasan)"},
+			return apperror.Validation("Jenis tahap pembayaran belum dipilih", map[string][]string{
+				"terms": {pos + " belum dipilih jenisnya"},
 			})
 		}
 		hasPercent := t.Percent != nil
 		hasFixed := t.FixedAmount != nil
 		if hasPercent == hasFixed {
-			return apperror.Validation("Termin harus berbasis persentase atau nominal tetap", map[string][]string{
-				"terms": {pos + " harus mengisi tepat satu dari persentase atau nominal tetap"},
+			return apperror.Validation("Isi persentase atau nominal, jangan keduanya", map[string][]string{
+				"terms": {pos + ": isi persentase saja atau nominal saja"},
 			})
 		}
 		if hasPercent && (*t.Percent <= 0 || *t.Percent > 100) {
-			return apperror.Validation("Persentase termin tidak valid", map[string][]string{
-				"terms": {pos + " harus di antara 0 dan 100 persen"},
+			return apperror.Validation("Persentase tidak valid", map[string][]string{
+				"terms": {pos + ": persentase harus antara 1 dan 100"},
 			})
 		}
 		if hasFixed && *t.FixedAmount <= 0 {
-			return apperror.Validation("Nominal termin tidak valid", map[string][]string{
-				"terms": {pos + " harus lebih besar dari nol"},
+			return apperror.Validation("Nominal tidak valid", map[string][]string{
+				"terms": {pos + ": nominal harus lebih dari nol"},
 			})
 		}
 	}

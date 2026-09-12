@@ -75,7 +75,7 @@ export default function PackageTemplateListPage() {
       <Card>
         <CardHeader
           title="Template Paket"
-          subtitle="Paket yang Anda jual. Dipilih saat membuat project, lalu disalin ke PO project itu."
+          subtitle="Daftar paket yang Anda jual. Dipilih saat membuat project baru."
           action={
             <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setFormDraft({ id: null, values: EMPTY_TEMPLATE })}>
               Tambah paket
@@ -92,7 +92,7 @@ export default function PackageTemplateListPage() {
               <div>
                 <p className="text-[15px] font-semibold text-text-primary">Belum ada template paket</p>
                 <p className="mt-1 text-[13px] text-text-secondary">
-                  Buat satu paket untuk setiap tier yang Anda jual, lalu isi komposisinya sekali.
+                  Buat satu paket untuk setiap pilihan yang Anda tawarkan, lalu isi rinciannya sekali saja.
                 </p>
               </div>
               <Button icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setFormDraft({ id: null, values: EMPTY_TEMPLATE })}>
@@ -109,7 +109,7 @@ export default function PackageTemplateListPage() {
                       {!t.isActive && <Badge tone="neutral">Nonaktif</Badge>}
                     </div>
                     <p className="mt-0.5 text-[13px] text-text-secondary">
-                      {formatCurrency(t.basePrice)} · {t.blocks.length} blok · {t.terms.length} termin
+                      {formatCurrency(t.basePrice)} · {t.blocks.length} rincian · {t.terms.length} termin
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -121,7 +121,7 @@ export default function PackageTemplateListPage() {
                         setBlockRows(t.blocks.map(({ category, body, qtyText, bonusNote }) => ({ category, body, qtyText, bonusNote })));
                       }}
                     >
-                      Komposisi
+                      Isi Paket
                     </Button>
                     <Button
                       size="sm"
@@ -207,7 +207,7 @@ export default function PackageTemplateListPage() {
             <Field
               label="Harga paket"
               htmlFor="pt-price"
-              hint="Harga daftar. Nilai Kontrak yang diketik saat membuat project akan menggantikannya."
+              hint="Harga standar paket ini. Masih bisa disesuaikan di setiap project."
             >
               <CurrencyInput
                 id="pt-price"
@@ -231,7 +231,7 @@ export default function PackageTemplateListPage() {
                 onChange={(e) => setFormDraft({ ...formDraft, values: { ...formDraft.values, defaultBonusNote: e.target.value } })}
               />
             </Field>
-            <Field label="Status" htmlFor="pt-active" hint="Paket nonaktif tidak muncul di pemilih saat membuat project.">
+            <Field label="Status" htmlFor="pt-active" hint="Paket nonaktif tidak ditawarkan saat membuat project baru.">
               <Select
                 value={formDraft.values.isActive ? "aktif" : "nonaktif"}
                 onChange={(e) =>
@@ -246,11 +246,11 @@ export default function PackageTemplateListPage() {
         )}
       </Modal>
 
-      {/* --- Modal: komposisi --- */}
+      {/* --- Modal: isi paket --- */}
       <Modal
         open={blocksFor !== null}
         onClose={() => setBlocksFor(null)}
-        title={`Komposisi — ${blocksFor?.name ?? ""}`}
+        title={`Isi Paket — ${blocksFor?.name ?? ""}`}
         size="lg"
         footer={
           <>
@@ -267,27 +267,27 @@ export default function PackageTemplateListPage() {
                 });
               }}
             >
-              Simpan komposisi
+              Simpan isi paket
             </Button>
           </>
         }
       >
         <div className="flex flex-col gap-3">
           <p className="text-[13px] text-text-secondary">
-            Satu blok = satu baris pada PO tercetak. Tempel daftar item langsung dari spreadsheet; baris HURUF KAPITAL
-            dicetak tebal sebagai sub-judul.
+            Isi paket yang akan tercetak di PO. Tempel daftar item langsung dari Excel; baris yang diketik HURUF
+            KAPITAL akan dicetak tebal.
           </p>
           {blockRows.map((row, i) => (
             <div key={i} className="rounded-lg border border-border p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <Input
                   value={row.category}
-                  placeholder="Kategori, mis. CATERING"
+                  placeholder="Kategori, misalnya CATERING"
                   onChange={(e) => setBlockRows(blockRows.map((r, j) => (j === i ? { ...r, category: e.target.value } : r)))}
                 />
                 <IconActionButton
                   icon={Trash2}
-                  label="Hapus blok"
+                  label="Hapus rincian"
                   tone="danger"
                   onClick={() => setBlockRows(blockRows.filter((_, j) => j !== i))}
                 />
@@ -302,7 +302,7 @@ export default function PackageTemplateListPage() {
                 <Textarea
                   rows={3}
                   value={row.qtyText}
-                  placeholder="QTY, mis. 700 PORSI"
+                  placeholder="Jumlah, misalnya 700 PORSI"
                   onChange={(e) => setBlockRows(blockRows.map((r, j) => (j === i ? { ...r, qtyText: e.target.value } : r)))}
                 />
                 <Textarea
@@ -319,7 +319,7 @@ export default function PackageTemplateListPage() {
             icon={<Plus className="h-3.5 w-3.5" />}
             onClick={() => setBlockRows([...blockRows, { category: "", body: "", qtyText: "", bonusNote: "" }])}
           >
-            Tambah blok
+            Tambah rincian
           </Button>
         </div>
       </Modal>
@@ -352,8 +352,7 @@ export default function PackageTemplateListPage() {
       >
         <div className="flex flex-col gap-3">
           <p className="text-[13px] text-text-secondary">
-            Nominal dihitung dari total tiap project. Tahap terakhir selalu mengambil sisa, agar jumlah cicilan persis
-            sama dengan total.
+            Nominal setiap tahap dihitung otomatis dari total tiap project.
           </p>
           {termRows.map((row, i) => (
             <div key={i} className="grid items-end gap-2 rounded-lg border border-border p-3 sm:grid-cols-[1fr_auto_auto_auto_auto]">
@@ -408,7 +407,7 @@ export default function PackageTemplateListPage() {
                 />
               </Field>
               <div className="flex items-end gap-2">
-                <Field label="H−(hari)" htmlFor={`term-days-${i}`}>
+                <Field label="Jatuh tempo" htmlFor={`term-days-${i}`}>
                   <Input
                     id={`term-days-${i}`}
                     type="number"
@@ -465,8 +464,8 @@ export default function PackageTemplateListPage() {
         }
       >
         <p className="text-[13px] text-text-primary">
-          <strong>{confirmDelete?.name}</strong> akan dihapus beserta komposisi dan terminnya. PO project yang sudah
-          memakainya tidak terpengaruh — isinya sudah disalin.
+          <strong>{confirmDelete?.name}</strong> akan dihapus beserta isi dan terminnya. PO project yang sudah
+          memakainya tidak terpengaruh.
         </p>
       </Modal>
     </div>

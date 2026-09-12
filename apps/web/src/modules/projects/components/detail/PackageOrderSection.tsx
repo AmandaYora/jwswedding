@@ -14,6 +14,7 @@ import { usePackageOrderStore, type AdjustmentInput, type BlockInput } from "@/m
 import { usePackageTemplateStore } from "@/modules/package-templates/stores/usePackageTemplateStore";
 import type { PackageBlock, PackageOrderStatus } from "@/modules/package-templates/types";
 import { getApiErrorMessage, getApiErrorMessageFromBlob } from "@/shared/lib/api-error";
+import { openPdfInNewTab } from "@/shared/lib/open-pdf";
 import { formatCurrency, formatDate } from "@/shared/lib/formatters";
 import { httpClient } from "@/shared/services/http-client";
 import { API } from "@/shared/services/api-endpoints";
@@ -98,6 +99,10 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
     return blocks.map(({ category, body, qtyText, bonusNote }) => ({ category, body, qtyText, bonusNote }));
   }
 
+  // Must stay synchronous up to openPdfInNewTab's own first line: it claims the
+  // tab while the click is still a valid user gesture. Awaiting the request
+  // first and only then calling window.open is what made this button do
+  // nothing at all -- see openPdfInNewTab's doc comment.
   async function handleDownloadPDF() {
     if (!profileComplete) {
       setProfileGateOpen(true);
@@ -105,8 +110,10 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
     }
     setError(null);
     try {
-      const res = await httpClient.get(API.projects.packageOrderPdf(projectId), { responseType: "blob" });
-      window.open(URL.createObjectURL(res.data as Blob), "_blank");
+      await openPdfInNewTab(async () => {
+        const res = await httpClient.get(API.projects.packageOrderPdf(projectId), { responseType: "blob" });
+        return res.data as Blob;
+      }, order?.poNumber ? order.poNumber.replace(/\//g, "-") : "PO-Paket");
     } catch (err) {
       setError(await getApiErrorMessageFromBlob(err, "Gagal membuat PDF PO"));
     }
@@ -128,7 +135,7 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
           <div>
             <p className="text-[15px] font-semibold text-text-primary">Project ini belum punya PO Paket</p>
             <p className="mt-1 text-[13px] text-text-secondary">
-              Terapkan template paket untuk mengisi komposisi, syarat &amp; ketentuan, dan rencana termin sekaligus.
+              Pilih template paket untuk mengisi isi paket, syarat &amp; ketentuan, dan jadwal pembayaran sekaligus.
             </p>
           </div>
           {canManage ? (
@@ -149,10 +156,10 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
                 </Button>
               </div>
               <Button variant="ghost" disabled={busy} onClick={() => void run(() => startBlank(projectId))}>
-                Mulai kosong
+                Isi sendiri
               </Button>
               <p className="max-w-sm text-[12px] text-text-secondary">
-                Nilai Kontrak yang sudah ada akan dipakai sebagai Harga Paket Awal, tidak ditimpa.
+                Nilai Kontrak yang sudah tercatat tetap dipakai sebagai Harga Paket Awal.
               </p>
             </>
           ) : (
@@ -172,8 +179,8 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
         {/* --- Komposisi paket (B2/B3) --- */}
         <Card>
           <CardHeader
-            title="Komposisi Paket"
-            subtitle="Satu blok = satu baris pada PO tercetak. Baris HURUF KAPITAL menjadi sub-judul tebal."
+            title="Isi Paket"
+            subtitle="Rincian yang tercetak di PO."
             action={
               editable && canManage ? (
                 <Button
@@ -181,14 +188,14 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
                   icon={<Plus className="h-3.5 w-3.5" />}
                   onClick={() => setBlockDraft({ index: null, value: { category: "", body: "", qtyText: "", bonusNote: "" } })}
                 >
-                  Tambah blok
+                  Tambah rincian
                 </Button>
               ) : undefined
             }
           />
           <CardContent>
             {order.blocks.length === 0 ? (
-              <p className="py-6 text-center text-[13px] text-text-secondary">Belum ada blok komposisi.</p>
+              <p className="py-6 text-center text-[13px] text-text-secondary">Belum ada rincian paket.</p>
             ) : (
               <ul className="flex flex-col gap-2">
                 {order.blocks.map((block, index) => (
@@ -220,7 +227,7 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
                         <div className="flex shrink-0 items-center gap-1">
                           <IconActionButton
                             icon={Pencil}
-                            label="Ubah blok"
+                            label="Ubah rincian"
                             tone="neutral"
                             onClick={() =>
                               setBlockDraft({
@@ -236,7 +243,7 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
                           />
                           <IconActionButton
                             icon={Trash2}
-                            label="Hapus blok"
+                            label="Hapus rincian"
                             tone="danger"
                             onClick={() =>
                               void run(() =>
@@ -258,7 +265,7 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
         <Card>
           <CardHeader
             title="Additional & Takeout"
-            subtitle="Satu-satunya bagian paket yang bernominal. Takeout mengurangi total."
+            subtitle="Tambahan atau pengurangan harga di luar paket."
             action={
               editable && canManage ? (
                 <Button
@@ -328,7 +335,7 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
         <Card>
           <CardHeader
             title="Syarat & Ketentuan"
-            subtitle="Tercetak apa adanya pada PO. Baris HURUF KAPITAL menjadi sub-judul tebal."
+            subtitle="Tercetak di bagian akhir PO."
             action={
               editable && canManage ? (
                 <Button
@@ -379,14 +386,14 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
             {order.poNumber && <SummaryRow label="Nomor PO" value={order.poNumber} />}
             {order.issuedAt && <SummaryRow label="Diterbitkan" value={formatDate(order.issuedAt)} />}
             <p className="mt-1 text-[12px] text-text-secondary">
-              Pembayaran yang diterima dicatat di tab Pembayaran.
+              Pembayaran yang masuk dicatat di tab Pembayaran.
             </p>
           </CardContent>
         </Card>
 
         {order.termsPlan.length > 0 && (
           <Card>
-            <CardHeader title="Tahap Pembayaran" subtitle="Rencana termin, dihitung dari total saat ini." />
+            <CardHeader title="Tahap Pembayaran" subtitle="Jadwal pembayaran yang tercetak di PO." />
             <CardContent>
               <ul className="flex flex-col divide-y divide-border">
                 {order.termsPlan.map((term) => (
@@ -427,11 +434,11 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
         </Card>
       </div>
 
-      {/* --- Modal: blok --- */}
+      {/* --- Modal: rincian paket --- */}
       <Modal
         open={blockDraft !== null}
         onClose={() => setBlockDraft(null)}
-        title={blockDraft?.index === null ? "Tambah Blok" : "Ubah Blok"}
+        title={blockDraft?.index === null ? "Tambah Rincian Paket" : "Ubah Rincian Paket"}
         size="lg"
         footer={
           <>
@@ -451,7 +458,7 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
                 });
               }}
             >
-              Simpan blok
+              Simpan rincian
             </Button>
           </>
         }
@@ -473,9 +480,9 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
               </datalist>
             </Field>
             <Field
-              label="Daftar item"
+              label="Isi paket"
               htmlFor="po-block-body"
-              hint="Satu item per baris. Baris HURUF KAPITAL dicetak tebal sebagai sub-judul. Bisa ditempel langsung dari spreadsheet."
+              hint="Satu item per baris. Bisa ditempel langsung dari Excel. Baris yang diketik HURUF KAPITAL akan dicetak tebal."
             >
               <Textarea
                 id="po-block-body"
@@ -486,7 +493,7 @@ export function PackageOrderSection({ projectId }: { projectId: string }) {
               />
             </Field>
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="QTY" htmlFor="po-block-qty" hint="Boleh beberapa baris, atau rentang seperti 10-12 METER.">
+              <Field label="QTY" htmlFor="po-block-qty" hint="Contoh: 700 PORSI. Boleh beberapa baris.">
                 <Textarea
                   id="po-block-qty"
                   rows={4}

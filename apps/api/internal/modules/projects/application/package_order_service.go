@@ -156,7 +156,7 @@ func (s *PackageOrderService) ApplyTemplate(ctx context.Context, tenantID, proje
 }
 
 // StartBlank creates an empty Draft PO for a project with no template — the
-// "Mulai Kosong" path, and the other half of D23: an existing project's
+// "Isi sendiri" path, and the other half of D23: an existing project's
 // ContractValue becomes the starting BasePrice rather than being zeroed.
 func (s *PackageOrderService) StartBlank(ctx context.Context, tenantID, projectID, actorStaffID int64) (*PackageOrderView, error) {
 	project, err := s.requireProject(ctx, tenantID, projectID)
@@ -209,8 +209,8 @@ func (s *PackageOrderService) SetHeader(ctx context.Context, tenantID, projectID
 		return nil, err
 	}
 	if basePrice < 0 {
-		return nil, apperror.Validation("Harga paket tidak boleh negatif", map[string][]string{
-			"basePrice": {"Harga paket tidak boleh negatif"},
+		return nil, apperror.Validation("Harga paket tidak boleh minus", map[string][]string{
+			"basePrice": {"Harga paket tidak boleh minus"},
 		})
 	}
 	order.BasePrice = basePrice
@@ -251,8 +251,8 @@ func (s *PackageOrderService) RecomputeContractValue(ctx context.Context, tenant
 	}
 	total := order.BasePrice + domain.TotalAdjustments(adjustments)
 	if total < 0 {
-		return apperror.Validation("Total paket tidak boleh negatif", map[string][]string{
-			"adjustments": {"Penyesuaian membuat total pembayaran menjadi negatif"},
+		return apperror.Validation("Total pembayaran tidak boleh minus", map[string][]string{
+			"adjustments": {"Pengurangan harga melebihi harga paket"},
 		})
 	}
 	if project.ContractValue != total {
@@ -404,7 +404,7 @@ func (s *PackageOrderService) Revise(ctx context.Context, tenantID, projectID, a
 		return nil, err
 	}
 	if order.Status != domain.PackageOrderIssued {
-		return nil, apperror.Validation("Hanya PO yang sudah terbit dapat direvisi", nil)
+		return nil, apperror.Validation("PO ini belum diterbitkan, jadi belum perlu direvisi", nil)
 	}
 	// Push the signed state into history before reopening (D30) — the
 	// cancellation and downgrade clauses in the terms refer to "kesepakatan
@@ -434,7 +434,7 @@ func (s *PackageOrderService) Cancel(ctx context.Context, tenantID, projectID, a
 		return nil, err
 	}
 	if order.Status != domain.PackageOrderIssued {
-		return nil, apperror.Validation("Hanya PO yang sudah terbit dapat dibatalkan", nil)
+		return nil, apperror.Validation("PO ini belum diterbitkan, jadi tidak ada yang perlu dibatalkan", nil)
 	}
 	order.Status = domain.PackageOrderCancelled
 	if err := s.repo.Update(ctx, order); err != nil {
@@ -615,7 +615,7 @@ func (s *PackageOrderService) requireEditableOrder(ctx context.Context, tenantID
 		return nil, err
 	}
 	if order.Status != domain.PackageOrderDraft {
-		return nil, apperror.Validation("PO Paket sudah terbit — buat revisi lebih dulu untuk mengubahnya", nil)
+		return nil, apperror.Validation("PO sudah diterbitkan. Buat revisi dulu untuk mengubah isinya.", nil)
 	}
 	return order, nil
 }
