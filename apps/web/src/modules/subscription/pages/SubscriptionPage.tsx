@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, ShieldCheck, Clock, Lock, QrCode, ExternalLink, AlertTriangle } from "lucide-react";
 import { Card, CardHeader, CardContent } from "@/shared/components/ui/Card";
 import { Button } from "@/shared/components/ui/Button";
+import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
 import { Badge } from "@/shared/components/ui/Badge";
 import { Modal } from "@/shared/components/ui/Modal";
 import { Table, THead, TBody, TR, TH, TD } from "@/shared/components/ui/Table";
@@ -227,22 +228,16 @@ export default function SubscriptionPage() {
             Batalkan
           </Button>
         </div>
-        {confirmingCancel && (
-          <div className="max-w-[240px] rounded-md border border-danger/30 bg-danger-soft px-3 py-2">
-            <p className="flex items-start gap-1.5 text-[12px] font-medium text-danger">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              Yakin ingin membatalkan tagihan ini?
-            </p>
-            <div className="mt-2 flex justify-end gap-2">
-              <Button size="sm" variant="secondary" onClick={() => setConfirmingCancel(false)} disabled={isCancelling}>
-                Batal
-              </Button>
-              <Button size="sm" variant="danger" onClick={() => void handleCancelPendingCharge()} disabled={isCancelling}>
-                {isCancelling ? "Memproses..." : "Ya, Batalkan"}
-              </Button>
-            </div>
-          </div>
-        )}
+        <ConfirmDialog
+          open={confirmingCancel}
+          onClose={() => setConfirmingCancel(false)}
+          onConfirm={() => void handleCancelPendingCharge()}
+          title="Batalkan Tagihan Langganan"
+          message="Yakin ingin membatalkan tagihan ini?"
+          confirmLabel="Ya, Batalkan"
+          busyLabel="Memproses..."
+          busy={isCancelling}
+        />
       </div>
     );
   }

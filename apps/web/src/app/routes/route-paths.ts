@@ -23,6 +23,9 @@ export const ROUTE_PATHS = {
   projects: "/projects",
   projectDetail: (id: string, tab: ProjectDetailTab = "vendor") => `/projects/${id}/${tab}`,
   clients: "/clients",
+  clientDetail: (id: string) => `/clients/${id}`,
+  quotations: "/quotations",
+  quotationDetail: (id: string) => `/quotations/${id}`,
   vendorCategories: "/vendor-categories",
   vendors: "/vendors",
   venues: "/venues",
@@ -33,4 +36,6 @@ export const ROUTE_PATHS = {
   clientTimelines: "/monitoring-timeline",
   companyProfile: "/profil-usaha",
   portal: (tab: ClientPortalTab = "vendor") => `/portal/${tab}`,
+  // Magic link tanda tangan (jalur C, tanpa login).
+  publicSignature: (token: string) => `/tanda-tangan/${token}`,
 } as const;

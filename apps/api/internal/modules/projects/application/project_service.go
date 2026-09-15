@@ -7,13 +7,11 @@ import (
 	"jwswedding/internal/modules/projects/domain"
 	vendorscontracts "jwswedding/internal/modules/vendors/contracts"
 	"jwswedding/internal/shared/apperror"
-	"jwswedding/internal/shared/logger"
 	"jwswedding/internal/shared/pagination"
 )
 
 type ProjectRepository interface {
-	List(ctx context.Context, tenantID int64, picStaffID, picSalesStaffID *int64) ([]domain.Project, error)
-	// CountAll backs the dashboard's TotalProjects stat.
+	List(ctx context.Context, tenantID int64, picStaffID, picSalesStaffID *int64) ([]domain.Project, error) // CountAll backs the dashboard's TotalProjects stat.
 	CountAll(ctx context.Context, tenantID int64) (int64, error)
 	// ListForDashboard backs the dashboard's trend/near-D-day/upcoming/lagging
 	// computations — bounded to rows that could matter for any of them
@@ -27,6 +25,21 @@ type ProjectRepository interface {
 	ListByStaffPIC(ctx context.Context, tenantID, staffID int64) ([]domain.ProjectRef, error)
 	FindByID(ctx context.Context, tenantID, id int64) (*domain.Project, error)
 	Create(ctx context.Context, p *domain.Project) error
+	// CreateSeeded menyisipkan project + Timeline Default + tagihan awal
+	// dalam SATU transaksi (jalur Accept, T3.2) — lihat implementasinya untuk
+	// urutan dan alasan tiap sisipan.
+	CreateSeeded(ctx context.Context, p *domain.Project, milestones []domain.ProjectMilestone) error
+	// ListByClient / FindByQuotationID menopang port penawaran-client-master
+	// (ProjectDirectory + idempotensi Accept) — jawab dari projects.client_id
+	// dan projects.quotation_id, kolom milik modul ini sendiri.
+	ListByClient(ctx context.Context, tenantID, clientID int64) ([]domain.Project, error)
+	FindByQuotationID(ctx context.Context, tenantID, quotationID int64) (*domain.Project, error)
+	// CountByClients menjawab hitungan project per client untuk satu halaman
+	// daftar Client — satu query agregat, bukan N+1 (§11 PLAN).
+	CountByClients(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64]int, error)
+	// ProjectIDsForQuotations memetakan penawaran ke project-nya untuk satu
+	// halaman daftar Penawaran — satu query, bukan N+1.
+	ProjectIDsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]int64, error)
 	Update(ctx context.Context, p *domain.Project) error
 	SetStatus(ctx context.Context, tenantID, id int64, status domain.ProjectStatus) error
 	SetArchived(ctx context.Context, tenantID, id int64, archived bool) error
@@ -36,25 +49,12 @@ type ProjectRepository interface {
 	DeleteCascade(ctx context.Context, tenantID, id int64) error
 }
 
-// ClientCleaner is the narrow shape ProjectService needs from `clients` to
-// best-effort clean up every client tied to a project being hard-deleted —
-// deliberately a local interface (not an import of clients/contracts) so
-// `projects` never has to import `clients`. Bridged from main.go via
-// Module.SetClientCleaner, exactly like the existing presentation-layer
-// SetClientAccessResolver two-phase wiring (see projects.module.go and
-// handler.go's ClientAccessResolver) — needed because `clients` itself
-// depends on `projects.Contracts()`, so `clients` must be built after
-// `projects`, meaning `projects` can't take this as a constructor argument.
-type ClientCleaner interface {
-	DeleteAllForProject(ctx context.Context, tenantID, projectID int64) error
-}
-
 // VenueResolver is the narrow shape ProjectService needs from `vendors` to
 // resolve a project's attached venue_id into display data (ADR-0016) --
 // deliberately a local interface (not an import of vendors/application) so
 // this file only depends on vendors' public contracts package for the return
 // type. Bridged from main.go via Module.SetVenueResolver, the same two-phase
-// idiom as SetClientCleaner above -- needed because `vendors` itself depends
+// idiom as SetClientAccessResolver -- needed because `vendors` itself depends
 // on `projects.Contracts()` (built after `projects`), so `projects` can't
 // take this as a constructor argument.
 type VenueResolver interface {
@@ -104,9 +104,13 @@ type ProjectService struct {
 	venuePayments      VenuePaymentRepository
 	evidence           *EvidenceService
 	activity           *ActivityService
-	clients            ClientCleaner
 	venues             VenueResolver
 	staff              StaffNameResolver
+	// Penawaran-client-master: dipasang via setter two-phase (lihat
+	// quotation_bridge.go) supaya signature konstruktor tidak berubah.
+	activator  ClientActivator
+	quotations QuotationResolver
+	invoices   *ClientInvoiceService
 }
 
 func NewProjectService(
@@ -129,6 +133,55 @@ func NewProjectService(
 	}
 }
 
+// CostSummary menghitung sisi biaya sebuah project terhadap nilai kontraknya.
+//
+// Pindah dari frontend ke sini dengan sengaja: gerbang komitmen vendor
+// (VendorEngagementService) memakai angka yang SAMA, dan dua salinan
+// perhitungan uang di dua lapisan adalah cara paling pasti untuk membuat
+// layar dan aturan berselisih.
+func (s *ProjectService) CostSummary(ctx context.Context, tenantID, projectID int64) (domain.ProjectCostSummary, error) {
+	p, err := s.repo.FindByID(ctx, tenantID, projectID)
+	if err != nil {
+		return domain.ProjectCostSummary{}, err
+	}
+	if p == nil {
+		return domain.ProjectCostSummary{}, apperror.NotFound("Project tidak ditemukan")
+	}
+	engagements, err := s.vendorEngagements.ListByProject(ctx, projectID)
+	if err != nil {
+		return domain.ProjectCostSummary{}, err
+	}
+	var vendorCost int64
+	for _, e := range engagements {
+		if e.EngagementStatus == domain.EngagementCancelled {
+			continue
+		}
+		vendorCost += e.ContractValue
+	}
+	return newCostSummary(p, vendorCost), nil
+}
+
+// newCostSummary merakit ringkasan dari dua bahan yang sudah dibaca pemanggil
+// — dipisah supaya gerbang komitmen bisa menghitung ulang dengan nilai vendor
+// HIPOTETIS (sesudah engagement yang sedang ditulis) tanpa membaca ulang DB.
+func newCostSummary(p *domain.Project, vendorCost int64) domain.ProjectCostSummary {
+	var venueCost int64
+	if p.VenueRentalPrice != nil {
+		venueCost += *p.VenueRentalPrice
+	}
+	if p.VenueCharge != nil {
+		venueCost += *p.VenueCharge
+	}
+	committed := vendorCost + venueCost
+	return domain.ProjectCostSummary{
+		ContractValue: p.ContractValue,
+		VendorCost:    vendorCost,
+		VenueCost:     venueCost,
+		CommittedCost: committed,
+		Remaining:     p.ContractValue - committed,
+	}
+}
+
 // ResolvePICName backs the `picName` field on a project's response (PLAN.md's
 // Client Portal restructure) -- returns "" on any failure (unresolved ID,
 // nil resolver) rather than erroring, since this is display-only metadata,
@@ -144,17 +197,9 @@ func (s *ProjectService) ResolvePICName(ctx context.Context, tenantID, staffID i
 	return name
 }
 
-// SetClientCleaner completes the two-phase wiring needed because `clients`
-// depends on `projects.Contracts()` (built after `projects`) — see
-// ClientCleaner's doc comment. main.go calls this right after clientsModule
-// is built, the same slot as SetClientAccessResolver.
-func (s *ProjectService) SetClientCleaner(cleaner ClientCleaner) {
-	s.clients = cleaner
-}
-
 // SetVenueResolver completes the two-phase wiring described on VenueResolver
 // above. main.go calls this right after vendorsModule is built, the same
-// slot as SetClientCleaner/SetClientAccessResolver.
+// slot as SetClientActivator/SetClientAccessResolver.
 func (s *ProjectService) SetVenueResolver(resolver VenueResolver) {
 	s.venues = resolver
 }
@@ -293,35 +338,6 @@ type ProjectInput struct {
 	VenueCharge      *int64
 }
 
-// callerRole == "Sales" forces PICSalesStaffID to actorStaffID regardless of
-// what input carries -- a Sales staff member can only ever create a project
-// they themselves are the PIC Sales of, mirroring ADR-0017's "only Owner/
-// Admin assign PIC" precedent extended to this second PIC slot. Every other
-// role (including "" for internal callers) passes input.PICSalesStaffID
-// through untouched, same as PICStaffID always has.
-func (s *ProjectService) Create(ctx context.Context, tenantID int64, actorStaffID int64, callerRole string, input ProjectInput) (*domain.Project, error) {
-	picSalesStaffID := input.PICSalesStaffID
-	if callerRole == "Sales" {
-		picSalesStaffID = actorStaffID
-	}
-	p := &domain.Project{
-		TenantID: tenantID, Name: input.Name, BrideName: input.BrideName, GroomName: input.GroomName,
-		EventDate: input.EventDate, EventStartTime: input.EventStartTime, EventEndTime: input.EventEndTime,
-		Pax: input.Pax, Venue: input.Venue, PrepStartDate: input.PrepStartDate,
-		PackageName: input.PackageName, ContractValue: input.ContractValue, Status: input.Status,
-		PICStaffID: input.PICStaffID, PICSalesStaffID: picSalesStaffID, Description: input.Description,
-	}
-	if err := s.repo.Create(ctx, p); err != nil {
-		return nil, err
-	}
-	if err := s.seedDefaultMilestones(ctx, tenantID, p.ID, p.EventDate, p.PrepStartDate); err != nil {
-		return nil, err
-	}
-	s.activity.Record(ctx, &p.ID, domain.ActivityProjectCreated, actorStaffID, "project", formatID(p.ID), p.Name,
-		"Project baru dibuat: "+p.Name)
-	return p, nil
-}
-
 // Update rejects a Wedding Planner ("Staff" role) reassigning PICStaffID —
 // confirmed role rule: only Owner/Admin assign or reassign who a project's
 // PIC is, even on a project the Wedding Planner already manages day to day.
@@ -335,6 +351,9 @@ func (s *ProjectService) Create(ctx context.Context, tenantID int64, actorStaffI
 func (s *ProjectService) Update(ctx context.Context, tenantID, id int64, actorStaffID int64, callerRole string, input ProjectInput) (*domain.Project, error) {
 	p, err := s.Get(ctx, tenantID, id)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateProjectStatus(input.Status); err != nil {
 		return nil, err
 	}
 	if callerRole == "Staff" && input.PICStaffID != p.PICStaffID {
@@ -381,6 +400,23 @@ func (s *ProjectService) Update(ctx context.Context, tenantID, id int64, actorSt
 	s.activity.Record(ctx, &p.ID, domain.ActivityProjectUpdated, actorStaffID, "project", formatID(p.ID), p.Name,
 		"Informasi project diperbarui")
 	return p, nil
+}
+
+// validateProjectStatus rejects status values the database itself would
+// refuse (projects.status is a MySQL ENUM) — without this, an unknown
+// status sails through to repo.Update and comes back as a bare 500 instead
+// of a field-keyed 422. Same hazard class as validateEngagementInput in
+// vendor_engagement_service.go.
+func validateProjectStatus(s domain.ProjectStatus) error {
+	switch s {
+	case domain.StatusDraft, domain.StatusPreparation, domain.StatusReady,
+		domain.StatusCompleted, domain.StatusCancelled:
+		return nil
+	default:
+		return apperror.Validation("Status project tidak valid", map[string][]string{
+			"status": {"Status project tidak valid"},
+		})
+	}
 }
 
 // guardKonteksUmum rejects a non-Owner/Admin caller (a Wedding Planner
@@ -506,149 +542,16 @@ func (s *ProjectService) SetArchived(ctx context.Context, tenantID, id, actorSta
 	return p, nil
 }
 
-// Delete permanently removes a project and every row across this module
-// that references it (see ProjectRepository.DeleteCascade), plus best-effort
-// cleans up evidence's object-storage files and every client tied to this
-// project — a deliberate exception to this codebase's usual soft-state
-// convention (knowledge/DATABASE_GUIDE.md), guarded accordingly: only a
-// project already archived or cancelled may be hard-deleted (enforced here,
-// not just the frontend), and only an Owner may call this at all (enforced
-// by the handler, since role-gating doesn't otherwise exist in this module —
-// see ADR-0013). No activity-log entry is recorded for the deletion itself:
-// activity_log rows for this project are deleted in the same transaction,
-// so one would just be wiped immediately after being written.
+// Delete menghapus permanen satu project beserta seluruh isinya dan
+// penawarannya (D14 — informed consent lewat dialog delete-impact, bukan
+// blokir arsip/batal). Hanya Owner yang boleh memanggil (gate di handler).
+// Tidak ada entri activity log untuk penghapusan itu sendiri: baris
+// activity_log project ini ikut terhapus dalam transaksi yang sama.
 func (s *ProjectService) Delete(ctx context.Context, tenantID, id int64) error {
-	p, err := s.Get(ctx, tenantID, id)
-	if err != nil {
+	if _, err := s.Get(ctx, tenantID, id); err != nil {
 		return err
 	}
-	if !p.IsArchived && p.Status != domain.StatusCancelled {
-		return apperror.Validation("Project belum bisa dihapus permanen", map[string][]string{
-			"status": {"Arsipkan atau batalkan project ini terlebih dahulu sebelum menghapusnya secara permanen"},
-		})
-	}
-
-	evidences, err := s.evidence.List(ctx, id)
-	if err != nil {
-		return err
-	}
-
-	if err := s.repo.DeleteCascade(ctx, tenantID, id); err != nil {
-		return err
-	}
-
-	// Both cleanup steps below run only after the DB cascade has committed —
-	// a failure in either leaves, at worst, an orphaned S3 object or client
-	// row, never a dangling reference back to a project that no longer
-	// exists (the opposite ordering would risk exactly that).
-	s.evidence.DeleteStorageObjects(ctx, evidences)
-
-	if s.clients != nil {
-		if err := s.clients.DeleteAllForProject(ctx, tenantID, id); err != nil {
-			logger.Error("failed to clean up clients for deleted project %d: %v", id, err)
-		}
-	}
-
-	return nil
-}
-
-// Duplicate creates a new project from `input` (the caller's, possibly
-// user-edited, copy of the source project's fields — see ADR-0014) and
-// clones the source's Project Milestones and Vendor Engagements (with their
-// own Vendor Milestones) as a reusable structural template. Deliberately
-// excluded: vendor_payments, vendor_issues, evidence, activity_log, and
-// clients — all historical/transactional data tied to what actually happened
-// on the source project, not to a template. Every cloned row is reset to its
-// initial state (milestone status, engagement status, paid/DP amounts);
-// every date (including the source's own milestone/booking/due dates) is
-// copied verbatim, not shifted — the user adjusts whatever's stale by hand
-// afterward, same as any other edit.
-func (s *ProjectService) Duplicate(ctx context.Context, tenantID int64, actorStaffID int64, sourceID int64, input ProjectInput) (*domain.Project, error) {
-	source, err := s.Get(ctx, tenantID, sourceID)
-	if err != nil {
-		return nil, err
-	}
-
-	p := &domain.Project{
-		TenantID: tenantID, Name: input.Name, BrideName: input.BrideName, GroomName: input.GroomName,
-		EventDate: input.EventDate, EventStartTime: input.EventStartTime, EventEndTime: input.EventEndTime,
-		Pax: input.Pax, Venue: input.Venue, PrepStartDate: input.PrepStartDate,
-		PackageName: input.PackageName, ContractValue: input.ContractValue, Status: input.Status,
-		PICStaffID: input.PICStaffID, PICSalesStaffID: input.PICSalesStaffID, Description: input.Description,
-	}
-	if err := s.repo.Create(ctx, p); err != nil {
-		return nil, err
-	}
-
-	if err := s.cloneMilestonesFrom(ctx, sourceID, p.ID); err != nil {
-		return nil, err
-	}
-	if err := s.cloneVendorEngagementsFrom(ctx, sourceID, p.ID, p.EventDate); err != nil {
-		return nil, err
-	}
-
-	s.activity.Record(ctx, &p.ID, domain.ActivityProjectCreated, actorStaffID, "project", formatID(p.ID), p.Name,
-		"Project baru dibuat dari duplikasi project: "+source.Name)
-	return p, nil
-}
-
-func (s *ProjectService) cloneMilestonesFrom(ctx context.Context, sourceProjectID, newProjectID int64) error {
-	milestones, err := s.milestones.ListByProject(ctx, sourceProjectID)
-	if err != nil {
-		return err
-	}
-	for _, m := range milestones {
-		clone := &domain.ProjectMilestone{
-			ProjectID: newProjectID, SortOrder: m.SortOrder, Name: m.Name, Category: m.Category,
-			Status: domain.MilestoneNotStarted, TargetDate: m.TargetDate,
-		}
-		if err := s.milestones.Create(ctx, clone); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// cloneVendorEngagementsFrom clones every vendor engagement (and each one's
-// own vendor milestones) from the source project. EventDate is synced to the
-// new project's own event date (newEventDate) rather than copied from the
-// source engagement — it's a denormalized mirror of the parent project's
-// event date, always set that way on every other creation path (see
-// useProjectStore.ts's vendorEngagementInputBody), not an independent piece
-// of information the "copy dates verbatim" choice applies to. BookingDate and
-// DueDate, which are genuinely independent, are copied as-is.
-func (s *ProjectService) cloneVendorEngagementsFrom(ctx context.Context, sourceProjectID, newProjectID int64, newEventDate time.Time) error {
-	engagements, err := s.vendorEngagements.ListByProject(ctx, sourceProjectID)
-	if err != nil {
-		return err
-	}
-	for _, pv := range engagements {
-		clone := &domain.ProjectVendor{
-			ProjectID: newProjectID, VendorID: pv.VendorID, CategoryID: pv.CategoryID, Scope: pv.Scope,
-			ContractValue: pv.ContractValue, PricingTier: pv.PricingTier, EngagementStatus: domain.EngagementPlanned,
-			BookingDate: pv.BookingDate, EventDate: newEventDate, DPAmount: 0,
-			DueDate: pv.DueDate, PICStaffID: pv.PICStaffID, Notes: pv.Notes,
-		}
-		if err := s.vendorEngagements.Create(ctx, clone); err != nil {
-			return err
-		}
-
-		vendorMilestones, err := s.vendorMilestones.ListByProjectVendor(ctx, pv.ID)
-		if err != nil {
-			return err
-		}
-		for _, vm := range vendorMilestones {
-			vmClone := &domain.VendorMilestone{
-				ProjectVendorID: clone.ID, SortOrder: vm.SortOrder, Name: vm.Name, Description: vm.Description,
-				Status: domain.MilestoneNotStarted, TargetDate: vm.TargetDate,
-				PICStaffID: vm.PICStaffID, Notes: vm.Notes,
-			}
-			if err := s.vendorMilestones.Create(ctx, vmClone); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return s.DeleteProjectCascade(ctx, tenantID, id)
 }
 
 // --- Project milestones ---
@@ -708,6 +611,9 @@ func (s *ProjectService) UpdateMilestone(ctx context.Context, tenantID, projectI
 	}
 	if m == nil {
 		return nil, apperror.NotFound("Timeline tidak ditemukan")
+	}
+	if err := validateMilestoneStatus(input.Status); err != nil {
+		return nil, err
 	}
 	if err := guardStatusSelesai(ctx, s.evidence, m, input, milestoneID); err != nil {
 		return nil, err

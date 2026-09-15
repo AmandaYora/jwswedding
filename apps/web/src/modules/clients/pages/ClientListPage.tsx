@@ -1,128 +1,67 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { Pencil, KeyRound, UserCheck, UserX, Repeat, Trash2, AlertTriangle } from "lucide-react";
-import { Badge } from "@/shared/components/ui/Badge";
+import { useNavigate } from "react-router-dom";
+import { Plus } from "lucide-react";
 import { Avatar } from "@/shared/components/ui/Avatar";
 import { SearchInput } from "@/shared/components/ui/SearchInput";
-import { Select, Input, Field } from "@/shared/components/ui/Input";
+import { Input, Textarea, Field } from "@/shared/components/ui/Input";
 import { Modal } from "@/shared/components/ui/Modal";
 import { Button } from "@/shared/components/ui/Button";
 import { Pagination } from "@/shared/components/ui/Pagination";
-import { usePagination } from "@/shared/hooks/usePagination";
 import { EmptyState } from "@/shared/components/feedback/EmptyState";
-import { IconActionButton } from "@/shared/components/ui/IconActionButton";
-import { ProjectStatusBadge } from "@/modules/projects/components/StatusBadges";
-import { ClientRoleBadge } from "@/modules/clients/components/ClientRoleBadge";
-import { ClientContactFormModal } from "@/modules/clients/components/ClientContactFormModal";
-import type { ClientContactFormValues } from "@/modules/clients/schemas/client.schema";
+import { Card, CardContent } from "@/shared/components/ui/Card";
 import { useClientStore } from "@/modules/clients/stores/useClientStore";
-import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
-import type { Client, ClientRole } from "@/modules/clients/types";
-import type { Project } from "@/modules/projects/types";
+import type { ClientMasterFormValues } from "@/modules/clients/schemas/client.schema";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
-import { formatDate } from "@/shared/lib/formatters";
+import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 
-const ROLE_OPTIONS: ClientRole[] = ["Bride", "Groom", "Family Representative"];
-
-const ROLE_FILTER_LABEL: Record<ClientRole, string> = {
-  Bride: "Pengantin Wanita",
-  Groom: "Pengantin Pria",
-  "Family Representative": "Wedding Representative",
-};
-
-type ModalMode = "edit" | "replace" | "reset";
-
-interface ModalTarget {
-  clientId: string;
-  projectId: string;
-  mode: ModalMode;
-}
-
 export default function ClientListPage() {
-  const projects = useProjectStore((s) => s.projects);
-  const fetchProjects = useProjectStore((s) => s.fetchProjects);
-  const allClients = useClientStore((s) => s.allClients);
-  const fetchAllClients = useClientStore((s) => s.fetchAllClients);
-  const updateContact = useClientStore((s) => s.updateContact);
-  const toggleActive = useClientStore((s) => s.toggleActive);
-  const deleteClient = useClientStore((s) => s.deleteClient);
-  const resetCredential = useClientStore((s) => s.resetCredential);
-  const replaceRepresentative = useClientStore((s) => s.replaceRepresentative);
+  const navigate = useNavigate();
+  const clients = useClientStore((s) => s.clients);
+  const meta = useClientStore((s) => s.clientsMeta);
+  const fetchClients = useClientStore((s) => s.fetchClients);
+  const createClient = useClientStore((s) => s.createClient);
 
   const [query, setQuery] = useState("");
-  const [roleFilter, setRoleFilter] = useState<"Semua" | ClientRole>("Semua");
-  const [modalTarget, setModalTarget] = useState<ModalTarget | null>(null);
+  const debouncedQuery = useDebouncedValue(query);
+  const [page, setPage] = useState(1);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [values, setValues] = useState<ClientMasterFormValues>({
+    brideName: "",
+    groomName: "",
+    phone: "",
+    email: "",
+    notes: "",
+  });
+  const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const search = useMemo(() => debouncedQuery.trim(), [debouncedQuery]);
+
   useEffect(() => {
-    void fetchProjects();
-    void fetchAllClients();
-  }, [fetchProjects, fetchAllClients]);
+    setPage(1);
+  }, [search]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return allClients.filter((c) => {
-      const matchesQuery = q.length === 0 || c.name.toLowerCase().includes(q);
-      const matchesRole = roleFilter === "Semua" || c.role === roleFilter;
-      return matchesQuery && matchesRole;
-    });
-  }, [allClients, query, roleFilter]);
+  useEffect(() => {
+    void fetchClients(page, search);
+  }, [fetchClients, page, search]);
 
-  const groups = useMemo(() => {
-    return projects
-      .map((project) => ({ project, clients: filtered.filter((c) => c.projectId === project.id) }))
-      .filter((group) => group.clients.length > 0);
-  }, [projects, filtered]);
-
-  const activeTarget = modalTarget ? allClients.find((c) => c.id === modalTarget.clientId) ?? null : null;
-  const { page, setPage, totalPages, totalItems, pageSize, pageItems: pageGroups } = usePagination(groups, 5);
-
-  async function handleToggleActive(projectId: string, clientId: string) {
-    setActionError(null);
-    try {
-      await toggleActive(projectId, clientId);
-      await fetchAllClients();
-    } catch (err) {
-      setActionError(getApiErrorMessage(err, "Gagal mengubah status client"));
+  async function handleCreate() {
+    if (!values.brideName.trim() || !values.groomName.trim()) {
+      setActionError("Nama kedua mempelai wajib diisi");
+      return;
     }
-  }
-
-  async function handleDelete(projectId: string, clientId: string) {
+    setBusy(true);
     setActionError(null);
     try {
-      await deleteClient(projectId, clientId);
-      await fetchAllClients();
+      const client = await createClient(values);
+      setCreateOpen(false);
+      setValues({ brideName: "", groomName: "", phone: "", email: "", notes: "" });
+      navigate(ROUTE_PATHS.clientDetail(client.id));
     } catch (err) {
-      setActionError(getApiErrorMessage(err, "Gagal menghapus client"));
-    }
-  }
-
-  async function handleContactSubmit(values: ClientContactFormValues) {
-    if (!modalTarget || !activeTarget) return;
-    setActionError(null);
-    try {
-      if (modalTarget.mode === "replace") {
-        await replaceRepresentative(modalTarget.projectId, modalTarget.clientId, { ...values, relationNote: activeTarget.relationNote });
-      } else {
-        await updateContact(modalTarget.projectId, modalTarget.clientId, values);
-      }
-      await fetchAllClients();
-      setModalTarget(null);
-    } catch (err) {
-      setActionError(getApiErrorMessage(err, "Gagal menyimpan perubahan client"));
-    }
-  }
-
-  async function handleResetSubmit(password: string) {
-    if (!modalTarget) return;
-    setActionError(null);
-    try {
-      await resetCredential(modalTarget.projectId, modalTarget.clientId, password);
-      await fetchAllClients();
-      setModalTarget(null);
-    } catch (err) {
-      setActionError(getApiErrorMessage(err, "Gagal mereset kredensial client"));
+      setActionError(getApiErrorMessage(err, "Gagal menambah client"));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -132,239 +71,88 @@ export default function ClientListPage() {
         <div>
           <h1 className="text-xl font-bold text-text-primary">Client</h1>
           <p className="mt-1 text-[13px] text-text-secondary">
-            Kelola seluruh akun client, dikelompokkan berdasarkan project — kontak, status akun, dan wedding representative.
+            Master pasangan — satu baris per pasangan, lepas dari project. Kontak dan akun portal dikelola di dalam tiap client.
           </p>
         </div>
+        <Button icon={<Plus className="h-4 w-4" />} onClick={() => setCreateOpen(true)}>
+          Tambah Client
+        </Button>
       </div>
-
-      {actionError && (
-        <p className="rounded-md border border-danger/30 bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger">{actionError}</p>
-      )}
 
       <div className="flex flex-wrap gap-3">
         <SearchInput
           className="max-w-xs"
-          placeholder="Cari nama client..."
+          placeholder="Cari nama pasangan atau telepon..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <Select className="w-56" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as "Semua" | ClientRole)}>
-          <option value="Semua">Semua Role</option>
-          {ROLE_OPTIONS.map((r) => (
-            <option key={r} value={r}>{ROLE_FILTER_LABEL[r]}</option>
-          ))}
-        </Select>
       </div>
 
-      {groups.length === 0 ? (
+      {clients.length === 0 ? (
         <div className="rounded-xl border border-border bg-surface">
-          <EmptyState title="Tidak ada client ditemukan" description="Ubah kata kunci pencarian atau filter role." />
+          <EmptyState title="Tidak ada client ditemukan" description="Tambah pasangan pertama, atau ubah kata kunci pencarian." />
         </div>
       ) : (
         <>
-          <div className="flex flex-col gap-4">
-            {pageGroups.map(({ project, clients: projectClients }) => (
-              <ProjectClientGroup
-                key={project.id}
-                project={project}
-                clients={projectClients}
-                onEdit={(id) => setModalTarget({ clientId: id, projectId: project.id, mode: "edit" })}
-                onReplace={(id) => setModalTarget({ clientId: id, projectId: project.id, mode: "replace" })}
-                onReset={(id) => setModalTarget({ clientId: id, projectId: project.id, mode: "reset" })}
-                onToggleActive={(id) => void handleToggleActive(project.id, id)}
-                onDelete={(id) => void handleDelete(project.id, id)}
-              />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {clients.map((c) => (
+              <Card key={c.id}>
+                <CardContent className="flex items-center gap-3 py-4">
+                  <Avatar name={c.displayName} />
+                  <div className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      onClick={() => navigate(ROUTE_PATHS.clientDetail(c.id))}
+                      className="truncate text-left text-[15px] font-semibold text-text-primary hover:text-navy-900 hover:underline"
+                    >
+                      {c.displayName}
+                    </button>
+                    <p className="truncate text-[12.5px] text-text-secondary">
+                      {c.phone || "Tanpa telepon"} · {c.contactCount} kontak · {c.projectCount} project
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
             ))}
           </div>
           <div className="rounded-xl border border-border bg-surface">
-            <Pagination page={page} totalPages={totalPages} totalItems={totalItems} pageSize={pageSize} onPageChange={setPage} />
+            <Pagination page={meta.page} totalPages={meta.totalPages} totalItems={meta.total} pageSize={meta.limit} onPageChange={setPage} />
           </div>
         </>
       )}
 
-      {modalTarget && activeTarget && (modalTarget.mode === "edit" || modalTarget.mode === "replace") && (
-        <ClientContactFormModal
-          key={activeTarget.id}
-          open
-          onClose={() => setModalTarget(null)}
-          onSubmit={(values) => void handleContactSubmit(values)}
-          initialValues={modalTarget.mode === "replace" ? { name: "", phone: "", email: "" } : { name: activeTarget.name, phone: activeTarget.phone, email: activeTarget.email }}
-          username={activeTarget.username}
-          title={modalTarget.mode === "replace" ? "Ganti Wedding Representative" : "Ubah Kontak Client"}
-          description={
-            modalTarget.mode === "replace"
-              ? "Perbarui data wedding representative untuk project ini. Kredensial login yang sudah ada tetap dipakai."
-              : "Perbarui nama dan informasi kontak client."
-          }
-        />
-      )}
-
-      {modalTarget && activeTarget && modalTarget.mode === "reset" && (
-        <ResetCredentialModal client={activeTarget} onClose={() => setModalTarget(null)} onSubmit={(password) => void handleResetSubmit(password)} />
-      )}
-    </div>
-  );
-}
-
-function ResetCredentialModal({
-  client,
-  onClose,
-  onSubmit,
-}: {
-  client: Client;
-  onClose: () => void;
-  onSubmit: (password: string) => void;
-}) {
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  function handleSubmit() {
-    if (password.length < 6) {
-      setError("Password minimal 6 karakter");
-      return;
-    }
-    onSubmit(password);
-  }
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title="Reset Credential"
-      description={`Atur password login baru untuk ${client.name}.`}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>Batal</Button>
-          <Button onClick={handleSubmit}>Reset Password</Button>
-        </>
-      }
-    >
-      <Field label="Password Baru" required hint={error ?? undefined}>
-        <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Minimal 6 karakter" />
-      </Field>
-    </Modal>
-  );
-}
-
-function ProjectClientGroup({
-  project,
-  clients,
-  onEdit,
-  onReplace,
-  onReset,
-  onToggleActive,
-  onDelete,
-}: {
-  project: Project;
-  clients: Client[];
-  onEdit: (id: string) => void;
-  onReplace: (id: string) => void;
-  onReset: (id: string) => void;
-  onToggleActive: (id: string) => void;
-  onDelete: (id: string) => void;
-}) {
-  return (
-    <div className="overflow-hidden rounded-xl border border-border bg-surface">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-light bg-surface-muted/50 px-5 py-3.5">
-        <div>
-          <Link to={ROUTE_PATHS.projectDetail(project.id)} className="font-semibold text-text-primary hover:text-navy-900 hover:underline">
-            {project.name}
-          </Link>
-          <p className="text-[12.5px] text-text-secondary">{formatDate(project.eventDate)} · {project.venue}</p>
-        </div>
-        <ProjectStatusBadge status={project.status} />
-      </div>
-      <div className="divide-y divide-border-light">
-        {clients.map((c) => (
-          <ClientRow
-            key={c.id}
-            client={c}
-            onEdit={() => onEdit(c.id)}
-            onReplace={() => onReplace(c.id)}
-            onReset={() => onReset(c.id)}
-            onToggleActive={() => onToggleActive(c.id)}
-            onDelete={() => onDelete(c.id)}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ClientRow({
-  client: c,
-  onEdit,
-  onReplace,
-  onReset,
-  onToggleActive,
-  onDelete,
-}: {
-  client: Client;
-  onEdit: () => void;
-  onReplace: () => void;
-  onReset: () => void;
-  onToggleActive: () => void;
-  onDelete: () => void;
-}) {
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-
-  return (
-    <div className="px-5 py-3.5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <Avatar name={c.name} />
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-semibold text-text-primary">{c.name}</span>
-              <ClientRoleBadge role={c.role} />
-            </div>
-            <p className="truncate text-[12.5px] text-text-secondary">{c.phone} · {c.email}</p>
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Tambah Client">
+        <div className="flex flex-col gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Mempelai Wanita" htmlFor="client-bride" required>
+              <Input id="client-bride" value={values.brideName} onChange={(e) => setValues({ ...values, brideName: e.target.value })} />
+            </Field>
+            <Field label="Mempelai Pria" htmlFor="client-groom" required>
+              <Input id="client-groom" value={values.groomName} onChange={(e) => setValues({ ...values, groomName: e.target.value })} />
+            </Field>
           </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="text-right">
-            {c.isActive ? <Badge tone="success">Aktif</Badge> : <Badge tone="neutral">Nonaktif</Badge>}
-            <p className="mt-1 text-[11.5px] text-text-secondary">
-              {c.lastCredentialResetAt ? `Reset: ${formatDate(c.lastCredentialResetAt)}` : "Belum pernah direset"}
-            </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Telepon" htmlFor="client-phone">
+              <Input id="client-phone" value={values.phone} onChange={(e) => setValues({ ...values, phone: e.target.value })} />
+            </Field>
+            <Field label="Email" htmlFor="client-email">
+              <Input id="client-email" value={values.email} onChange={(e) => setValues({ ...values, email: e.target.value })} />
+            </Field>
           </div>
-          <div className="flex items-center gap-1.5">
-            <IconActionButton icon={Pencil} label="Ubah Kontak" tone="neutral" onClick={onEdit} />
-            <IconActionButton icon={KeyRound} label="Reset Credential" tone="info" onClick={onReset} />
-            {c.isActive ? (
-              <IconActionButton icon={UserX} label="Nonaktifkan" tone="danger" onClick={onToggleActive} />
-            ) : (
-              <IconActionButton icon={UserCheck} label="Aktifkan" tone="success" onClick={onToggleActive} />
-            )}
-            {c.role === "Family Representative" && (
-              <IconActionButton icon={Repeat} label="Ganti Representative" tone="navy" onClick={onReplace} />
-            )}
-            <IconActionButton icon={Trash2} label="Hapus Client" tone="danger" onClick={() => setConfirmingDelete(true)} />
-          </div>
-        </div>
-      </div>
-
-      {confirmingDelete && (
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger/30 bg-danger-soft px-4 py-3">
-          <span className="flex items-center gap-2 text-[13px] font-medium text-danger">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            Yakin ingin menghapus {c.name}? Tindakan ini permanen — akun login yang terkait (jika ada) ikut dinonaktifkan.
-          </span>
-          <span className="flex shrink-0 gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setConfirmingDelete(false)}>Batal</Button>
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => {
-                onDelete();
-                setConfirmingDelete(false);
-              }}
-            >
-              Ya, Hapus
+          <Field label="Catatan" htmlFor="client-notes">
+            <Textarea id="client-notes" rows={3} value={values.notes} onChange={(e) => setValues({ ...values, notes: e.target.value })} />
+          </Field>
+          {actionError && <p className="text-[13px] text-danger">{actionError}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setCreateOpen(false)}>
+              Batal
             </Button>
-          </span>
+            <Button disabled={busy} onClick={() => void handleCreate()}>
+              {busy ? "Menyimpan..." : "Simpan"}
+            </Button>
+          </div>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }

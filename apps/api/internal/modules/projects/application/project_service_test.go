@@ -64,6 +64,21 @@ func (f *fakeProjectRepo) SetArchived(ctx context.Context, tenantID, id int64, a
 func (f *fakeProjectRepo) DeleteCascade(ctx context.Context, tenantID, id int64) error {
 	panic("not implemented")
 }
+func (f *fakeProjectRepo) CreateSeeded(ctx context.Context, p *domain.Project, milestones []domain.ProjectMilestone) error {
+	panic("not implemented")
+}
+func (f *fakeProjectRepo) ListByClient(ctx context.Context, tenantID, clientID int64) ([]domain.Project, error) {
+	panic("not implemented")
+}
+func (f *fakeProjectRepo) FindByQuotationID(ctx context.Context, tenantID, quotationID int64) (*domain.Project, error) {
+	panic("not implemented")
+}
+func (f *fakeProjectRepo) CountByClients(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64]int, error) {
+	panic("not implemented")
+}
+func (f *fakeProjectRepo) ProjectIDsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]int64, error) {
+	panic("not implemented")
+}
 
 // fakeActivityRepoForProject is a no-op ActivityRepository -- Update always
 // calls s.activity.Record after a successful write, so a real
@@ -539,6 +554,42 @@ func TestUpdateMilestone_StatusInProgress_TidakMemanggilHasForRelated(t *testing
 	}
 }
 
+// Regression: projects.status is a MySQL ENUM — an unknown status used to
+// sail through to repo.Update and come back as a bare 500. Update must
+// reject it with a field-keyed 422.
+func TestProjectServiceUpdate_StatusInvalid_Ditolak422(t *testing.T) {
+	p := baseProject()
+	svc := newProjectServiceForTest(p)
+	input := baseInputFor(p)
+	input.Status = "Confirmed"
+
+	_, err := svc.Update(context.Background(), p.TenantID, p.ID, 99, "Owner", input)
+	var appErr *apperror.AppError
+	if !errors.As(err, &appErr) || appErr.Kind != apperror.KindValidation {
+		t.Fatalf("Update() error = %v, want Validation (status project)", err)
+	}
+	if _, ok := appErr.Fields["status"]; !ok {
+		t.Errorf("error fields = %v, want key %q", appErr.Fields, "status")
+	}
+}
+
+// Same ENUM-at-the-DB hazard for project_milestones.status.
+func TestUpdateMilestone_StatusInvalid_Ditolak422(t *testing.T) {
+	p, m := baseProject(), baseTestMilestone()
+	evidenceRepo := &fakeEvidenceRepoForGuard{hasEvidence: false}
+	svc, _ := newProjectServiceForMilestoneTest(p, m, evidenceRepo)
+	_, err := svc.UpdateMilestone(context.Background(), p.TenantID, p.ID, m.ID, 99, MilestoneUpdateInput{
+		Status: "Confirmed", TargetDate: m.TargetDate,
+	})
+	var appErr *apperror.AppError
+	if !errors.As(err, &appErr) || appErr.Kind != apperror.KindValidation {
+		t.Fatalf("UpdateMilestone() error = %v, want Validation (status timeline)", err)
+	}
+	if _, ok := appErr.Fields["status"]; !ok {
+		t.Errorf("error fields = %v, want key %q", appErr.Fields, "status")
+	}
+}
+
 // --- Blok B: kategori timeline mengalir lewat Create/Update/clone/seed (T-5) ---
 
 func TestCreateMilestone_MenyimpanCategory(t *testing.T) {
@@ -570,28 +621,30 @@ func TestUpdateMilestone_MengosongkanCategory(t *testing.T) {
 	}
 }
 
-func TestCloneMilestonesFrom_MenyalinCategory(t *testing.T) {
-	target := time.Date(2027, 5, 1, 0, 0, 0, 0, time.UTC)
-	milestones := &fakeMilestoneRepo{list: []domain.ProjectMilestone{
-		{ID: 1, Name: "Survei Venue", Category: "Venue", Status: domain.MilestoneCompleted, TargetDate: target},
-		{ID: 2, Name: "Catatan", Category: "", Status: domain.MilestoneCompleted, TargetDate: target},
+func TestBuildSeedMilestones_MenyalinCategory(t *testing.T) {
+	templates := &fakeTemplateRepoForSeed{templates: []domain.ProjectMilestoneTemplate{
+		{Name: "Survei Venue", Category: "Venue", DaysBeforeEvent: 90},
+		{Name: "Hari-H", Category: "", DaysBeforeEvent: 0},
 	}}
-	svc := &ProjectService{milestones: milestones}
-	if err := svc.cloneMilestonesFrom(context.Background(), 10, 20); err != nil {
-		t.Fatalf("cloneMilestonesFrom() error = %v", err)
+	svc := &ProjectService{milestoneTemplates: templates}
+	event := time.Date(2027, 6, 1, 0, 0, 0, 0, time.UTC)
+	prep := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	milestones, err := svc.buildSeedMilestones(context.Background(), 1, event, prep)
+	if err != nil {
+		t.Fatalf("buildSeedMilestones() error = %v", err)
 	}
-	if len(milestones.created) != 2 {
-		t.Fatalf("created = %d, want 2", len(milestones.created))
+	if len(milestones) != 2 {
+		t.Fatalf("milestones = %d, want 2", len(milestones))
 	}
-	if milestones.created[0].Category != "Venue" || milestones.created[1].Category != "" {
-		t.Errorf("Category tidak tersalin: %q, %q", milestones.created[0].Category, milestones.created[1].Category)
+	if milestones[0].Category != "Venue" || milestones[1].Category != "" {
+		t.Errorf("Category template tidak tersalin saat seeding: %+v", milestones)
 	}
-	if milestones.created[0].Status != domain.MilestoneNotStarted {
-		t.Errorf("status klon = %q, want reset ke Not Started", milestones.created[0].Status)
+	if milestones[0].Status != domain.MilestoneNotStarted {
+		t.Errorf("status = %q, want reset ke Not Started", milestones[0].Status)
 	}
 }
 
-// fakeTemplateRepoForSeed backs seedDefaultMilestones -- only List matters.
+// fakeTemplateRepoForSeed backs buildSeedMilestones -- only List matters.
 type fakeTemplateRepoForSeed struct {
 	templates []domain.ProjectMilestoneTemplate
 }
@@ -618,102 +671,33 @@ func (f *fakeTemplateRepoForSeed) Reorder(ctx context.Context, tenantID int64, o
 	panic("not implemented")
 }
 
-func TestSeedDefaultMilestones_MenyalinCategory(t *testing.T) {
-	milestones := &fakeMilestoneRepo{}
-	templates := &fakeTemplateRepoForSeed{templates: []domain.ProjectMilestoneTemplate{
-		{Name: "Survei Venue", Category: "Venue", DaysBeforeEvent: 90},
-		{Name: "Hari-H", Category: "", DaysBeforeEvent: 0},
-	}}
-	svc := &ProjectService{milestones: milestones, milestoneTemplates: templates}
-	event := time.Date(2027, 6, 1, 0, 0, 0, 0, time.UTC)
-	prep := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
-	if err := svc.seedDefaultMilestones(context.Background(), 1, 20, event, prep); err != nil {
-		t.Fatalf("seedDefaultMilestones() error = %v", err)
+// --- Penawaran-client-master: duplikat project dihapus (D12, T3.8) ---
+// Project baru selalu lahir dari penawaran Diterima (CreateFromQuotation);
+// tes duplikasi struktur (Jam Acara dkk) dihapus bersama fiturnya.
+
+// CreateFromQuotation menolak input yang tidak bisa menjadi project bahkan
+// sebelum menyentuh database.
+func TestCreateFromQuotation_TotalNol_Ditolak(t *testing.T) {
+	svc := newProjectServiceForTest(baseProject())
+	_, err := svc.CreateFromQuotation(context.Background(), CreateFromQuotationInput{
+		TenantID: 1, QuotationID: 9, ClientID: 3, ProjectName: "Tes",
+		EventDate:     time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		PrepStartDate: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		ContractValue: 0,
+	})
+	if err == nil {
+		t.Fatal("CreateFromQuotation dengan total 0 berhasil, seharusnya ditolak")
 	}
-	if len(milestones.created) != 2 || milestones.created[0].Category != "Venue" {
-		t.Errorf("Category template tidak tersalin saat seeding: %+v", milestones.created)
-	}
 }
 
-// --- Blok A / T-5: Duplicate menyalin Jam Acara ---
-
-// fakeVendorEngagementRepoForDuplicate hanya perlu ListByProject (mengembalikan
-// nol engagement), sehingga cloneVendorEngagementsFrom berhenti lebih awal dan
-// vendorMilestones tidak pernah tersentuh.
-type fakeVendorEngagementRepoForDuplicate struct{}
-
-func (f *fakeVendorEngagementRepoForDuplicate) ListByProject(ctx context.Context, projectID int64) ([]domain.ProjectVendor, error) {
-	return nil, nil
-}
-func (f *fakeVendorEngagementRepoForDuplicate) ListByProjects(ctx context.Context, projectIDs []int64) ([]domain.ProjectVendor, error) {
-	panic("not implemented")
-}
-func (f *fakeVendorEngagementRepoForDuplicate) FindByID(ctx context.Context, projectID, id int64) (*domain.ProjectVendor, error) {
-	panic("not implemented")
-}
-func (f *fakeVendorEngagementRepoForDuplicate) Create(ctx context.Context, pv *domain.ProjectVendor) error {
-	panic("not implemented")
-}
-func (f *fakeVendorEngagementRepoForDuplicate) Update(ctx context.Context, pv *domain.ProjectVendor) error {
-	panic("not implemented")
-}
-func (f *fakeVendorEngagementRepoForDuplicate) SetStatus(ctx context.Context, projectID, id int64, status domain.EngagementStatus) error {
-	panic("not implemented")
-}
-func (f *fakeVendorEngagementRepoForDuplicate) ListByVendor(ctx context.Context, tenantID, vendorID int64) ([]domain.VendorEngagementHistoryRow, error) {
-	panic("not implemented")
-}
-
-type fakeVendorMilestoneRepoForDuplicate struct{}
-
-func (f *fakeVendorMilestoneRepoForDuplicate) ListByProjectVendor(ctx context.Context, projectVendorID int64) ([]domain.VendorMilestone, error) {
-	panic("not implemented")
-}
-func (f *fakeVendorMilestoneRepoForDuplicate) ListByProjectVendors(ctx context.Context, projectVendorIDs []int64) ([]domain.VendorMilestone, error) {
-	panic("not implemented")
-}
-func (f *fakeVendorMilestoneRepoForDuplicate) FindByID(ctx context.Context, projectVendorID, id int64) (*domain.VendorMilestone, error) {
-	panic("not implemented")
-}
-func (f *fakeVendorMilestoneRepoForDuplicate) Create(ctx context.Context, m *domain.VendorMilestone) error {
-	panic("not implemented")
-}
-func (f *fakeVendorMilestoneRepoForDuplicate) Update(ctx context.Context, m *domain.VendorMilestone) error {
-	panic("not implemented")
-}
-func (f *fakeVendorMilestoneRepoForDuplicate) NextSortOrder(ctx context.Context, projectVendorID int64) (int, error) {
-	panic("not implemented")
-}
-
-// Duplicate membangun domain.Project field-demi-field (T-5) -- menambah kolom
-// tanpa menyentuhnya menghasilkan bug senyap: Jam Acara hilang saat duplikasi.
-func TestDuplicate_MenyalinJamAcara(t *testing.T) {
-	source := baseProject()
-	repo := &fakeProjectRepo{project: source}
-	svc := &ProjectService{
-		repo:              repo,
-		milestones:        &fakeMilestoneRepo{},
-		vendorEngagements: &fakeVendorEngagementRepoForDuplicate{},
-		vendorMilestones:  &fakeVendorMilestoneRepoForDuplicate{},
-		activity:          NewActivityService(&fakeActivityRepoForProject{}),
-	}
-
-	input := baseInputFor(source)
-	input.Name = "Aurelia & Bagas Wedding (Salinan)"
-	input.EventStartTime = strPtr("16:00")
-	input.EventEndTime = strPtr("21:00")
-
-	got, err := svc.Duplicate(context.Background(), source.TenantID, 1, source.ID, input)
-	if err != nil {
-		t.Fatalf("Duplicate() error = %v", err)
-	}
-	if got.EventStartTime == nil || got.EventEndTime == nil {
-		t.Fatalf("Jam Acara hilang saat duplikasi: start=%v end=%v", got.EventStartTime, got.EventEndTime)
-	}
-	if *got.EventStartTime != "16:00" || *got.EventEndTime != "21:00" {
-		t.Errorf("Jam Acara = %q-%q, want 16:00-21:00", *got.EventStartTime, *got.EventEndTime)
-	}
-	if repo.created == nil || repo.created.EventStartTime == nil || *repo.created.EventStartTime != "16:00" {
-		t.Error("Jam Acara tidak ikut ditulis ke repository")
+func TestCreateFromQuotation_TanpaTanggalAcara_Ditolak(t *testing.T) {
+	svc := newProjectServiceForTest(baseProject())
+	_, err := svc.CreateFromQuotation(context.Background(), CreateFromQuotationInput{
+		TenantID: 1, QuotationID: 9, ClientID: 3, ProjectName: "Tes",
+		PrepStartDate: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		ContractValue: 50_000_000,
+	})
+	if err == nil {
+		t.Fatal("CreateFromQuotation tanpa tanggal acara berhasil, seharusnya ditolak")
 	}
 }

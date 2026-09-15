@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, Pencil, CheckCircle2, Ban, Eye, Upload, Download, Trash2, AlertTriangle } from "lucide-react";
+import { Plus, Pencil, CheckCircle2, Ban, Eye, Upload, Download, Trash2 } from "lucide-react";
 import { Card } from "@/shared/components/ui/Card";
 import { Button } from "@/shared/components/ui/Button";
+import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
 import { SearchInput } from "@/shared/components/ui/SearchInput";
 import { Select } from "@/shared/components/ui/Input";
 import { Combobox } from "@/shared/components/ui/Combobox";
@@ -378,40 +379,30 @@ export default function VendorListPage() {
         )}
       </Modal>
 
-      <Modal
+      <ConfirmDialog
         open={deleteTarget !== null}
         onClose={closeDeleteConfirm}
+        onConfirm={() => void handleConfirmDelete()}
         title={deleteTarget ? `Hapus Vendor — ${deleteTarget.name}` : "Hapus Vendor"}
-        size="sm"
-      >
-        {impactLoading ? (
-          <p className="text-[13px] text-text-secondary">Memeriksa penggunaan...</p>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <p className="flex items-start gap-2 text-[13px] text-text-secondary">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
-              {deleteImpact && deleteImpact.length > 0 ? (
-                <span>
-                  Vendor ini masih digunakan oleh project berikut:{" "}
-                  <strong className="text-text-primary">{deleteImpact.map((p) => p.name).join(", ")}</strong>. Jika dihapus, data
-                  vendor pada project tersebut akan kehilangan sumber datanya dan tidak dapat ditelusuri lagi. Apakah Anda yakin ingin
-                  menghapus vendor ini secara permanen?
-                </span>
-              ) : (
-                <span>Data ini akan dihapus secara permanen dan tidak dapat dikembalikan. Apakah Anda yakin?</span>
-              )}
-            </p>
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={closeDeleteConfirm} disabled={isDeleting}>
-                Batal
-              </Button>
-              <Button variant="danger" onClick={() => void handleConfirmDelete()} disabled={isDeleting}>
-                {isDeleting ? "Menghapus..." : "Ya, Hapus Permanen"}
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+        message={
+          impactLoading
+            ? "Memeriksa penggunaan..."
+            : `Yakin ingin menghapus vendor ini secara permanen?`
+        }
+        details={
+          impactLoading ? undefined : deleteImpact && deleteImpact.length > 0 ? (
+            <>
+              Vendor ini masih digunakan oleh project berikut:{" "}
+              <strong className="text-text-primary">{deleteImpact.map((p) => p.name).join(", ")}</strong>. Data vendor pada project tersebut akan kehilangan sumber datanya dan tidak dapat ditelusuri lagi.
+            </>
+          ) : (
+            "Data ini dihapus permanen dan tidak dapat dikembalikan."
+          )
+        }
+        confirmLabel="Ya, Hapus Permanen"
+        busyLabel="Menghapus..."
+        busy={isDeleting || impactLoading}
+      />
 
       {importModalOpen && (
         <ImportBulkModal

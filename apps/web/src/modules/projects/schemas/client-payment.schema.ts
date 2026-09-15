@@ -9,6 +9,22 @@ export const CLIENT_PAYMENT_TYPE_OPTIONS = ["DP", "Termin", "Pelunasan", "Tambah
 // action uploads it as a separate evidence call after the payment is
 // created (see useProjectStore.createClientPayment).
 export const clientPaymentSchema = z.object({
+  // Tagihan yang dilunasi pembayaran ini — "" berarti uang masuk yang memang
+  // tidak punya tagihan (DP sebelum tagihan terbit, pembayaran di luar
+  // termin, Refund).
+  //
+  // Terisi berarti submit-nya BUKAN createClientPayment melainkan
+  // markClientInvoicePaid: endpoint itulah yang selain mencatat uangnya juga
+  // menautkan `client_payment_id` dan mengubah status Tagihan jadi Lunas.
+  // Sekadar menyalin jenis/nominal dari Tagihan lalu tetap memanggil
+  // createClientPayment akan mencatat uangnya sambil meninggalkan Tagihan
+  // berstatus "Belum Dibayar" — dan seseorang akan melunasinya lagi nanti.
+  //
+  // `type`/`amount` di bawah tetap ada dan tetap divalidasi saat invoiceId
+  // terisi: keduanya diisi dari Tagihan yang dipilih supaya form menampilkan
+  // angka yang sebenarnya. Backend memaksanya sekali lagi dari Tagihan
+  // (ClientInvoiceService.MarkPaid), jadi UI tidak pernah jadi otoritas.
+  invoiceId: z.string().optional().default(""),
   type: z.enum(CLIENT_PAYMENT_TYPE_OPTIONS),
   amount: z.coerce.number().positive("Nominal harus lebih dari 0"),
   paymentDate: z.string().min(1, "Tanggal wajib diisi"),

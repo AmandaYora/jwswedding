@@ -1,76 +1,123 @@
 // Package contracts is the ONLY package other modules may import from
-// clients. It exists solely for Fase 6's Client Portal scoping: the
-// `projects` module needs to know which single project a `client` principal
-// is allowed to read, without importing clients' domain/application/
-// infrastructure internals.
+// clients (PLAN penawaran-client-master, T1.9).
+//
+// Setelah Fase 1, `clients` tidak memegang informasi project apa pun —
+// ProjectIDForClient mati bersama client_contacts.project_id. Modul ini
+// menjawab dari tabel miliknya sendiri; relasi client<->project ditanyakan
+// lewat projects (ProjectDirectory), bukan sebaliknya.
 package contracts
 
 import (
 	"context"
 
 	"jwswedding/internal/modules/clients/application"
+	"jwswedding/internal/modules/clients/domain"
 	"jwswedding/internal/shared/apperror"
 )
 
+// ClientActivator adalah port yang dipakai `projects` (D4): tiap kelahiran /
+// penghapusan project menghitung ulang login efektif akun portal client itu.
+type ClientActivator interface {
+	SyncCredentialActive(ctx context.Context, tenantID, clientID int64) error
+}
+
+// ClientDirectory adalah port baca yang dipakai `quotations` (kop PO, daftar
+// Penawaran, dan TTD Penawaran): nama pasangan + telepon dari client_id,
+// tanpa join lintas modul. Batch memakai map[int64][2]string ({bride, groom})
+// — tipe primitif supaya tidak ada impor tipe lintas modul dua arah. Aturan
+// yang sama berlaku untuk method specimen: peran dan sumber sebagai string,
+// gambar sebagai bytes — jangan bocorkan tipe domain.
+type ClientDirectory interface {
+	CoupleNames(ctx context.Context, tenantID, clientID int64) (bride, groom string, err error)
+	CoupleNamesBatch(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64][2]string, error)
+	PhoneForClient(ctx context.Context, tenantID, clientID int64) (string, error)
+	// SaveSpecimen menimpa specimen milik client (D6b/D12). role dan source
+	// string ("Bride"/"Groom"/"Family Representative", "draw"/"upload").
+	SaveSpecimen(ctx context.Context, tenantID, clientID int64, role, signerName string, img []byte, mimeType, source string) error
+	// SpecimenImage mengembalikan bytes gambar specimen untuk dipakai ulang.
+	SpecimenImage(ctx context.Context, tenantID, clientID int64) ([]byte, error)
+	// SpecimenMeta mengembalikan keterangan specimen sebagai
+	// {role, signerName, source, updatedAt} + ada/tidak.
+	SpecimenMeta(ctx context.Context, tenantID, clientID int64) ([4]string, bool, error)
+	// SignerOptions mengembalikan opsi Atas Nama sebagai pasangan
+	// {role, name} — dari clients, bukan client_contacts (T1).
+	SignerOptions(ctx context.Context, tenantID, clientID int64) ([][2]string, error)
+}
+
 type Contracts interface {
-	// ProjectIDForClient resolves the one project a client principal may
-	// read. Returns a NotFound apperror if the client row doesn't exist
-	// (or belongs to a different tenant) — callers should treat any error
-	// here as "deny access", never as "allow".
-	ProjectIDForClient(ctx context.Context, tenantID, clientID int64) (int64, error)
-	// DeleteAllForProject best-effort deletes every client tied to a project
-	// — called by `projects` (ADR-0013's hard delete) via the ClientCleaner
-	// bridge, never awaited to block the project delete itself.
-	DeleteAllForProject(ctx context.Context, tenantID, projectID int64) error
-	// PhoneForProject resolves the phone number shown in the PO Paket's header
-	// box (PLAN.md po-paket-client, blok B1). Returns "" — never an error —
-	// when the project has no client yet or none of them recorded a number, so
-	// a PO stays printable during the window before client accounts exist.
-	//
-	// Deliberately phone ONLY: the name on that header comes from the
-	// project's own BrideName/GroomName, not from this module (PLAN.md §1.6
-	// F7), so widening this to return a name would create a second, competing
-	// source for a field that already has one.
-	PhoneForProject(ctx context.Context, tenantID, projectID int64) (string, error)
+	ClientActivator
+	ClientDirectory
+	// ClientIDForContact memetakan token portal (id kontak) ke master
+	// client-nya — dipakai resolver akses portal di `projects` (T1.10).
+	// Error = tolak akses; akun nonaktif ditolak di sini (D4).
+	ClientIDForContact(ctx context.Context, tenantID, contactID int64) (int64, error)
 }
 
 type impl struct {
-	clients *application.ClientService
+	clients    *application.ClientService
+	signatures *application.ClientSignatureService
 }
 
-func New(clients *application.ClientService) Contracts {
-	return &impl{clients: clients}
+func New(clients *application.ClientService, signatures *application.ClientSignatureService) Contracts {
+	return &impl{clients: clients, signatures: signatures}
 }
 
-func (c *impl) ProjectIDForClient(ctx context.Context, tenantID, clientID int64) (int64, error) {
-	client, err := c.clients.Get(ctx, tenantID, clientID)
+func (c *impl) SyncCredentialActive(ctx context.Context, tenantID, clientID int64) error {
+	return c.clients.SyncCredentialActive(ctx, tenantID, clientID)
+}
+
+func (c *impl) CoupleNames(ctx context.Context, tenantID, clientID int64) (string, string, error) {
+	return c.clients.CoupleNames(ctx, tenantID, clientID)
+}
+
+func (c *impl) CoupleNamesBatch(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64][2]string, error) {
+	return c.clients.CoupleNamesBatch(ctx, tenantID, clientIDs)
+}
+
+func (c *impl) PhoneForClient(ctx context.Context, tenantID, clientID int64) (string, error) {
+	return c.clients.PhoneForClient(ctx, tenantID, clientID)
+}
+
+func (c *impl) SaveSpecimen(ctx context.Context, tenantID, clientID int64, role, signerName string, img []byte, mimeType, source string) error {
+	_, err := c.signatures.SaveSpecimen(ctx, tenantID, clientID,
+		domain.ClientRole(role), signerName, img, mimeType, domain.ClientSignatureSource(source))
+	return err
+}
+
+func (c *impl) SpecimenImage(ctx context.Context, tenantID, clientID int64) ([]byte, error) {
+	return c.signatures.SpecimenImage(ctx, tenantID, clientID)
+}
+
+func (c *impl) SpecimenMeta(ctx context.Context, tenantID, clientID int64) ([4]string, bool, error) {
+	spec, err := c.signatures.Specimen(ctx, tenantID, clientID)
 	if err != nil {
+		return [4]string{}, false, err
+	}
+	if spec == nil {
+		return [4]string{}, false, nil
+	}
+	return [4]string{string(spec.Role), spec.SignerName, string(spec.Source), spec.UpdatedAt.Format("2006-01-02")}, true, nil
+}
+
+func (c *impl) SignerOptions(ctx context.Context, tenantID, clientID int64) ([][2]string, error) {
+	options, err := c.signatures.SignerOptions(ctx, tenantID, clientID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([][2]string, 0, len(options))
+	for _, o := range options {
+		out = append(out, [2]string{string(o.Role), o.Name})
+	}
+	return out, nil
+}
+
+func (c *impl) ClientIDForContact(ctx context.Context, tenantID, contactID int64) (int64, error) {
+	id, err := c.clients.ClientIDForContact(ctx, tenantID, contactID)
+	if err != nil {
+		if appErr, ok := apperror.As(err); ok && appErr.Kind == apperror.KindNotFound {
+			return 0, apperror.Forbidden("Akses ditolak")
+		}
 		return 0, err
 	}
-	if !client.IsActive {
-		return 0, apperror.Forbidden("Akun client ini sudah dinonaktifkan")
-	}
-	return client.ProjectID, nil
-}
-
-func (c *impl) DeleteAllForProject(ctx context.Context, tenantID, projectID int64) error {
-	return c.clients.DeleteAllForProject(ctx, tenantID, projectID)
-}
-
-// PhoneForProject takes the first client on the project that actually recorded
-// a number. A project usually has one client account, and when it has several
-// (bride's side, groom's side) any of their numbers is a valid contact for the
-// document — so this prefers "a real number" over "the first row", which could
-// otherwise be a representative who left the field blank.
-func (c *impl) PhoneForProject(ctx context.Context, tenantID, projectID int64) (string, error) {
-	list, err := c.clients.ListByProject(ctx, tenantID, projectID)
-	if err != nil {
-		return "", err
-	}
-	for _, cl := range list {
-		if cl.Phone != "" {
-			return cl.Phone, nil
-		}
-	}
-	return "", nil
+	return id, nil
 }

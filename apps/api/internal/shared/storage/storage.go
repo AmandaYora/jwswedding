@@ -73,3 +73,19 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 func BuildKey(tenantID, projectID, category, filename string) string {
 	return fmt.Sprintf("jwswedding/upload/%s/%s/%s/%s", tenantID, projectID, category, filename)
 }
+
+// BuildClientSignatureKey adalah kunci objek SPECIMEN tanda tangan milik satu
+// client (TTD Penawaran, D6c/D12): selalu satu objek per client, ditimpa saat
+// ada TTD baru. Ruang nama terpisah dari BuildQuotationSignatureKey dengan
+// sengaja — menyatukannya membuat objek specimen dan objek dokumen bisa
+// bertabrakan, persis yang D6c cegah.
+func BuildClientSignatureKey(tenantID, clientID string) string {
+	return fmt.Sprintf("jwswedding/signature/client/%s/%s/specimen.png", tenantID, clientID)
+}
+
+// BuildQuotationSignatureKey adalah kunci objek SALINAN tanda tangan milik
+// satu dokumen revisi (TTD Penawaran, D6c): disalin saat meneken, tidak pernah
+// menunjuk specimen yang bisa ditimpa atau dihapus.
+func BuildQuotationSignatureKey(tenantID, quotationID string, revision int) string {
+	return fmt.Sprintf("jwswedding/signature/quotation/%s/%s/rev%d.png", tenantID, quotationID, revision)
+}

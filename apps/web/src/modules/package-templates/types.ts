@@ -1,4 +1,5 @@
-// Template Paket + PO Paket (PLAN.md po-paket-client).
+// Template Paket (Harga Standar) — master harga awal penawaran.
+// PO/penawaran sendiri tinggal di modul `quotations` (types-nya sendiri).
 //
 // A block is ONE ROW of the printed PO table, not one item (D20): `body` holds
 // the item list as free text, one per line. That is why the editor is a
@@ -17,21 +18,16 @@ export interface PackageBlock {
   sortOrder: number;
 }
 
-export type PackageTermType = "DP" | "Termin" | "Pelunasan";
-
-export interface PackageTemplateTerm {
-  id: string;
-  sequence: number;
-  label: string;
-  type: PackageTermType;
-  /** Exactly one of percent/fixedAmount is set. */
-  percent: number | null;
-  fixedAmount: number | null;
-  /** Offset in days before the event date; the due date is derived from it. */
-  daysBeforeEvent: number;
-}
-
-export interface PackageTemplate {
+/**
+ * One row of the Template Paket list, and what the project pickers read.
+ *
+ * It carries a COUNT, never the composition: the list endpoint does not send
+ * blocks at all. An editor that needs them loads the template by id
+ * (`getTemplate`) — mirroring `domain.PackageTemplateSummary` on the backend,
+ * for the same reason. Seeding an editor from a list row used to show an empty
+ * composition for a template that had one, and saving from there wiped it.
+ */
+export interface PackageTemplateSummary {
   id: string;
   name: string;
   basePrice: number;
@@ -39,37 +35,10 @@ export interface PackageTemplate {
   defaultBonusNote: string;
   isActive: boolean;
   sortOrder: number;
+  blockCount: number;
+}
+
+/** A single template WITH its composition — what `GET /{id}` returns. */
+export interface PackageTemplate extends Omit<PackageTemplateSummary, "blockCount"> {
   blocks: PackageBlock[];
-  terms: PackageTemplateTerm[];
-}
-
-export type PackageOrderStatus = "Draft" | "Terbit" | "Dibatalkan";
-
-export interface PackageAdjustment {
-  id: string;
-  description: string;
-  /** Signed: negative is a takeout or cashback (D2). */
-  amount: number;
-  sortOrder: number;
-}
-
-export interface PackageOrderTerm extends PackageTemplateTerm {
-  /** This term's share of the current total, computed backend-side. */
-  amount: number;
-}
-
-export interface PackageOrder {
-  /** Empty until the PO is first issued (D26) — never a placeholder. */
-  poNumber: string;
-  revision: number;
-  status: PackageOrderStatus;
-  basePrice: number;
-  termsText: string;
-  bonusNote: string;
-  issuedAt: string | null;
-  blocks: PackageBlock[];
-  adjustments: PackageAdjustment[];
-  termsPlan: PackageOrderTerm[];
-  totalAdjustments: number;
-  total: number;
 }

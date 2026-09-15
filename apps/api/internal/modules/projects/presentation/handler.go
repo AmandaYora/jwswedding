@@ -20,26 +20,18 @@ import (
 )
 
 // ClientAccessResolver is the narrow shape this module needs from `clients`
-// to scope a `client` principal's read access to their own project (Fase 6)
-// — deliberately a local interface (not an import of clients/contracts) so
+// to scope a `client` principal's reads to their own projects (T1.10) —
+// deliberately a local interface (not an import of clients/contracts) so
 // `projects` never has to import `clients`. main.go bridges the two via
 // SetClientAccessResolver once both modules exist (see projects.module.go's
 // two-phase wiring note).
-type ClientAccessResolver interface {
-	ProjectIDForClient(ctx context.Context, tenantID, clientID int64) (int64, error)
-}
-
-// ClientContactResolver is the second narrow shape this module needs from
-// `clients`: the phone number printed on the PO Paket's header box (PLAN.md
-// po-paket-client, blok B1).
 //
-// Deliberately a SEPARATE interface rather than another method on
-// ClientAccessResolver above — that one is a read-access-control concern, and
-// ADR-0013 already set the precedent of splitting rather than overloading it
-// when ClientCleaner was needed. clients.Contracts satisfies both structurally,
-// so main.go bridges the same object into both setters.
-type ClientContactResolver interface {
-	PhoneForProject(ctx context.Context, tenantID, projectID int64) (string, error)
+// The token carries a CONTACT id; the resolver maps it to its master client,
+// and this module lists that client's own projects itself (via
+// projects.client_id) — a client with more than one project (D5) may read
+// exactly those, nothing else.
+type ClientAccessResolver interface {
+	ClientIDForContact(ctx context.Context, tenantID, contactID int64) (int64, error)
 }
 
 type Handler struct {
@@ -58,10 +50,8 @@ type Handler struct {
 	// no dependency back on `projects`, so there's no construction cycle to
 	// break here (unlike ClientAccessResolver/VenueResolver above). See
 	// PLAN.md invoice-kwitansi-client §4.6.
-	platform      platformcontracts.Contracts
-	clientAccess  ClientAccessResolver
-	clientContact ClientContactResolver
-	packageOrders *application.PackageOrderService
+	platform     platformcontracts.Contracts
+	clientAccess ClientAccessResolver
 }
 
 func NewHandler(
@@ -76,13 +66,11 @@ func NewHandler(
 	activity *application.ActivityService,
 	dashboard *application.DashboardService,
 	platform platformcontracts.Contracts,
-	packageOrders *application.PackageOrderService,
 ) *Handler {
 	return &Handler{
 		projects: projects, vendors: vendors, payments: payments, clientPayments: clientPayments,
 		clientInvoices: clientInvoices, venuePayments: venuePayments,
 		issues: issues, evidence: evidence, activity: activity, dashboard: dashboard, platform: platform,
-		packageOrders: packageOrders,
 	}
 }
 
@@ -94,23 +82,22 @@ func (h *Handler) SetClientAccessResolver(resolver ClientAccessResolver) {
 	h.clientAccess = resolver
 }
 
-// SetClientContactResolver is the twin of SetClientAccessResolver, bridged
-// from the same clients.Contracts object in main.go.
-func (h *Handler) SetClientContactResolver(resolver ClientContactResolver) {
-	h.clientContact = resolver
-}
-
-// resolveClientPhone degrades to "" on any failure. A missing phone must never
-// stop a PO from printing — the header simply shows a dash.
-func (h *Handler) resolveClientPhone(ctx context.Context, tenantID, projectID int64) string {
-	if h.clientContact == nil {
-		return ""
+// clientProjectIDs resolves the contact in the token to its master client,
+// then to that client's own project ids. Any failure (or zero projects) is
+// "deny" — never "allow".
+func (h *Handler) clientProjectIDs(ctx context.Context, tenantID, contactID int64) ([]int64, bool) {
+	if h.clientAccess == nil {
+		return nil, false
 	}
-	phone, err := h.clientContact.PhoneForProject(ctx, tenantID, projectID)
-	if err != nil {
-		return ""
+	clientID, err := h.clientAccess.ClientIDForContact(ctx, tenantID, contactID)
+	if err != nil || clientID == 0 {
+		return nil, false
 	}
-	return phone
+	ids, err := h.projects.ProjectIDsForClient(ctx, tenantID, clientID)
+	if err != nil || len(ids) == 0 {
+		return nil, false
+	}
+	return ids, true
 }
 
 func (h *Handler) Collection(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +109,9 @@ func (h *Handler) Collection(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		h.listProjects(w, r, claims)
 	case http.MethodPost:
-		h.createProject(w, r, claims)
+		// D11: project baru SELALU lahir dari penawaran Diterima — pintu
+		// manual ditutup (410, bukan 404: rutenya dikenal, metodenya pensiun).
+		response.Error(w, http.StatusGone, "Project baru hanya lahir dari penawaran yang diterima. Buat penawaran dulu di menu Penawaran, lalu terima untuk membuat project.", nil)
 	default:
 		response.Error(w, http.StatusMethodNotAllowed, "Metode HTTP tidak diizinkan untuk endpoint ini", nil)
 	}
@@ -160,7 +149,7 @@ func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case len(rest) == 0 && r.Method == http.MethodGet:
-		h.getProject(w, r, claims.tenantID, projectID)
+		h.getProject(w, r, claims, projectID)
 	case len(rest) == 0 && r.Method == http.MethodPatch:
 		h.updateProject(w, r, claims, projectID)
 	case len(rest) == 0 && r.Method == http.MethodDelete:
@@ -169,8 +158,8 @@ func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 		h.cancelProject(w, r, claims, projectID)
 	case len(rest) == 1 && rest[0] == "toggle-archive" && r.Method == http.MethodPost:
 		h.toggleArchiveProject(w, r, claims, projectID)
-	case len(rest) == 1 && rest[0] == "duplicate" && r.Method == http.MethodPost:
-		h.duplicateProject(w, r, claims, projectID)
+	case len(rest) == 1 && rest[0] == "delete-impact" && r.Method == http.MethodGet:
+		h.projectDeleteImpact(w, r, claims, projectID)
 	case len(rest) == 1 && rest[0] == "milestones" && r.Method == http.MethodGet:
 		h.listMilestones(w, r, claims.tenantID, projectID)
 	case len(rest) == 1 && rest[0] == "milestones" && r.Method == http.MethodPost:
@@ -225,29 +214,6 @@ func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 		h.unmarkClientInvoicePaid(w, r, claims, projectID, rest[1])
 	case len(rest) == 3 && rest[0] == "client-invoices" && rest[2] == "pdf" && r.Method == http.MethodGet:
 		h.downloadClientInvoicePDF(w, r, claims, projectID, rest[1])
-	// PO Paket (PLAN.md po-paket-client). GET is open to every principal that
-	// can read the project -- clients included, it is the document they signed.
-	// Every write below gates on isOwnerOrAdmin inside its own handler (D18).
-	case len(rest) == 1 && rest[0] == "package-order" && r.Method == http.MethodGet:
-		h.getPackageOrder(w, r, claims, projectID)
-	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "apply-template" && r.Method == http.MethodPost:
-		h.applyPackageTemplate(w, r, claims, projectID)
-	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "start-blank" && r.Method == http.MethodPost:
-		h.startBlankPackageOrder(w, r, claims, projectID)
-	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "header" && r.Method == http.MethodPut:
-		h.updatePackageHeader(w, r, claims, projectID)
-	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "blocks" && r.Method == http.MethodPut:
-		h.replacePackageBlocks(w, r, claims, projectID)
-	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "adjustments" && r.Method == http.MethodPut:
-		h.replacePackageAdjustments(w, r, claims, projectID)
-	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "issue" && r.Method == http.MethodPost:
-		h.issuePackageOrder(w, r, claims, projectID)
-	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "revise" && r.Method == http.MethodPost:
-		h.revisePackageOrder(w, r, claims, projectID)
-	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "cancel" && r.Method == http.MethodPost:
-		h.cancelPackageOrder(w, r, claims, projectID)
-	case len(rest) == 2 && rest[0] == "package-order" && rest[1] == "pdf" && r.Method == http.MethodGet:
-		h.downloadPackageOrderPDF(w, r, claims, projectID)
 	case len(rest) == 1 && rest[0] == "venue-payments" && r.Method == http.MethodGet:
 		h.listVenuePayments(w, r, projectID)
 	case len(rest) == 1 && rest[0] == "venue-payments" && r.Method == http.MethodPost:
@@ -325,15 +291,15 @@ func requireStaff(w http.ResponseWriter, r *http.Request) (staffClaims, bool) {
 // ("Staff" role) is additionally scoped to only the project they're PIC of,
 // and a Sales staff member is likewise scoped to only the project they're
 // PIC Sales of (PICSalesStaffID) — checked once here, since every
-// sub-resource under /projects/{id}/... (milestones, vendor engagements,
-// issues, evidence, payments, client-payments, venue-payments, activity,
-// venue) already funnels through this same function, so none of these
-// roles can reach another tenant's — or another project's — data by
-// guessing its numeric ID. A client principal only ever gets a synthetic
-// staffClaims with staffID/role left zero-valued — safe because every write
-// branch in Item requires POST/PATCH, which this function already rejects
-// for clients before the big switch is ever reached, so those zero values
-// are never read.
+// sub-resource under /projects/{id}/... already funnels through this same
+// function. A client principal only ever gets a synthetic staffClaims with
+// staffID/role left zero-valued — safe because every write branch in Item
+// requires POST/PATCH/PUT/DELETE, which this function already rejects for
+// clients before the big switch is ever reached.
+//
+// A client may own MORE than one project (D5): the token's contact resolves
+// to its master client, and access is granted iff projectID is one of that
+// client's own projects (T1.10).
 func (h *Handler) resolveProjectAccess(w http.ResponseWriter, r *http.Request, projectID int64) (staffClaims, bool) {
 	claims, ok := middleware.FromContext(r.Context())
 	if !ok {
@@ -372,17 +338,24 @@ func (h *Handler) resolveProjectAccess(w http.ResponseWriter, r *http.Request, p
 			response.Error(w, http.StatusForbidden, "Akun ini tidak terikat ke tenant manapun", nil)
 			return staffClaims{}, false
 		}
-		clientID, err := strconv.ParseInt(claims.PrincipalID, 10, 64)
+		contactID, err := strconv.ParseInt(claims.PrincipalID, 10, 64)
 		if err != nil {
 			response.Error(w, http.StatusForbidden, "Identitas client tidak valid", nil)
 			return staffClaims{}, false
 		}
-		if h.clientAccess == nil {
-			response.Error(w, http.StatusForbidden, "Akses client belum dikonfigurasi", nil)
+		allowedIDs, ok := h.clientProjectIDs(r.Context(), tenantID, contactID)
+		if !ok {
+			response.Error(w, http.StatusForbidden, "Anda tidak memiliki akses ke project ini", nil)
 			return staffClaims{}, false
 		}
-		allowedProjectID, err := h.clientAccess.ProjectIDForClient(r.Context(), tenantID, clientID)
-		if err != nil || allowedProjectID != projectID {
+		allowed := false
+		for _, id := range allowedIDs {
+			if id == projectID {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
 			response.Error(w, http.StatusForbidden, "Anda tidak memiliki akses ke project ini", nil)
 			return staffClaims{}, false
 		}

@@ -19,17 +19,18 @@ func NewMySQLProjectRepository(db *sql.DB) *MySQLProjectRepository {
 	return &MySQLProjectRepository{db: db}
 }
 
-const projectColumns = `id, tenant_id, name, bride_name, groom_name, event_date, event_start_time, event_end_time, pax, venue, venue_id, venue_rental_price, venue_charge,
+const projectColumns = `id, tenant_id, client_id, quotation_id, name, bride_name, groom_name, event_date, event_start_time, event_end_time, pax, venue, venue_id, venue_rental_price, venue_charge,
 	prep_start_date, package_name, contract_value, status, pic_staff_id, pic_sales_staff_id, description, is_archived, created_at, updated_at`
 
 func scanProject(scan func(dest ...interface{}) error) (*domain.Project, error) {
 	var p domain.Project
 	var status string
 	var description sql.NullString
+	var clientID, quotationID sql.NullInt64
 	var venueID sql.NullInt64
 	var venueRentalPrice, venueCharge sql.NullInt64
 	var eventStartTime, eventEndTime sql.NullString
-	err := scan(&p.ID, &p.TenantID, &p.Name, &p.BrideName, &p.GroomName, &p.EventDate, &eventStartTime, &eventEndTime, &p.Pax, &p.Venue, &venueID, &venueRentalPrice, &venueCharge,
+	err := scan(&p.ID, &p.TenantID, &clientID, &quotationID, &p.Name, &p.BrideName, &p.GroomName, &p.EventDate, &eventStartTime, &eventEndTime, &p.Pax, &p.Venue, &venueID, &venueRentalPrice, &venueCharge,
 		&p.PrepStartDate, &p.PackageName, &p.ContractValue, &status, &p.PICStaffID, &p.PICSalesStaffID, &description, &p.IsArchived, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -39,6 +40,12 @@ func scanProject(scan func(dest ...interface{}) error) (*domain.Project, error) 
 	}
 	p.Status = domain.ProjectStatus(status)
 	p.Description = description.String
+	if clientID.Valid {
+		p.ClientID = clientID.Int64
+	}
+	if quotationID.Valid {
+		p.QuotationID = quotationID.Int64
+	}
 	if venueID.Valid {
 		p.VenueID = &venueID.Int64
 	}
@@ -302,10 +309,10 @@ func (r *MySQLProjectRepository) FindByID(ctx context.Context, tenantID, id int6
 
 func (r *MySQLProjectRepository) Create(ctx context.Context, p *domain.Project) error {
 	result, err := r.db.ExecContext(ctx,
-		`INSERT INTO projects (tenant_id, name, bride_name, groom_name, event_date, event_start_time, event_end_time, pax, venue, prep_start_date,
+		`INSERT INTO projects (tenant_id, client_id, quotation_id, name, bride_name, groom_name, event_date, event_start_time, event_end_time, pax, venue, prep_start_date,
 		 package_name, contract_value, status, pic_staff_id, pic_sales_staff_id, description)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.TenantID, p.Name, p.BrideName, p.GroomName, p.EventDate, p.EventStartTime, p.EventEndTime, p.Pax, p.Venue, p.PrepStartDate,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.TenantID, nullInt(p.ClientID), nullInt(p.QuotationID), p.Name, p.BrideName, p.GroomName, p.EventDate, p.EventStartTime, p.EventEndTime, p.Pax, p.Venue, p.PrepStartDate,
 		p.PackageName, p.ContractValue, string(p.Status), p.PICStaffID, p.PICSalesStaffID, p.Description,
 	)
 	if err != nil {
@@ -330,6 +337,108 @@ func (r *MySQLProjectRepository) Update(ctx context.Context, p *domain.Project) 
 	return err
 }
 
+// nullInt maps the 0 sentinel ("belum ada relasi") to SQL NULL — client_id
+// and quotation_id are NULL-able precisely so pre-cutover rows and
+// not-yet-linked rows stay distinguishable from a real id.
+func nullInt(id int64) interface{} {
+	if id == 0 {
+		return nil
+	}
+	return id
+}
+
+// ListByClient backs ProjectDirectory (T1.7): every project of one client —
+// the only join-free way to answer "client ini punya project apa saja".
+func (r *MySQLProjectRepository) ListByClient(ctx context.Context, tenantID, clientID int64) ([]domain.Project, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT `+projectColumns+` FROM projects WHERE tenant_id = ? AND client_id = ? ORDER BY event_date DESC, id DESC`, tenantID, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var projects []domain.Project
+	for rows.Next() {
+		p, err := scanProject(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		projects = append(projects, *p)
+	}
+	return projects, rows.Err()
+}
+
+// FindByQuotationID backs Accept idempotency (T3.2): a retry after a partial
+// failure finds the already-born project instead of making a second one.
+func (r *MySQLProjectRepository) FindByQuotationID(ctx context.Context, tenantID, quotationID int64) (*domain.Project, error) {
+	row := r.db.QueryRowContext(ctx, `SELECT `+projectColumns+` FROM projects WHERE tenant_id = ? AND quotation_id = ? LIMIT 1`, tenantID, quotationID)
+	return scanProject(row.Scan)
+}
+
+// CountByClients menjawab hitungan project per client untuk satu halaman
+// daftar Client — satu query agregat, bukan N+1.
+func (r *MySQLProjectRepository) CountByClients(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64]int, error) {
+	out := make(map[int64]int, len(clientIDs))
+	if len(clientIDs) == 0 {
+		return out, nil
+	}
+	query := `SELECT client_id, COUNT(*) FROM projects WHERE tenant_id = ? AND client_id IN (`
+	args := []interface{}{tenantID}
+	for i, id := range clientIDs {
+		if i > 0 {
+			query += `,`
+		}
+		query += `?`
+		args = append(args, id)
+	}
+	query += `) GROUP BY client_id`
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
+// ProjectIDsForQuotations memetakan penawaran ke project-nya untuk satu
+// halaman daftar Penawaran — satu query atas UNIQUE(quotation_id), bukan N+1.
+func (r *MySQLProjectRepository) ProjectIDsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]int64, error) {
+	out := make(map[int64]int64, len(quotationIDs))
+	if len(quotationIDs) == 0 {
+		return out, nil
+	}
+	query := `SELECT quotation_id, id FROM projects WHERE tenant_id = ? AND quotation_id IN (`
+	args := []interface{}{tenantID}
+	for i, id := range quotationIDs {
+		if i > 0 {
+			query += `,`
+		}
+		query += `?`
+		args = append(args, id)
+	}
+	query += `)`
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var qid, pid int64
+		if err := rows.Scan(&qid, &pid); err != nil {
+			return nil, err
+		}
+		out[qid] = pid
+	}
+	return out, rows.Err()
+}
+
 func (r *MySQLProjectRepository) SetStatus(ctx context.Context, tenantID, id int64, status domain.ProjectStatus) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE projects SET status = ? WHERE tenant_id = ? AND id = ?`, string(status), tenantID, id)
 	return err
@@ -338,6 +447,57 @@ func (r *MySQLProjectRepository) SetStatus(ctx context.Context, tenantID, id int
 func (r *MySQLProjectRepository) SetArchived(ctx context.Context, tenantID, id int64, archived bool) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE projects SET is_archived = ? WHERE tenant_id = ? AND id = ?`, archived, tenantID, id)
 	return err
+}
+
+// CreateSeeded menyisipkan project + Timeline Default dalam SATU transaksi
+// (jalur Accept, T3.2). Bentuk INSERT tiap tabel disalin dari Create milik
+// repo masing-masing (lihat Create di atas dan sisipan milestone di bawah) —
+// bila salah satunya berubah, perbarui juga di sini; TestAccept_* mengunci
+// perilakunya dari sisi service.
+//
+// Tagihan TIDAK lagi ikut disemai: rencana termin di penawaran dihapus, jadi
+// tidak ada jadwal yang bisa diterjemahkan menjadi tagihan. Project lahir
+// tanpa tagihan sama sekali, dan staff menerbitkannya sendiri sesuai cicilan
+// yang benar-benar disepakati.
+//
+// Penomoran milestone dihitung pemanggil SEBELUM transaksi — di dalam satu
+// Accept sekuensial tidak ada penulis lain yang bisa menyela, dan tabrakan
+// sisa (pekerja konkuren) ditangani idempotensi FindByQuotationID di sisi
+// service.
+func (r *MySQLProjectRepository) CreateSeeded(ctx context.Context, p *domain.Project, milestones []domain.ProjectMilestone) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx,
+		`INSERT INTO projects (tenant_id, client_id, quotation_id, name, bride_name, groom_name, event_date, event_start_time, event_end_time, pax, venue, venue_id, venue_rental_price, venue_charge, prep_start_date,
+		 package_name, contract_value, status, pic_staff_id, pic_sales_staff_id, description)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.TenantID, nullInt(p.ClientID), nullInt(p.QuotationID), p.Name, p.BrideName, p.GroomName, p.EventDate, p.EventStartTime, p.EventEndTime, p.Pax, p.Venue, p.VenueID, p.VenueRentalPrice, p.VenueCharge, p.PrepStartDate,
+		p.PackageName, p.ContractValue, string(p.Status), p.PICStaffID, p.PICSalesStaffID, p.Description,
+	)
+	if err != nil {
+		return err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	p.ID = id
+
+	for i := range milestones {
+		m := &milestones[i]
+		m.ProjectID = id
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO project_milestones (project_id, sort_order, name, category, status, target_date) VALUES (?, ?, ?, ?, ?, ?)`,
+			id, m.SortOrder, m.Name, m.Category, string(m.Status), m.TargetDate,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // DeleteCascade permanently removes a project and every row across this
@@ -374,21 +534,6 @@ func (r *MySQLProjectRepository) DeleteCascade(ctx context.Context, tenantID, id
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM client_payments WHERE project_id = ?`, id); err != nil {
-		return err
-	}
-	// The three PO Paket tables (migrations 000053/000054) each carry an FK to
-	// projects, so all three must go before the final delete below or it fails
-	// FK 1451 for any project that ever had a PO -- the same trap
-	// venue_payments fell into. project_package_orders is unconditional: a
-	// project may hold a PO row while still having no blocks at all (the
-	// StartBlank path).
-	if _, err := tx.ExecContext(ctx, `DELETE FROM project_package_blocks WHERE project_id = ?`, id); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM project_package_adjustments WHERE project_id = ?`, id); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM project_package_orders WHERE project_id = ?`, id); err != nil {
 		return err
 	}
 	// venue_payments has fk_venue_payments_project

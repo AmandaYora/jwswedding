@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, AlertTriangle } from "lucide-react";
+import { Plus, Pencil, Trash2, ArrowUp, ArrowDown } from "lucide-react";
 import { Card, CardHeader, CardContent } from "@/shared/components/ui/Card";
 import { Button } from "@/shared/components/ui/Button";
+import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
 import { Table, THead, TBody, TR, TH, TD } from "@/shared/components/ui/Table";
 import { CardList, CardListField } from "@/shared/components/ui/CardList";
 import { EmptyState } from "@/shared/components/feedback/EmptyState";
@@ -113,18 +114,19 @@ export default function MilestoneTemplateListPage() {
             <p className="mb-3 rounded-md border border-danger/30 bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger">{actionError}</p>
           )}
 
-          {confirmingTemplate && (
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger/30 bg-danger-soft px-4 py-3">
-              <span className="flex items-center gap-2 text-[13px] font-medium text-danger">
-                <AlertTriangle className="h-4 w-4 shrink-0" />
-                Yakin ingin menghapus "{confirmingTemplate.name}"? Project yang sudah dibuat tidak akan terpengaruh.
-              </span>
-              <span className="flex shrink-0 gap-2">
-                <Button variant="secondary" size="sm" onClick={() => setConfirmingDeleteId(null)}>Batal</Button>
-                <Button variant="danger" size="sm" onClick={() => void handleDelete(confirmingTemplate.id)}>Ya, Hapus</Button>
-              </span>
-            </div>
-          )}
+          <ConfirmDialog
+            open={confirmingTemplate !== undefined}
+            onClose={() => setConfirmingDeleteId(null)}
+            onConfirm={() => confirmingTemplate && void handleDelete(confirmingTemplate.id)}
+            title="Hapus Timeline Default"
+            message={
+              <>
+                Yakin ingin menghapus <strong>{confirmingTemplate?.name}</strong>?
+              </>
+            }
+            details="Project yang sudah dibuat tidak akan terpengaruh — timeline default hanya dipakai saat project baru lahir."
+            confirmLabel="Ya, Hapus"
+          />
 
           {templates.length === 0 ? (
             <EmptyState

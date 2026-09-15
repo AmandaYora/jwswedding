@@ -85,12 +85,17 @@ func columnExists(t *testing.T, url, table, column string) bool {
 	return n > 0
 }
 
-// TestMigrations_UpDownUp rolls the four PO Paket migrations (000052-000055)
-// back one step at a time and then forward again.
+// TestMigrations_UpDownUp rolls the PO Paket migrations (000052-000055), the
+// penawaran-client-master migrations (000056-000063), 000064 (drop of the
+// payment-schedule feature), 000065 (quotations.package_name), and the TTD
+// Penawaran migrations (000066 client_signatures, 000067
+// quotation_signature_links) back one step at a time and then forward again.
 //
 // The rollback order matters and is the part most likely to break: the three
-// project_package_* tables carry FKs to `projects`, and the template tables
-// carry FKs to each other, so a DROP in the wrong order fails on a constraint.
+// project_package_* tables carry FKs to `projects`, the quotation_* tables
+// carry FKs to `quotations`, the template tables carry FKs to each other, and
+// 000059/000062 drop columns other steps added — so a DROP in the wrong order
+// fails on a constraint.
 func TestMigrations_UpDownUp(t *testing.T) {
 	url := setupRoundTripDB(t)
 
@@ -98,19 +103,54 @@ func TestMigrations_UpDownUp(t *testing.T) {
 		t.Fatalf("migrate up awal: %v", err)
 	}
 	for _, table := range []string{
-		"package_templates", "package_template_blocks", "package_template_terms",
-		"project_package_blocks", "project_package_adjustments", "project_package_orders",
+		"package_templates", "package_template_blocks",
+		"clients", "client_contacts", "quotations", "quotation_blocks", "quotation_adjustments",
 	} {
 		if !tableExists(t, url, table) {
 			t.Fatalf("setelah up, tabel %s tidak ada", table)
 		}
 	}
-	if !columnExists(t, url, "projects", "pax") {
-		t.Fatal("setelah up, kolom projects.pax tidak ada")
+	// 000064 membuang fitur rencana termin sepenuhnya.
+	if tableExists(t, url, "package_template_terms") {
+		t.Fatal("setelah up, tabel package_template_terms masih ada")
+	}
+	if columnExists(t, url, "quotations", "terms_plan_json") {
+		t.Fatal("setelah up, kolom quotations.terms_plan_json masih ada")
+	}
+	// 000065: nama paket jadi milik penawaran.
+	if !columnExists(t, url, "quotations", "package_name") {
+		t.Fatal("setelah up, kolom quotations.package_name tidak ada")
+	}
+	// 000066/000067 (TTD Penawaran): specimen + link tanda tangan.
+	for _, table := range []string{"client_signatures", "quotation_signature_links"} {
+		if !tableExists(t, url, table) {
+			t.Fatalf("setelah up, tabel %s tidak ada", table)
+		}
+	}
+	// 000062 dropped the old composition tables at the end of the chain.
+	for _, table := range []string{
+		"project_package_blocks", "project_package_adjustments", "project_package_orders",
+	} {
+		if tableExists(t, url, table) {
+			t.Fatalf("setelah up, tabel lama %s masih ada", table)
+		}
+	}
+	for _, col := range [][2]string{
+		{"projects", "pax"},
+		{"projects", "client_id"},
+		{"projects", "quotation_id"},
+		{"client_contacts", "client_id"},
+	} {
+		if !columnExists(t, url, col[0], col[1]) {
+			t.Fatalf("setelah up, kolom %s.%s tidak ada", col[0], col[1])
+		}
+	}
+	if columnExists(t, url, "client_contacts", "project_id") {
+		t.Fatal("setelah up, kolom client_contacts.project_id masih ada")
 	}
 
-	// Roll back the four PO Paket steps: 000055, 000054, 000053, 000052.
-	for i := 0; i < 4; i++ {
+	// Roll back the sixteen steps: 000067 down to 000052.
+	for i := 0; i < 16; i++ {
 		if err := migrator.Down(url); err != nil {
 			t.Fatalf("migrate down langkah ke-%d: %v", i+1, err)
 		}
@@ -119,13 +159,32 @@ func TestMigrations_UpDownUp(t *testing.T) {
 	if columnExists(t, url, "projects", "pax") {
 		t.Error("setelah down, kolom projects.pax masih ada")
 	}
+	if columnExists(t, url, "projects", "client_id") {
+		t.Error("setelah down, kolom projects.client_id masih ada")
+	}
+	if columnExists(t, url, "projects", "quotation_id") {
+		t.Error("setelah down, kolom projects.quotation_id masih ada")
+	}
+	if columnExists(t, url, "quotations", "package_name") {
+		t.Error("setelah down, kolom quotations.package_name masih ada")
+	}
 	for _, table := range []string{
 		"package_templates", "package_template_blocks", "package_template_terms",
 		"project_package_blocks", "project_package_adjustments", "project_package_orders",
+		"quotations", "quotation_blocks", "quotation_adjustments", "client_contacts",
+		"client_signatures", "quotation_signature_links",
 	} {
 		if tableExists(t, url, table) {
 			t.Errorf("setelah down, tabel %s masih ada", table)
 		}
+	}
+	// 000056's down renames client_contacts back to clients — the original
+	// table must be back.
+	if !tableExists(t, url, "clients") {
+		t.Error("setelah down, tabel clients tidak kembali")
+	}
+	if !columnExists(t, url, "clients", "project_id") {
+		t.Error("setelah down, kolom clients.project_id tidak kembali")
 	}
 	// The pre-existing schema must survive the rollback untouched — a down
 	// migration that takes a neighbouring table with it is worse than one that
@@ -142,7 +201,94 @@ func TestMigrations_UpDownUp(t *testing.T) {
 	if !columnExists(t, url, "projects", "pax") {
 		t.Error("setelah up ulang, kolom projects.pax tidak kembali")
 	}
-	if !tableExists(t, url, "project_package_orders") {
-		t.Error("setelah up ulang, project_package_orders tidak kembali")
+	if !columnExists(t, url, "projects", "client_id") {
+		t.Error("setelah up ulang, kolom projects.client_id tidak kembali")
 	}
+	if !columnExists(t, url, "projects", "quotation_id") {
+		t.Error("setelah up ulang, kolom projects.quotation_id tidak kembali")
+	}
+	if !tableExists(t, url, "quotations") {
+		t.Error("setelah up ulang, quotations tidak kembali")
+	}
+	if !tableExists(t, url, "client_contacts") {
+		t.Error("setelah up ulang, client_contacts tidak kembali")
+	}
+	for _, table := range []string{
+		"project_package_blocks", "project_package_adjustments", "project_package_orders",
+	} {
+		if tableExists(t, url, table) {
+			t.Errorf("setelah up ulang, tabel lama %s kembali ada", table)
+		}
+	}
+}
+
+// TestMigrations_RollbackDenganData menutup celah yang membuat rollback
+// 000061 lolos selama ini: TestMigrations_UpDownUp menjalankan turun-naik pada
+// skema KOSONG, sehingga `DELETE FROM quotations` tidak pernah menabrak satu
+// baris anak pun.
+//
+// Dengan data, urutannya jadi menentukan: 000063.down mencabut ON DELETE
+// CASCADE lebih dulu, jadi 000061.down yang mengandalkan cascade akan mati
+// dengan FK 1451 — persis di jalur mundur yang paling dibutuhkan kalau cutover
+// harus dibatalkan.
+func TestMigrations_RollbackDenganData(t *testing.T) {
+	url := setupRoundTripDB(t)
+
+	if err := migrator.Up(url); err != nil {
+		t.Fatalf("migrate up awal: %v", err)
+	}
+
+	db, err := sql.Open("mysql", roundTripDSN())
+	if err != nil {
+		t.Fatalf("buka db uji: %v", err)
+	}
+	defer db.Close()
+
+	res, err := db.Exec(`INSERT INTO quotations
+		(tenant_id, client_id, revision, status, base_price, terms_text, bonus_note, pax, created_by_staff_id)
+		VALUES (1, 1, 0, 'Ditawarkan', 150000000, 'S&K', 'Bonus', 700, 1)`)
+	if err != nil {
+		t.Fatalf("seed quotation: %v", err)
+	}
+	quotationID, _ := res.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO quotation_blocks
+		(quotation_id, category, body, qty_text, bonus_note, sort_order)
+		VALUES (?, 'CATERING', 'BUFFET', '700 PORSI', '', 1)`, quotationID); err != nil {
+		t.Fatalf("seed blok: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO quotation_adjustments
+		(quotation_id, description, amount, sort_order)
+		VALUES (?, 'Takeout busana', -1500000, 1)`, quotationID); err != nil {
+		t.Fatalf("seed penyesuaian: %v", err)
+	}
+
+	// Turun melewati 000063 (cabut cascade), 000062 (bangun ulang tabel lama),
+	// lalu 000061 (buang hasil salinan) — dengan tabel yang berisi.
+	if err := migrator.To(url, 60); err != nil {
+		t.Fatalf("rollback ke 000060 dengan data gagal: %v", err)
+	}
+
+	var sisa int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM quotations`).Scan(&sisa); err != nil {
+		t.Fatalf("hitung quotations: %v", err)
+	}
+	if sisa != 0 {
+		t.Errorf("quotations tersisa %d setelah rollback, mau 0", sisa)
+	}
+	var anak int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM quotation_blocks`).Scan(&anak); err != nil {
+		t.Fatalf("hitung quotation_blocks: %v", err)
+	}
+	if anak != 0 {
+		t.Errorf("quotation_blocks tersisa %d setelah rollback, mau 0", anak)
+	}
+
+	// Dan masih bisa maju lagi setelahnya.
+	if err := migrator.Up(url); err != nil {
+		t.Fatalf("migrate up kembali setelah rollback: %v", err)
+	}
+}
+
+func roundTripDSN() string {
+	return fmt.Sprintf("root:@tcp(127.0.0.1:3306)/%s?multiStatements=true&parseTime=true", roundTripDB)
 }

@@ -5,6 +5,7 @@ export * from "./Input";
 export * from "./Combobox";
 export * from "./SearchInput";
 export * from "./Modal";
+export * from "./ConfirmDialog";
 export * from "./Avatar";
 export * from "./StatCard";
 export * from "./MilestoneRail";

@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { CheckCircle2, HeartHandshake } from "lucide-react";
-import { EvidenceViewerModal } from "@/shared/components/ui/EvidenceViewerModal";
+import { ClientEvidenceViewerModal } from "@/modules/client-portal/components/ClientEvidenceViewerModal";
 import { IssueCard } from "@/modules/client-portal/components/IssueCard";
+import { PortalEmpty, PortalError, PortalLoading } from "@/modules/client-portal/components/PortalState";
+import { usePortalSections } from "@/modules/client-portal/hooks/usePortalSections";
 import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
 import { useVendorStore } from "@/modules/vendors/stores/useVendorStore";
 import type { Evidence } from "@/modules/projects/types";
@@ -14,9 +16,6 @@ export default function KendalaTabPage() {
   const evidence = useProjectStore((s) => s.evidence);
   const vendorEngagements = useProjectStore((s) => s.vendorEngagements);
   const vendorMilestones = useProjectStore((s) => s.vendorMilestones);
-  const fetchIssues = useProjectStore((s) => s.fetchIssues);
-  const fetchEvidence = useProjectStore((s) => s.fetchEvidence);
-  const fetchVendorSection = useProjectStore((s) => s.fetchVendorSection);
   // Public-safe {id, name} only (ADR-0016-style split) -- GET /vendors is
   // staff-only and 403s for a client principal; useVendorStore.vendors'
   // own doc comment already flags this ("Client Portal must use
@@ -25,12 +24,14 @@ export default function KendalaTabPage() {
   const fetchVendorSummaries = useVendorStore((s) => s.fetchVendorSummaries);
   const [viewingEvidence, setViewingEvidence] = useState<Evidence | null>(null);
 
+  const { loading, error, reload } = usePortalSections(projectId, ["issues", "evidence", "vendors"]);
+
   useEffect(() => {
-    void fetchIssues(projectId);
-    void fetchEvidence(projectId);
-    void fetchVendorSection(projectId);
-    void fetchVendorSummaries();
-  }, [projectId, fetchIssues, fetchEvidence, fetchVendorSection, fetchVendorSummaries]);
+    // Not project-scoped, so it stays outside usePortalSections. A failure
+    // only costs the vendor NAME on a card, which already has its own
+    // fallback — it must not take the whole tab down with it.
+    void fetchVendorSummaries().catch(() => undefined);
+  }, [fetchVendorSummaries]);
 
   const sortedIssues = [...issues].sort((a, b) => {
     const aOpen = a.status !== "Resolved" && a.status !== "Closed";
@@ -43,7 +44,7 @@ export default function KendalaTabPage() {
     <div className="flex flex-col gap-6 sm:gap-8">
       <section>
         <div className="mb-4 flex items-center gap-3 border-b border-border pb-4 sm:mb-6">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-warning-soft text-warning-strong">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-warning-soft text-warning-strong">
             <HeartHandshake className="h-5 w-5 shrink-0" />
           </div>
           <div>
@@ -54,18 +55,22 @@ export default function KendalaTabPage() {
           </div>
         </div>
 
-        {sortedIssues.length === 0 ? (
-          <div className="flex flex-col items-center gap-4 rounded-3xl border border-border bg-white p-10 text-center shadow-sm sm:p-16">
-            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-emerald-50 text-emerald-500 shadow-sm border border-emerald-100 mb-2">
-              <CheckCircle2 className="h-10 w-10" />
-            </div>
-            <p className="max-w-md text-[15px] font-bold text-navy-950 sm:text-[16px]">
-              Semuanya Berjalan Lancar
-            </p>
-            <p className="max-w-sm text-[14px] text-text-secondary mt-1">
-              Tidak ada kendala yang tercatat saat ini. Tim kami terus memantau persiapan pernikahan Anda.
-            </p>
-          </div>
+        {loading ? (
+          <PortalLoading label="Memuat catatan kendala..." />
+        ) : error ? (
+          <PortalError message={error} onRetry={reload} />
+        ) : sortedIssues.length === 0 ? (
+          // Only shown once the request has actually SUCCEEDED. Rendered off
+          // an empty store, this same reassurance appeared while the request
+          // was still in flight, and stayed on screen permanently if it
+          // failed -- telling the client everything was fine on the strength
+          // of data that never arrived.
+          <PortalEmpty
+            icon={CheckCircle2}
+            tone="positive"
+            title="Semuanya Berjalan Lancar"
+            description="Tidak ada kendala yang tercatat saat ini. Tim kami terus memantau persiapan pernikahan Anda."
+          />
         ) : (
           <div className="flex flex-col gap-4 sm:gap-5">
             {sortedIssues.map((issue) => {
@@ -87,7 +92,11 @@ export default function KendalaTabPage() {
       </section>
 
       {viewingEvidence && (
-        <EvidenceViewerModal open onClose={() => setViewingEvidence(null)} projectId={projectId} evidence={viewingEvidence} />
+        <ClientEvidenceViewerModal
+          evidence={viewingEvidence}
+          projectId={projectId}
+          onClose={() => setViewingEvidence(null)}
+        />
       )}
     </div>
   );

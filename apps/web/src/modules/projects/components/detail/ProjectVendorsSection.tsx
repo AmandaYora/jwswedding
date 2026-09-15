@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Pencil, FileWarning, Ban, CheckCircle2, AlertTriangle } from "lucide-react";
 import { Card, CardHeader, CardContent } from "@/shared/components/ui/Card";
 import { Button } from "@/shared/components/ui/Button";
+import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
 import { Badge } from "@/shared/components/ui/Badge";
 import { Select } from "@/shared/components/ui/Input";
 import { Pagination } from "@/shared/components/ui/Pagination";
@@ -302,7 +303,7 @@ export function ProjectVendorsSection({ projectId }: { projectId: string }) {
           title="Vendor Project"
           subtitle="Progress setiap vendor berdasarkan pencapaian timeline yang telah diselesaikan."
           action={
-            <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setAddOpen(true)}>
+            <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => { setActionError(null); setAddOpen(true); }}>
               Tambah Vendor
             </Button>
           }
@@ -327,7 +328,7 @@ export function ProjectVendorsSection({ projectId }: { projectId: string }) {
                   issues={pvIssues}
                   isOpen={expanded.has(pv.id)}
                   onToggle={() => toggle(pv.id)}
-                  onEditVendor={() => setEditing(pv)}
+                  onEditVendor={() => { setActionError(null); setEditing(pv); }}
                   onQuickStatusChange={(m, status) => void quickStatusChange(m, status)}
                   onEditMilestone={(m, vendorNameLabel, total) => setEditingMilestone({ milestone: m, vendorName: vendorNameLabel, total })}
                   onAddMilestone={() => setAddMilestoneFor({ projectVendorId: pv.id, vendorName })}
@@ -345,7 +346,13 @@ export function ProjectVendorsSection({ projectId }: { projectId: string }) {
         </CardContent>
       </Card>
 
-      <ProjectVendorFormModal projectId={projectId} open={addOpen} onClose={() => setAddOpen(false)} onSubmit={(values) => void handleAdd(values)} />
+      <ProjectVendorFormModal
+        projectId={projectId}
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onSubmit={(values) => void handleAdd(values)}
+        error={addOpen ? actionError : null}
+      />
       {editing && (
         <ProjectVendorFormModal
           projectId={projectId}
@@ -353,6 +360,7 @@ export function ProjectVendorsSection({ projectId }: { projectId: string }) {
           onClose={() => setEditing(null)}
           onSubmit={(values) => void handleEdit(values)}
           initialProjectVendor={editing}
+          error={actionError}
         />
       )}
       {editingMilestone && (
@@ -529,27 +537,18 @@ function VendorAccordionRow({
         <span className="flex shrink-0 items-center gap-1">{actionIcons}</span>
       </button>
 
-      {confirmingCancel && (
-        <div className="mx-5 mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger/30 bg-danger-soft px-4 py-3">
-          <span className="flex items-center gap-2 text-[13px] font-medium text-danger">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            Yakin ingin membatalkan kerja sama dengan vendor ini? Timeline, pembayaran, dan kendala yang sudah tercatat tidak akan dihapus.
-          </span>
-          <span className="flex shrink-0 gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setConfirmingCancel(false)}>Batal</Button>
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => {
-                onCancelVendor();
-                setConfirmingCancel(false);
-              }}
-            >
-              Ya, Batalkan
-            </Button>
-          </span>
-        </div>
-      )}
+      <ConfirmDialog
+        open={confirmingCancel}
+        onClose={() => setConfirmingCancel(false)}
+        onConfirm={() => {
+          onCancelVendor();
+          setConfirmingCancel(false);
+        }}
+        title="Batalkan Kerja Sama Vendor"
+        message="Yakin ingin membatalkan kerja sama dengan vendor ini?"
+        details="Timeline, pembayaran, dan kendala yang sudah tercatat tidak akan dihapus — kerja samanya hanya ditandai Cancelled dan berhenti dihitung sebagai biaya project."
+        confirmLabel="Ya, Batalkan"
+      />
 
       {isOpen && (
         <div className="bg-surface-muted/50 px-5 pb-5 pt-1">

@@ -9,9 +9,14 @@ const (
 	ActivityProjectUpdated       ActivityType = "project_updated"
 	ActivityProjectStatusChanged ActivityType = "project_status_changed"
 	ActivityVendorAdded          ActivityType = "vendor_added"
-	ActivityVendorStatusChanged  ActivityType = "vendor_status_changed"
-	ActivityMilestoneUpdated     ActivityType = "milestone_updated"
-	ActivityPaymentRecorded      ActivityType = "payment_recorded"
+	// ActivityVendorOverBudget mencatat komitmen vendor yang SENGAJA
+	// melampaui nilai kontrak: siapa yang menyetujui, berapa selisihnya, dan
+	// alasannya. Inilah yang membedakan kontrol sungguhan dari peringatan
+	// berwarna — enam bulan kemudian masih bisa dijawab siapa yang memutuskan.
+	ActivityVendorOverBudget    ActivityType = "vendor_over_budget"
+	ActivityVendorStatusChanged ActivityType = "vendor_status_changed"
+	ActivityMilestoneUpdated    ActivityType = "milestone_updated"
+	ActivityPaymentRecorded     ActivityType = "payment_recorded"
 	// ActivityPaymentUpdated/ActivityPaymentDeleted are shared generically
 	// across all three payment types (vendor/client/venue), same convention
 	// as ActivityPaymentRecorded -- distinguished by entityType/entityLabel/

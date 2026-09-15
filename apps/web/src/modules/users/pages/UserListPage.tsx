@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Plus, Pencil, UserCheck, UserX, KeyRound, Trash2, AlertTriangle } from "lucide-react";
+import { Plus, Pencil, UserCheck, UserX, KeyRound, Trash2 } from "lucide-react";
 import { Card } from "@/shared/components/ui/Card";
 import { Button } from "@/shared/components/ui/Button";
+import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
 import { Badge } from "@/shared/components/ui/Badge";
 import { Modal } from "@/shared/components/ui/Modal";
 import { SearchInput } from "@/shared/components/ui/SearchInput";
@@ -321,40 +322,30 @@ export default function UserListPage() {
         )}
       </Modal>
 
-      <Modal
+      <ConfirmDialog
         open={deleteTarget !== null}
         onClose={closeDeleteConfirm}
+        onConfirm={() => void handleConfirmDelete()}
         title={deleteTarget ? `Hapus Pengguna — ${deleteTarget.name}` : "Hapus Pengguna"}
-        size="sm"
-      >
-        {impactLoading ? (
-          <p className="text-[13px] text-text-secondary">Memeriksa penugasan...</p>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <p className="flex items-start gap-2 text-[13px] text-text-secondary">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
-              {deleteImpact && deleteImpact.length > 0 ? (
-                <span>
-                  Pengguna ini masih ditugaskan sebagai PIC pada project berikut:{" "}
-                  <strong className="text-text-primary">{deleteImpact.map((p) => p.name).join(", ")}</strong>. Jika dihapus, penugasan
-                  PIC pada project tersebut akan kehilangan sumber datanya dan tidak dapat ditelusuri lagi. Apakah Anda yakin ingin
-                  menghapus pengguna ini secara permanen?
-                </span>
-              ) : (
-                <span>Data ini akan dihapus secara permanen dan tidak dapat dikembalikan. Apakah Anda yakin?</span>
-              )}
-            </p>
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={closeDeleteConfirm} disabled={isDeleting}>
-                Batal
-              </Button>
-              <Button variant="danger" onClick={() => void handleConfirmDelete()} disabled={isDeleting}>
-                {isDeleting ? "Menghapus..." : "Ya, Hapus Permanen"}
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+        message={
+          impactLoading
+            ? "Memeriksa penugasan..."
+            : `Yakin ingin menghapus pengguna ini secara permanen?`
+        }
+        details={
+          impactLoading ? undefined : deleteImpact && deleteImpact.length > 0 ? (
+            <>
+              Pengguna ini masih ditugaskan sebagai PIC pada project berikut:{" "}
+              <strong className="text-text-primary">{deleteImpact.map((p) => p.name).join(", ")}</strong>. Penugasan PIC pada project tersebut akan kehilangan sumber datanya dan tidak dapat ditelusuri lagi.
+            </>
+          ) : (
+            "Data ini dihapus permanen dan tidak dapat dikembalikan."
+          )
+        }
+        confirmLabel="Ya, Hapus Permanen"
+        busyLabel="Menghapus..."
+        busy={isDeleting || impactLoading}
+      />
     </div>
   );
 }

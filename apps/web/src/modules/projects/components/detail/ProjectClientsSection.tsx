@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { Pencil, RefreshCw, UserCog, Plus, Trash2, AlertTriangle } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Pencil, RefreshCw, UserCog, Plus, Trash2 } from "lucide-react";
 import { Card, CardHeader, CardContent } from "@/shared/components/ui/Card";
 import { Badge } from "@/shared/components/ui/Badge";
 import { Button } from "@/shared/components/ui/Button";
+import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
 import { Modal } from "@/shared/components/ui/Modal";
 import { Input, Field } from "@/shared/components/ui/Input";
 import { useClientStore } from "@/modules/clients/stores/useClientStore";
@@ -16,9 +18,11 @@ import {
   type RepresentativeFormValues,
 } from "@/modules/clients/schemas/client.schema";
 import { suggestUsername, suggestPassword } from "@/modules/clients/lib/credential-suggestion";
-import type { Client, ClientRole } from "@/modules/clients/types";
+import type { ClientContact, ClientRole } from "@/modules/clients/types";
+import { ClientRoleBadge } from "@/modules/clients/components/ClientRoleBadge";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
 import { formatDate } from "@/shared/lib/formatters";
+import { ROUTE_PATHS } from "@/app/routes/route-paths";
 
 const ROLE_ORDER: ClientRole[] = ["Bride", "Groom", "Family Representative"];
 
@@ -31,82 +35,75 @@ const ROLE_LABEL: Record<ClientRole, string> = {
 type ModalMode = "contact" | "replace" | "reset";
 
 interface ModalTarget {
-  clientId: string;
+  contactId: string;
   mode: ModalMode;
 }
 
-// A stable reference — returning a fresh `[]` from a Zustand selector on
-// every call defeats useSyncExternalStore's reference check and causes an
-// infinite render loop (React error #185).
-const EMPTY_CLIENTS: Client[] = [];
-
-export function ProjectClientsSection({ projectId }: { projectId: string }) {
-  // Every write action here is Owner/Admin/Sales/Staff (Wedding Planner) —
-  // PLAN.md mom-25082026-item-belum item 2 widened this from Owner/Admin/
-  // Sales to also include WP. No role-gated canManage anymore: whoever can
-  // reach this component at all (resolveProjectAccess already scoped a WP
-  // or Sales caller to their own project) can act on it — the backend's
-  // requireManagerOrProjectPIC enforces the same scoping server-side.
-  // Sumber nama/tanggal acara untuk prefill Tambah Client (PLAN.md
-  // mom-25082026-item-sebagian item 10) — ProjectDetailLayout sudah
-  // menjamin currentProject termuat sebelum tab ini dirender, jadi tidak
-  // ada race terhadap null di sini.
+// Tab Client di detail project: master pasangan pemilik project + kontak/akun
+// portalnya. Kontak dikelola di sini maupun di menu Client (store yang sama);
+// hapus CLIENT-nya sendiri hanya dari menu Client (berjenjang, D14).
+export function ProjectClientsSection() {
   const project = useProjectStore((s) => s.currentProject);
-  const clients = useClientStore((s) => s.clientsByProject[projectId] ?? EMPTY_CLIENTS);
-  const fetchClients = useClientStore((s) => s.fetchClients);
-  const createClient = useClientStore((s) => s.createClient);
+  const currentClient = useClientStore((s) => s.currentClient);
+  const contacts = useClientStore((s) => s.contacts);
+  const fetchClient = useClientStore((s) => s.fetchClient);
+  const createContact = useClientStore((s) => s.createContact);
   const updateContact = useClientStore((s) => s.updateContact);
-  const toggleActive = useClientStore((s) => s.toggleActive);
-  const deleteClient = useClientStore((s) => s.deleteClient);
-  const resetCredential = useClientStore((s) => s.resetCredential);
+  const toggleContactActive = useClientStore((s) => s.toggleContactActive);
+  const deleteContact = useClientStore((s) => s.deleteContact);
+  const resetContactCredential = useClientStore((s) => s.resetContactCredential);
   const replaceRepresentative = useClientStore((s) => s.replaceRepresentative);
 
   const [modalTarget, setModalTarget] = useState<ModalTarget | null>(null);
   const [createRole, setCreateRole] = useState<ClientRole | null>(null);
-  const [deletingClientId, setDeletingClientId] = useState<string | null>(null);
+  const [deletingContactId, setDeletingContactId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void fetchClients(projectId);
-  }, [projectId, fetchClients]);
+  const clientId = project?.clientId && project.clientId !== "0" ? project.clientId : "";
 
-  const activeTarget = modalTarget ? clients.find((c) => c.id === modalTarget.clientId) ?? null : null;
+  useEffect(() => {
+    if (clientId) void fetchClient(clientId);
+  }, [clientId, fetchClient]);
+
+  const activeTarget = modalTarget ? contacts.find((c) => c.id === modalTarget.contactId) ?? null : null;
 
   async function handleToggleActive(id: string) {
+    if (!clientId) return;
     setActionError(null);
     try {
-      await toggleActive(projectId, id);
+      await toggleContactActive(clientId, id);
     } catch (err) {
-      setActionError(getApiErrorMessage(err, "Gagal mengubah status client"));
+      setActionError(getApiErrorMessage(err, "Gagal mengubah status kontak"));
     }
   }
 
   async function handleContactSubmit(values: ClientContactFormValues) {
-    if (!modalTarget) return;
+    if (!modalTarget || !clientId) return;
     setActionError(null);
     try {
-      await updateContact(projectId, modalTarget.clientId, values);
+      await updateContact(clientId, modalTarget.contactId, values);
       setModalTarget(null);
     } catch (err) {
-      setActionError(getApiErrorMessage(err, "Gagal memperbarui kontak client"));
+      setActionError(getApiErrorMessage(err, "Gagal memperbarui kontak"));
     }
   }
 
   async function handleDelete(id: string) {
+    if (!clientId) return;
     setActionError(null);
     try {
-      await deleteClient(projectId, id);
-      setDeletingClientId(null);
+      await deleteContact(clientId, id);
+      setDeletingContactId(null);
     } catch (err) {
-      setActionError(getApiErrorMessage(err, "Gagal menghapus client"));
+      setActionError(getApiErrorMessage(err, "Gagal menghapus kontak"));
     }
   }
 
   async function handleReplaceSubmit(values: RepresentativeFormValues) {
-    if (!modalTarget) return;
+    if (!modalTarget || !clientId) return;
     setActionError(null);
     try {
-      await replaceRepresentative(projectId, modalTarget.clientId, values);
+      await replaceRepresentative(clientId, modalTarget.contactId, values);
       setModalTarget(null);
     } catch (err) {
       setActionError(getApiErrorMessage(err, "Gagal mengganti wedding representative"));
@@ -114,34 +111,41 @@ export function ProjectClientsSection({ projectId }: { projectId: string }) {
   }
 
   async function handleResetSubmit(password: string) {
-    if (!modalTarget) return;
+    if (!modalTarget || !clientId) return;
     setActionError(null);
     try {
-      await resetCredential(projectId, modalTarget.clientId, password);
+      await resetContactCredential(clientId, modalTarget.contactId, password);
       setModalTarget(null);
     } catch (err) {
-      setActionError(getApiErrorMessage(err, "Gagal mereset kredensial client"));
+      setActionError(getApiErrorMessage(err, "Gagal mereset kredensial"));
     }
   }
 
   async function handleCreateSubmit(values: ClientCreateFormValues) {
-    if (!createRole) return;
+    if (!createRole || !clientId) return;
     setActionError(null);
     try {
-      await createClient(projectId, createRole, values);
+      await createContact(clientId, createRole, values);
       setCreateRole(null);
     } catch (err) {
-      setActionError(getApiErrorMessage(err, "Gagal menambahkan client"));
+      setActionError(getApiErrorMessage(err, "Gagal menambahkan kontak"));
     }
   }
 
-  // Nama yang diusulkan untuk Tambah Client — Bride/Groom diambil dari nama
-  // mempelai di project (PLAN.md mom-25082026-item-sebagian item 10);
-  // Family Representative tidak punya sumber di project, mulai kosong.
   function defaultNameFor(role: ClientRole): string {
     if (role === "Bride") return project?.brideName ?? "";
     if (role === "Groom") return project?.groomName ?? "";
     return "";
+  }
+
+  if (!clientId) {
+    return (
+      <Card>
+        <CardContent className="py-10 text-center text-[13px] text-text-secondary">
+          Project lama ini belum tertaut ke master Client.
+        </CardContent>
+      </Card>
+    );
   }
 
   return (
@@ -149,15 +153,26 @@ export function ProjectClientsSection({ projectId }: { projectId: string }) {
       <Card>
         <CardHeader
           title="Client Project"
-          subtitle="Kontak pengantin dan perwakilan keluarga yang terdaftar untuk project ini."
+          subtitle={
+            currentClient ? (
+              <>
+                {currentClient.displayName} ·{" "}
+                <Link to={ROUTE_PATHS.clientDetail(currentClient.id)} className="font-semibold text-navy-700 hover:underline">
+                  Kelola di menu Client →
+                </Link>
+              </>
+            ) : (
+              "Memuat data pasangan..."
+            )
+          }
         />
         <CardContent className="flex flex-col gap-3">
           {actionError && (
             <p className="rounded-md border border-danger/30 bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger">{actionError}</p>
           )}
           {ROLE_ORDER.map((role) => {
-            const client = clients.find((c) => c.role === role);
-            if (!client) {
+            const contact = contacts.find((c) => c.role === role);
+            if (!contact) {
               return (
                 <div
                   key={role}
@@ -171,25 +186,25 @@ export function ProjectClientsSection({ projectId }: { projectId: string }) {
               );
             }
             return (
-              <div key={client.id} className="rounded-md border border-border p-4">
+              <div key={contact.id} className="rounded-md border border-border p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className="text-[11.5px] font-semibold uppercase tracking-wide text-text-secondary">
-                      {ROLE_LABEL[role]}
+                    <p className="flex flex-wrap items-center gap-2 text-[11.5px] font-semibold uppercase tracking-wide text-text-secondary">
+                      {ROLE_LABEL[role]} <ClientRoleBadge role={contact.role} />
                     </p>
-                    {client.relationNote && <p className="mt-1 text-[13px] text-text-secondary">{client.relationNote}</p>}
-                    <p className="mt-1.5 text-sm font-semibold text-text-primary">{client.name}</p>
+                    {contact.relationNote && <p className="mt-1 text-[13px] text-text-secondary">{contact.relationNote}</p>}
+                    <p className="mt-1.5 text-sm font-semibold text-text-primary">{contact.name}</p>
                     <p className="text-[13px] text-text-secondary">
-                      {client.phone} &middot; {client.email}
+                      {contact.phone} &middot; {contact.email}
                     </p>
                   </div>
-                  <Badge tone={client.isActive ? "success" : "neutral"}>{client.isActive ? "Aktif" : "Nonaktif"}</Badge>
+                  <Badge tone={contact.isActive ? "success" : "neutral"}>{contact.isActive ? "Aktif" : "Nonaktif"}</Badge>
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-[12.5px] text-text-secondary">
                   <span>
-                    {client.lastCredentialResetAt
-                      ? `Direset terakhir: ${formatDate(client.lastCredentialResetAt)}`
+                    {contact.lastCredentialResetAt
+                      ? `Direset terakhir: ${formatDate(contact.lastCredentialResetAt)}`
                       : "Belum pernah direset"}
                   </span>
                 </div>
@@ -199,7 +214,7 @@ export function ProjectClientsSection({ projectId }: { projectId: string }) {
                     size="sm"
                     variant="secondary"
                     icon={<Pencil className="h-3.5 w-3.5" />}
-                    onClick={() => setModalTarget({ clientId: client.id, mode: "contact" })}
+                    onClick={() => setModalTarget({ contactId: contact.id, mode: "contact" })}
                   >
                     Ubah Kontak
                   </Button>
@@ -207,23 +222,23 @@ export function ProjectClientsSection({ projectId }: { projectId: string }) {
                     size="sm"
                     variant="secondary"
                     icon={<RefreshCw className="h-3.5 w-3.5" />}
-                    onClick={() => setModalTarget({ clientId: client.id, mode: "reset" })}
+                    onClick={() => setModalTarget({ contactId: contact.id, mode: "reset" })}
                   >
                     Reset Credential
                   </Button>
                   <Button
                     size="sm"
-                    variant={client.isActive ? "danger" : "secondary"}
-                    onClick={() => void handleToggleActive(client.id)}
+                    variant={contact.isActive ? "danger" : "secondary"}
+                    onClick={() => void handleToggleActive(contact.id)}
                   >
-                    {client.isActive ? "Nonaktifkan" : "Aktifkan"}
+                    {contact.isActive ? "Nonaktifkan" : "Aktifkan"}
                   </Button>
                   {role === "Family Representative" && (
                     <Button
                       size="sm"
                       variant="secondary"
                       icon={<UserCog className="h-3.5 w-3.5" />}
-                      onClick={() => setModalTarget({ clientId: client.id, mode: "replace" })}
+                      onClick={() => setModalTarget({ contactId: contact.id, mode: "replace" })}
                     >
                       Ganti Wedding Representative
                     </Button>
@@ -232,25 +247,25 @@ export function ProjectClientsSection({ projectId }: { projectId: string }) {
                     size="sm"
                     variant="danger"
                     icon={<Trash2 className="h-3.5 w-3.5" />}
-                    onClick={() => setDeletingClientId(client.id)}
+                    onClick={() => setDeletingContactId(contact.id)}
                   >
-                    Hapus Client
+                    Hapus Kontak
                   </Button>
                 </div>
 
-                {deletingClientId === client.id && (
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger/30 bg-danger-soft px-4 py-3">
-                    <span className="flex items-center gap-2 text-[13px] font-medium text-danger">
-                      <AlertTriangle className="h-4 w-4 shrink-0" />
-                      Yakin ingin menghapus {ROLE_LABEL[role]} ini? Tindakan ini permanen — akun login yang terkait
-                      (jika ada) ikut dinonaktifkan, dan slot {ROLE_LABEL[role]} untuk project ini akan kosong kembali.
-                    </span>
-                    <span className="flex shrink-0 gap-2">
-                      <Button variant="secondary" size="sm" onClick={() => setDeletingClientId(null)}>Batal</Button>
-                      <Button variant="danger" size="sm" onClick={() => void handleDelete(client.id)}>Ya, Hapus</Button>
-                    </span>
-                  </div>
-                )}
+                <ConfirmDialog
+                  open={deletingContactId === contact.id}
+                  onClose={() => setDeletingContactId(null)}
+                  onConfirm={() => void handleDelete(contact.id)}
+                  title={`Hapus ${ROLE_LABEL[role]}`}
+                  message={
+                    <>
+                      Yakin ingin menghapus <strong>{contact.name}</strong> sebagai {ROLE_LABEL[role]}?
+                    </>
+                  }
+                  details="Akun login yang terkait ikut dinonaktifkan."
+                  confirmLabel="Ya, Hapus"
+                />
               </div>
             );
           })}
@@ -258,34 +273,34 @@ export function ProjectClientsSection({ projectId }: { projectId: string }) {
       </Card>
 
       {activeTarget && modalTarget?.mode === "contact" && (
-        <EditContactModal
+        <EditContactModal2
           key={activeTarget.id}
-          client={activeTarget}
+          contact={activeTarget}
           onClose={() => setModalTarget(null)}
           onSubmit={(values) => void handleContactSubmit(values)}
         />
       )}
 
       {activeTarget && modalTarget?.mode === "replace" && (
-        <ReplaceRepresentativeModal
+        <ReplaceRepresentativeModal2
           key={activeTarget.id}
-          client={activeTarget}
+          contact={activeTarget}
           onClose={() => setModalTarget(null)}
           onSubmit={(values) => void handleReplaceSubmit(values)}
         />
       )}
 
       {activeTarget && modalTarget?.mode === "reset" && (
-        <ResetCredentialModal
+        <ResetCredentialModal2
           key={activeTarget.id}
-          client={activeTarget}
+          contact={activeTarget}
           onClose={() => setModalTarget(null)}
           onSubmit={(password) => void handleResetSubmit(password)}
         />
       )}
 
       {createRole && (
-        <CreateClientModal
+        <CreateContactModal2
           role={createRole}
           defaultName={defaultNameFor(createRole)}
           eventDate={project?.eventDate ?? ""}
@@ -297,16 +312,16 @@ export function ProjectClientsSection({ projectId }: { projectId: string }) {
   );
 }
 
-function EditContactModal({
-  client,
+function EditContactModal2({
+  contact,
   onClose,
   onSubmit,
 }: {
-  client: Client;
+  contact: ClientContact;
   onClose: () => void;
   onSubmit: (values: ClientContactFormValues) => void;
 }) {
-  const [values, setValues] = useState<ClientContactFormValues>({ name: client.name, phone: client.phone, email: client.email });
+  const [values, setValues] = useState<ClientContactFormValues>({ name: contact.name, phone: contact.phone, email: contact.email });
   const [errors, setErrors] = useState<Partial<Record<keyof ClientContactFormValues, string>>>({});
 
   function set<K extends keyof ClientContactFormValues>(key: K, value: ClientContactFormValues[K]) {
@@ -331,7 +346,7 @@ function EditContactModal({
       open
       onClose={onClose}
       title="Ubah Kontak"
-      description={`Perbarui informasi kontak untuk ${client.name}.`}
+      description={`Perbarui informasi kontak untuk ${contact.name}.`}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Batal</Button>
@@ -350,19 +365,19 @@ function EditContactModal({
           <Input type="email" value={values.email} onChange={(e) => set("email", e.target.value)} />
         </Field>
         <Field label="Username">
-          <Input value={client.username} disabled />
+          <Input value={contact.username} disabled />
         </Field>
       </div>
     </Modal>
   );
 }
 
-function ReplaceRepresentativeModal({
-  client,
+function ReplaceRepresentativeModal2({
+  contact,
   onClose,
   onSubmit,
 }: {
-  client: Client;
+  contact: ClientContact;
   onClose: () => void;
   onSubmit: (values: RepresentativeFormValues) => void;
 }) {
@@ -391,7 +406,7 @@ function ReplaceRepresentativeModal({
       open
       onClose={onClose}
       title="Ganti Wedding Representative"
-      description={`Data representative keluarga saat ini (${client.name}) akan digantikan oleh data baru. Kredensial login yang sudah ada tetap dipakai (gunakan Reset Credential terpisah bila perlu).`}
+      description={`Data representative keluarga saat ini (${contact.name}) akan digantikan oleh data baru. Kredensial login yang sudah ada tetap dipakai.`}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Batal</Button>
@@ -417,19 +432,19 @@ function ReplaceRepresentativeModal({
           <Input type="email" value={values.email} onChange={(e) => set("email", e.target.value)} />
         </Field>
         <Field label="Username">
-          <Input value={client.username} disabled />
+          <Input value={contact.username} disabled />
         </Field>
       </div>
     </Modal>
   );
 }
 
-function ResetCredentialModal({
-  client,
+function ResetCredentialModal2({
+  contact,
   onClose,
   onSubmit,
 }: {
-  client: Client;
+  contact: ClientContact;
   onClose: () => void;
   onSubmit: (password: string) => void;
 }) {
@@ -449,7 +464,7 @@ function ResetCredentialModal({
       open
       onClose={onClose}
       title="Reset Credential"
-      description={`Atur password login baru untuk ${client.name}.`}
+      description={`Atur password login baru untuk ${contact.name}.`}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Batal</Button>
@@ -464,7 +479,7 @@ function ResetCredentialModal({
   );
 }
 
-function CreateClientModal({
+function CreateContactModal2({
   role,
   defaultName,
   eventDate,
@@ -486,10 +501,6 @@ function CreateClientModal({
     password: suggestPassword(eventDate),
   }));
   const [errors, setErrors] = useState<Partial<Record<keyof ClientCreateFormValues, string>>>({});
-  // Selama staff belum menyunting field Username sendiri, ia mengikuti
-  // perubahan field Nama — PLAN.md mom-25082026-item-sebagian item 10.
-  // Begitu staff mengetik langsung di Username (setUsername di bawah),
-  // sinkronisasi berhenti permanen untuk sesi modal ini.
   const [usernameTouched, setUsernameTouched] = useState(false);
 
   function set<K extends keyof ClientCreateFormValues>(key: K, value: ClientCreateFormValues[K]) {
@@ -527,11 +538,11 @@ function CreateClientModal({
       open
       onClose={onClose}
       title={`Tambah ${ROLE_LABEL[role]}`}
-      description="Membuat data client baru sekaligus akun login untuk Client Portal."
+      description="Membuat kontak baru sekaligus akun login untuk Client Portal."
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Batal</Button>
-          <Button onClick={handleSubmit}>Simpan Client</Button>
+          <Button onClick={handleSubmit}>Simpan Kontak</Button>
         </>
       }
     >
@@ -554,10 +565,10 @@ function CreateClientModal({
         <Field label="Email" required hint={errors.email}>
           <Input type="email" value={values.email} onChange={(e) => set("email", e.target.value)} />
         </Field>
-        <Field label="Username" required hint={errors.username ?? "Terisi otomatis dari Nama (jws_...) — bisa diubah bila sudah dipakai client lain"}>
+        <Field label="Username" required hint={errors.username ?? "Terisi otomatis dari Nama — bisa diubah bila sudah dipakai"}>
           <Input value={values.username} onChange={(e) => setUsername(e.target.value)} placeholder="cth. jws_budi" />
         </Field>
-        <Field label="Password Login" required hint={errors.password ?? "Terisi otomatis dari tanggal acara (DDMMYYYY) — sampaikan ke client, bisa diubah"}>
+        <Field label="Password Login" required hint={errors.password ?? "Terisi otomatis dari tanggal acara — sampaikan ke client"}>
           <Input type="text" value={values.password} onChange={(e) => set("password", e.target.value)} placeholder="Minimal 6 karakter" />
         </Field>
       </div>

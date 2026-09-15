@@ -46,10 +46,20 @@ export async function openPdfInNewTab(
   // PDF for as long as the session lasts.
   const release = () => URL.revokeObjectURL(url);
 
+  // Tab yang sudah dipesan dipakai kalau masih hidup. Kegagalan mengarahkannya
+  // -- pengguna keburu menutupnya, kebijakan COOP, atau ekstensi browser yang
+  // menolak navigasi ke blob: -- TIDAK boleh menggagalkan unduhan: berkasnya
+  // sudah di tangan. Jatuh ke jalur <a download> di bawah, karena file yang
+  // tersimpan selalu lebih baik daripada pesan "Gagal membuat PDF" untuk PDF
+  // yang sebenarnya sudah selesai dibuat.
   if (reserved && !reserved.closed) {
-    reserved.location.href = url;
-    window.setTimeout(release, 60_000);
-    return;
+    try {
+      reserved.location.href = url;
+      window.setTimeout(release, 60_000);
+      return;
+    } catch {
+      reserved.close();
+    }
   }
 
   const link = document.createElement("a");

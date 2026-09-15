@@ -56,6 +56,20 @@ func Down(databaseURL string) error {
 	return nil
 }
 
+// To migrates to exactly the given version — up or down — and stops there.
+// Exists for cutover tests (seed the pre-cutover schema, run the cutover,
+// assert the data moved): production and deployment only ever use Up/Down.
+func To(databaseURL string, version uint) error {
+	m, err := newMigrate(databaseURL)
+	if err != nil {
+		return err
+	}
+	if err := m.Migrate(version); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		return fmt.Errorf("migrator: to %d: %w", version, err)
+	}
+	return nil
+}
+
 // Force sets schema_migrations to the given version with dirty cleared,
 // without running any migration SQL — mirroring the upstream golang-migrate
 // CLI's `migrate force <version>`. This is the standard recovery tool for a

@@ -12,6 +12,7 @@ import (
 	"github.com/go-pdf/fpdf"
 
 	platformcontracts "jwswedding/internal/modules/platform/contracts"
+	"jwswedding/internal/modules/projects/application"
 	"jwswedding/internal/modules/projects/domain"
 )
 
@@ -47,7 +48,7 @@ func testProject() domain.Project {
 	return domain.Project{
 		ID: 1, TenantID: 1, Name: "Akad & Resepsi Dimas-Sari",
 		BrideName: "Sari", GroomName: "Dimas",
-		EventDate: time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC),
+		EventDate:   time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC),
 		PackageName: "Silver", ContractValue: 75_000_000,
 	}
 }
@@ -92,7 +93,7 @@ func assertValidPDF(t *testing.T, pdf *fpdf.Fpdf) {
 // --- Invoice ---
 
 func TestBuildClientInvoicePDF_LengkapDenganLogo(t *testing.T) {
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), validPNGBytes(t), validPNGBytes(t), 5_000_000)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), validPNGBytes(t), validPNGBytes(t), 5_000_000, "", nil)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF: %v", err)
 	}
@@ -103,7 +104,7 @@ func TestBuildClientInvoicePDF_LengkapDenganLogo(t *testing.T) {
 }
 
 func TestBuildClientInvoicePDF_TanpaLogo(t *testing.T) {
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "", nil)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF tanpa logo: %v", err)
 	}
@@ -111,7 +112,7 @@ func TestBuildClientInvoicePDF_TanpaLogo(t *testing.T) {
 }
 
 func TestBuildClientInvoicePDF_LogoRusak(t *testing.T) {
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), []byte{0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x00}, nil, 0)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), []byte{0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x00}, nil, 0, "", nil)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF dengan logo rusak: %v", err)
 	}
@@ -127,7 +128,7 @@ func TestBuildClientInvoicePDF_SeluruhStatus(t *testing.T) {
 	} {
 		inv := testInvoice()
 		inv.Status = status
-		pdf, err := buildClientInvoicePDF(testProject(), inv, testProfile(), nil, nil, 0)
+		pdf, err := buildClientInvoicePDF(testProject(), inv, testProfile(), nil, nil, 0, "", nil)
 		if err != nil {
 			t.Fatalf("status %v: buildClientInvoicePDF: %v", status, err)
 		}
@@ -143,7 +144,7 @@ func TestBuildClientInvoicePDF_DeskripsiDanAlamatPanjang(t *testing.T) {
 	profile := testProfile()
 	profile.Address = strings.Repeat("Jalan yang sangat panjang sekali, ", 15) + "Bandung"
 
-	pdf, err := buildClientInvoicePDF(testProject(), inv, profile, nil, nil, 0)
+	pdf, err := buildClientInvoicePDF(testProject(), inv, profile, nil, nil, 0, "", nil)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF dengan teks panjang: %v", err)
 	}
@@ -159,7 +160,7 @@ func TestBuildClientInvoicePDF_TanpaDataBank(t *testing.T) {
 	profile.BankAccountNumber = ""
 	profile.BankAccountHolderName = ""
 
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), profile, nil, nil, 0)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), profile, nil, nil, 0, "", nil)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF tanpa data bank: %v", err)
 	}
@@ -173,11 +174,11 @@ func TestBuildClientInvoicePDF_WarnaAksenBerbedaMenghasilkanKeluaranBerbeda(t *t
 	emerald.AccentDarkRGB = [3]int{2, 44, 34}
 	emerald.AccentSoftRGB = [3]int{209, 250, 229}
 
-	pdfA, err := buildClientInvoicePDF(testProject(), testInvoice(), bronze, nil, nil, 0)
+	pdfA, err := buildClientInvoicePDF(testProject(), testInvoice(), bronze, nil, nil, 0, "", nil)
 	if err != nil {
 		t.Fatalf("build bronze: %v", err)
 	}
-	pdfB, err := buildClientInvoicePDF(testProject(), testInvoice(), emerald, nil, nil, 0)
+	pdfB, err := buildClientInvoicePDF(testProject(), testInvoice(), emerald, nil, nil, 0, "", nil)
 	if err != nil {
 		t.Fatalf("build emerald: %v", err)
 	}
@@ -206,7 +207,7 @@ func TestBuildClientInvoicePDF_NamaUsahaPanjangSatuHalaman(t *testing.T) {
 	profile.BusinessName = "JWS Wedding Organizer & Event Planner Indonesia"
 	profile.Address = "Jl. Melati Raya No. 12, Kompleks Permata Indah Blok C-4, Kelurahan Sukajadi, Kecamatan Sukajadi, Bandung, Jawa Barat 40162"
 
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), profile, nil, nil, 0)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), profile, nil, nil, 0, "", nil)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF nama usaha panjang: %v", err)
 	}
@@ -227,7 +228,7 @@ func TestBuildClientInvoicePDF_DeskripsiSangatPanjangTidakRusak(t *testing.T) {
 	inv := testInvoice()
 	inv.Description = strings.Repeat("Pelunasan paket lengkap mencakup dekorasi, catering, dokumentasi. ", 10) // ~670 karakter
 
-	pdf, err := buildClientInvoicePDF(testProject(), inv, testProfile(), nil, nil, 0)
+	pdf, err := buildClientInvoicePDF(testProject(), inv, testProfile(), nil, nil, 0, "", nil)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF deskripsi sangat panjang: %v", err)
 	}
@@ -246,7 +247,7 @@ func TestBuildClientInvoicePDF_DeskripsiSangatPanjangTidakRusak(t *testing.T) {
 func TestBuildClientInvoicePDF_LebihBayarTidakMenampilkanNegatif(t *testing.T) {
 	project := testProject()
 	project.ContractValue = 5_000_000
-	pdf, err := buildClientInvoicePDF(project, testInvoice(), testProfile(), nil, nil, 20_000_000)
+	pdf, err := buildClientInvoicePDF(project, testInvoice(), testProfile(), nil, nil, 20_000_000, "", nil)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF totalPaid > ContractValue: %v", err)
 	}
@@ -263,7 +264,7 @@ func TestBuildClientInvoicePDF_LebihBayarTidakMenampilkanNegatif(t *testing.T) {
 // meng-clamp paid ke 0 sebelum ditampilkan, bukan mencetak "Total Sudah
 // Dibayar: -Rp ..." yang tidak masuk akal di dokumen customer-facing.
 func TestBuildClientInvoicePDF_TotalPaidNegatifTidakError(t *testing.T) {
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, -5_000_000)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, -5_000_000, "", nil)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF totalPaid negatif: %v", err)
 	}
@@ -280,7 +281,7 @@ func TestBuildClientInvoicePDF_TanpaKotaTanpaBank(t *testing.T) {
 	profile.BankAccountNumber = ""
 	profile.BankAccountHolderName = ""
 
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), profile, nil, nil, 0)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), profile, nil, nil, 0, "", nil)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF tanpa Kota/bank: %v", err)
 	}
@@ -300,7 +301,7 @@ func TestBuildClientInvoicePDF_NamaAcaraSangatPanjangTidakMenimpaKartuSebelah(t 
 	project := testProject()
 	project.Name = "Resepsi dan Akad Nikah Meriah Keluarga Besar Dimas dan Sari di Grand Ballroom Hotel Bersama Seluruh Kerabat dan Sahabat dari Berbagai Kota di Indonesia"
 
-	pdf, err := buildClientInvoicePDF(project, testInvoice(), testProfile(), nil, nil, 0)
+	pdf, err := buildClientInvoicePDF(project, testInvoice(), testProfile(), nil, nil, 0, "", nil)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF nama acara sangat panjang: %v", err)
 	}
@@ -551,8 +552,169 @@ func TestFormatRupiah(t *testing.T) {
 // --- Font registration ---
 
 func TestRegisterFonts_TidakMenyisakanError(t *testing.T) {
-	pdf, _ := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0)
+	pdf, _ := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "", nil)
 	if pdf.Err() {
 		t.Fatalf("registerFonts meninggalkan pdf.Err(): %v", pdf.Error())
+	}
+}
+
+// --- Nomor PO + tabel komposisi paket pada Invoice ---
+
+// testComposition mereproduksi bentuk dokumen sumber: CATERING menempati DUA
+// baris berturut-turut dengan QTY/BONUS berbeda (itulah sebabnya kategori
+// dirender sebagai sel gabungan), lalu satu kategori lain.
+func testComposition() []application.QuotationCompositionRow {
+	return []application.QuotationCompositionRow{
+		{
+			Category: "CATERING",
+			Product:  "BUFFET\nNasi Putih\nAneka Nasi Goreng\nDESSERT\nAneka Buah",
+			Qty:      "700 PORSI",
+			Bonus:    "BONUS :\nMakanan After Akad",
+		},
+		{
+			Category: "CATERING",
+			Product:  "STALL / GUBUKAN\nBakso\nSomay",
+			Qty:      "150 PORSI",
+			Bonus:    "BONUS :\nIce Cream 1 Galon",
+		},
+		{
+			Category: "DEKORASI",
+			Product:  "Pelaminan\nBackdrop Photobooth",
+			Qty:      "10-12 METER",
+			Bonus:    "BONUS :\n- Lantai Kaca",
+		},
+	}
+}
+
+func TestBuildClientInvoicePDF_DenganNomorPODanKomposisi(t *testing.T) {
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0,
+		"026/PO/JWS/IX/2026", testComposition())
+	if err != nil {
+		t.Fatalf("buildClientInvoicePDF dengan komposisi: %v", err)
+	}
+	if pdf.Err() {
+		t.Fatalf("pdf.Err() true setelah build: %v", pdf.Error())
+	}
+	assertValidPDF(t, pdf)
+}
+
+// Tanpa penawaran (project pra-penawaran) tagihan HARUS tetap tercetak:
+// nomor PO jatuh ke "-" dan tabel komposisinya tidak digambar sama sekali.
+// Ini jalur yang paling mungkin dilupakan, karena di data dev hampir setiap
+// project punya penawaran.
+func TestBuildClientInvoicePDF_TanpaPOTetapTercetak(t *testing.T) {
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "", nil)
+	if err != nil {
+		t.Fatalf("buildClientInvoicePDF tanpa PO: %v", err)
+	}
+	assertValidPDF(t, pdf)
+}
+
+// Komposisi sepanjang beberapa halaman: pemecah halaman tabel harus bekerja
+// DAN blok-blok sesudahnya (total, terbilang, bank, tanda tangan) tetap
+// tergambar di halaman yang benar — regresi kelas yang sama dengan §3.3.
+func TestBuildClientInvoicePDF_KomposisiLintasHalaman(t *testing.T) {
+	rows := make([]application.QuotationCompositionRow, 0, 40)
+	for i := 0; i < 40; i++ {
+		rows = append(rows, application.QuotationCompositionRow{
+			Category: "KATEGORI " + strings.Repeat("X", 8),
+			Product:  strings.Repeat("Baris produk yang cukup panjang untuk membungkus\n", 6),
+			Qty:      "100 PORSI",
+			Bonus:    "BONUS :\n- Sesuatu",
+		})
+	}
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "026/PO/JWS/IX/2026", rows)
+	if err != nil {
+		t.Fatalf("buildClientInvoicePDF komposisi panjang: %v", err)
+	}
+	if pdf.Err() {
+		t.Fatalf("pdf.Err() true: %v", pdf.Error())
+	}
+	if pdf.PageNo() < 2 {
+		t.Errorf("komposisi 40 blok hanya menghasilkan %d halaman — pemecah halaman tidak berjalan", pdf.PageNo())
+	}
+	assertValidPDF(t, pdf)
+}
+
+// Satu blok yang SENDIRIAN lebih tinggi dari satu halaman: harus terpecah,
+// bukan terpotong diam-diam.
+func TestBuildClientInvoicePDF_SatuBlokLebihTinggiDariHalaman(t *testing.T) {
+	rows := []application.QuotationCompositionRow{{
+		Category: "CATERING",
+		Product:  strings.Repeat("Item menu prasmanan\n", 120),
+		Qty:      "700 PORSI",
+		Bonus:    "BONUS :\nMakanan After Akad",
+	}}
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "026/PO/JWS/IX/2026", rows)
+	if err != nil {
+		t.Fatalf("buildClientInvoicePDF blok raksasa: %v", err)
+	}
+	if pdf.PageNo() < 2 {
+		t.Errorf("blok 120 baris hanya %d halaman — blok terpotong, bukan terpecah", pdf.PageNo())
+	}
+	assertValidPDF(t, pdf)
+}
+
+// Paritas dengan TestQuotationCategorySpans di quotations/presentation —
+// renderer-nya kembar, jadi vektor ujinya pun harus sama. Kalau salah satu
+// berubah, yang ini ikut gagal.
+func TestCompositionSpans(t *testing.T) {
+	rows := func(categories ...string) []application.QuotationCompositionRow {
+		out := make([]application.QuotationCompositionRow, 0, len(categories))
+		for _, c := range categories {
+			out = append(out, application.QuotationCompositionRow{Category: c})
+		}
+		return out
+	}
+	cases := []struct {
+		name string
+		in   []application.QuotationCompositionRow
+		want [][2]int
+	}{
+		{"dokumen sumber", rows("CATERING", "CATERING", "DEKORASI"), [][2]int{{0, 1}, {2, 2}}},
+		{"semua berbeda", rows("A", "B", "C"), [][2]int{{0, 0}, {1, 1}, {2, 2}}},
+		{"semua sama", rows("A", "A", "A"), [][2]int{{0, 2}}},
+		{"satu blok", rows("A"), [][2]int{{0, 0}}},
+		{"kosong", nil, nil},
+		{"sama tapi terpisah", rows("A", "B", "A"), [][2]int{{0, 0}, {1, 1}, {2, 2}}},
+	}
+	for _, c := range cases {
+		got := compositionSpans(c.in)
+		if len(got) != len(c.want) {
+			t.Errorf("%s: %d span, mau %d (%v)", c.name, len(got), len(c.want), got)
+			continue
+		}
+		for i := range c.want {
+			if got[i] != c.want[i] {
+				t.Errorf("%s: span ke-%d = %v, mau %v", c.name, i, got[i], c.want[i])
+			}
+		}
+	}
+}
+
+// Paritas dengan TestQuotationIsHeadingLine — vektor yang sama persis.
+func TestIsCompositionHeading(t *testing.T) {
+	cases := []struct {
+		line string
+		want bool
+	}{
+		{"BUFFET", true},
+		{"DESSERT", true},
+		{"MINUMAN", true},
+		{"STALL / GUBUKAN", true},
+		{"BONUS :", true},
+		{"Nasi Putih", false},
+		{"Aneka Nasi Goreng", false},
+		{"1 Psg Makeup & Attire Pengantin Akad", false},
+		{"", false},
+		{"   ", false},
+		{"150", false},
+		{"- - -", false},
+		{"2 FOTOGRAFER", true},
+	}
+	for _, c := range cases {
+		if got := isCompositionHeading(c.line); got != c.want {
+			t.Errorf("isCompositionHeading(%q) = %v, mau %v", c.line, got, c.want)
+		}
 	}
 }

@@ -62,6 +62,16 @@ export interface ProjectListFilters {
   eventMonth?: string;
 }
 
+// Bahan dialog konfirmasi hapus Project (D14, T3.5).
+export interface ProjectDeleteImpact {
+  projectId: string;
+  projectName: string;
+  quotationId: string;
+  poNumber: string;
+  paidInvoiceCount: number;
+  paidInvoiceTotal: number;
+}
+
 // --- Raw wire shapes (see apps/api .../projects/presentation/dto.go) ---
 
 interface RawMilestoneStats {
@@ -88,6 +98,13 @@ interface RawProgress {
 
 export interface RawProject {
   id: number;
+  clientId: number;
+  quotationId: number;
+  // Absent on list rows and on the Client Portal's own reads; explicitly null
+  // when there is no quotation to link to — see Project.poNumber.
+  poNumber?: string | null;
+  packageNameFromQuotation?: boolean;
+  quotationUnderRevision?: boolean;
   name: string;
   brideName: string;
   groomName: string;
@@ -127,6 +144,11 @@ function toProgress(raw: RawProgress): ProjectProgress {
 export function toProject(raw: RawProject): Project {
   return {
     id: String(raw.id),
+    clientId: raw.clientId ? String(raw.clientId) : "",
+    quotationId: raw.quotationId ? String(raw.quotationId) : "",
+    poNumber: raw.poNumber ?? null,
+    packageNameFromQuotation: raw.packageNameFromQuotation ?? false,
+    quotationUnderRevision: raw.quotationUnderRevision ?? false,
     name: raw.name,
     brideName: raw.brideName,
     groomName: raw.groomName,
@@ -151,6 +173,25 @@ export function toProject(raw: RawProject): Project {
   };
 }
 
+// withDetailOnlyFields carries over the fields that ONLY GET /projects/{id}
+// ever populates. `progress` and `poNumber` are set by the backend's
+// getProject handler, never by toProjectResponse — so the project returned by
+// a PATCH/POST (edit, attach venue, cancel, archive) legitimately has neither.
+// Replacing currentProject with that response as-is would blank the progress
+// meter and the header's "Penawaran" number until the page is reloaded.
+//
+// This used to be spelled inline, four times, and only for `progress`; the
+// next detail-only field belongs in this one list, not in a fifth copy.
+function withDetailOnlyFields(fresh: Project, previous: Project): Project {
+  return {
+    ...fresh,
+    progress: previous.progress,
+    poNumber: previous.poNumber,
+    packageNameFromQuotation: previous.packageNameFromQuotation,
+    quotationUnderRevision: previous.quotationUnderRevision,
+  };
+}
+
 function projectInputBody(values: ProjectFormValues) {
   return {
     name: values.name,
@@ -166,7 +207,8 @@ function projectInputBody(values: ProjectFormValues) {
     prepStartDate: values.prepStartDate,
     packageName: values.packageName,
     contractValue: values.contractValue,
-    // Dibaca backend hanya pada createProject; diabaikan pada update.
+    // Dibaca backend hanya pada update; packageTemplateId peninggalan form
+    // lama diabaikan.
     packageTemplateId: values.packageTemplateId ? Number(values.packageTemplateId) : 0,
     status: values.status,
     // "" (belum ditugaskan) -> 0, the backend's sentinel for both PIC slots.
@@ -277,6 +319,9 @@ function vendorEngagementInputBody(values: ProjectVendorFormValues) {
     dueDate: values.dueDate || "",
     picStaffId: Number(values.picStaffId),
     notes: values.notes,
+    // Hanya dibaca backend saat komitmen ini membuat total biaya melampaui
+    // Nilai Kontrak; "" di jalur normal. Lihat guardBudget.
+    overBudgetReason: values.overBudgetReason ?? "",
   };
 }
 
@@ -572,7 +617,6 @@ interface ProjectState {
   // showArchived splits active/archived into two disjoint views, never
   // merged (see ADR-0013) — omit or pass false for the normal active view.
   fetchProjectPage: (page: number, filters: ProjectListFilters) => Promise<void>;
-  createProject: (values: ProjectFormValues) => Promise<Project>;
   updateProject: (id: string, values: ProjectFormValues) => Promise<Project>;
   // Attaches/detaches this project's structured venue (ADR-0016) — pass
   // null to detach. Sends a full-replace PATCH body sourced from the
@@ -593,17 +637,17 @@ interface ProjectState {
   fetchProjectVenueSummary: (id: string) => Promise<ProjectVenueSummary | null>;
   cancelProject: (id: string) => Promise<void>;
   toggleArchiveProject: (id: string) => Promise<void>;
-  // Hard delete (ADR-0013) — Owner-only and requires the project already be
-  // archived or cancelled, both enforced server-side, not just by the UI
-  // hiding the button.
+  // Hard delete berjenjang (D14) — Owner-only. `fetchProjectDeleteImpact`
+  // WAJIB dipanggil sebelum dialog dirender; dialog menolak tampil kalau
+  // panggilan ini gagal.
   deleteProject: (id: string) => Promise<void>;
-  // Duplicate (ADR-0014) — clones the source project's milestones and vendor
-  // lineup into a brand-new project; `values` is the new project's own
-  // (possibly user-edited) fields, same shape as create.
-  duplicateProject: (sourceId: string, values: ProjectFormValues) => Promise<Project>;
+  fetchProjectDeleteImpact: (id: string) => Promise<ProjectDeleteImpact>;
 
   fetchProjectDetail: (projectId: string) => Promise<void>;
-  fetchMyProject: () => Promise<string>;
+  // Client Portal: mengembalikan SELURUH project milik client yang login
+  // (D5, T1.13) — portal masuk langsung bila tepat 1, atau menampilkan
+  // pemilih project bila lebih.
+  fetchMyProjects: () => Promise<Project[]>;
 
   fetchMilestones: (projectId: string) => Promise<void>;
   createMilestone: (projectId: string, values: ProjectMilestoneFormValues) => Promise<void>;
@@ -729,19 +773,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ projectPage: list, projectPageMeta: toPaginationMeta(res.data.meta as RawPaginationMeta) });
   },
 
-  createProject: async (values) => {
-    const res = await httpClient.post(API.projects.base, projectInputBody(values));
-    const project = toProject(res.data.data as RawProject);
-    await get().fetchProjects();
-    return project;
-  },
-
   updateProject: async (id, values) => {
     const res = await httpClient.patch(API.projects.item(id), projectInputBody(values));
     const project = toProject(res.data.data as RawProject);
     set((state) => ({
       projects: state.projects.map((p) => (p.id === id ? project : p)),
-      currentProject: state.currentProject?.id === id ? { ...project, progress: state.currentProject.progress } : state.currentProject,
+      currentProject: state.currentProject?.id === id ? withDetailOnlyFields(project, state.currentProject) : state.currentProject,
     }));
     return project;
   },
@@ -775,7 +812,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const project = toProject(res.data.data as RawProject);
     set((state) => ({
       projects: state.projects.map((p) => (p.id === id ? project : p)),
-      currentProject: state.currentProject?.id === id ? { ...project, progress: state.currentProject.progress } : state.currentProject,
+      currentProject: state.currentProject?.id === id ? withDetailOnlyFields(project, state.currentProject) : state.currentProject,
     }));
     return project;
   },
@@ -791,7 +828,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const project = toProject(res.data.data as RawProject);
     set((state) => ({
       projects: state.projects.map((p) => (p.id === id ? project : p)),
-      currentProject: state.currentProject?.id === id ? { ...project, progress: state.currentProject.progress } : state.currentProject,
+      currentProject: state.currentProject?.id === id ? withDetailOnlyFields(project, state.currentProject) : state.currentProject,
     }));
   },
 
@@ -800,7 +837,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const project = toProject(res.data.data as RawProject);
     set((state) => ({
       projects: state.projects.map((p) => (p.id === id ? project : p)),
-      currentProject: state.currentProject?.id === id ? { ...project, progress: state.currentProject.progress } : state.currentProject,
+      currentProject: state.currentProject?.id === id ? withDetailOnlyFields(project, state.currentProject) : state.currentProject,
     }));
   },
 
@@ -812,11 +849,24 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }));
   },
 
-  duplicateProject: async (sourceId, values) => {
-    const res = await httpClient.post(API.projects.duplicate(sourceId), projectInputBody(values));
-    const project = toProject(res.data.data as RawProject);
-    await get().fetchProjects();
-    return project;
+  fetchProjectDeleteImpact: async (id) => {
+    const res = await httpClient.get(API.projects.deleteImpact(id));
+    const raw = res.data.data as {
+      projectId: number;
+      projectName: string;
+      quotationId: number;
+      poNumber: string;
+      paidInvoiceCount: number;
+      paidInvoiceTotal: number;
+    };
+    return {
+      projectId: String(raw.projectId),
+      projectName: raw.projectName,
+      quotationId: raw.quotationId ? String(raw.quotationId) : "",
+      poNumber: raw.poNumber,
+      paidInvoiceCount: raw.paidInvoiceCount,
+      paidInvoiceTotal: raw.paidInvoiceTotal,
+    };
   },
 
   fetchProjectDetail: async (projectId) => {
@@ -831,14 +881,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ currentProject: toProject(res.data.data as RawProject) });
   },
 
-  // Client Portal's entry point (Fase 6) — a client principal has no other
-  // way to learn its own project id, so this resolves + returns it in one
-  // call (mirrors GET /projects/me on the backend).
-  fetchMyProject: async () => {
+  // Client Portal: seluruh project milik client yang login (D5, T1.13).
+  fetchMyProjects: async () => {
     const res = await httpClient.get(API.projects.me);
-    const project = toProject(res.data.data as RawProject);
-    set({ currentProject: project });
-    return project.id;
+    const list = (res.data.data as RawProject[]).map(toProject);
+    set({ currentProject: list.length === 1 ? list[0] : null });
+    return list;
   },
 
   fetchMilestones: async (projectId) => {

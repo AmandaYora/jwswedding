@@ -95,6 +95,21 @@ func (f *fakeProjectRepoForFilterTest) SetArchived(ctx context.Context, tenantID
 func (f *fakeProjectRepoForFilterTest) DeleteCascade(ctx context.Context, tenantID, id int64) error {
 	panic("not implemented")
 }
+func (f *fakeProjectRepoForFilterTest) CreateSeeded(ctx context.Context, p *domain.Project, milestones []domain.ProjectMilestone) error {
+	panic("not implemented")
+}
+func (f *fakeProjectRepoForFilterTest) ListByClient(ctx context.Context, tenantID, clientID int64) ([]domain.Project, error) {
+	panic("not implemented")
+}
+func (f *fakeProjectRepoForFilterTest) FindByQuotationID(ctx context.Context, tenantID, quotationID int64) (*domain.Project, error) {
+	panic("not implemented")
+}
+func (f *fakeProjectRepoForFilterTest) CountByClients(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64]int, error) {
+	panic("not implemented")
+}
+func (f *fakeProjectRepoForFilterTest) ProjectIDsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]int64, error) {
+	panic("not implemented")
+}
 
 // --- Minimal empty-returning sub-repositories, just enough to let
 // ComputeProgressBatch run to completion for whatever page of projects the

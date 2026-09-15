@@ -18,8 +18,10 @@ const PembayaranVenueTabPage = lazy(() => import("@/modules/projects/pages/tabs/
 const ProjectEvidenceTabPage = lazy(() => import("@/modules/projects/pages/tabs/ProjectEvidenceTabPage"));
 const ProjectActivityTabPage = lazy(() => import("@/modules/projects/pages/tabs/ProjectActivityTabPage"));
 const ProjectVenueTabPage = lazy(() => import("@/modules/projects/pages/tabs/ProjectVenueTabPage"));
-const ProjectPackageTabPage = lazy(() => import("@/modules/projects/pages/tabs/ProjectPackageTabPage"));
 const ClientListPage = lazy(() => import("@/modules/clients/pages/ClientListPage"));
+const ClientDetailPage = lazy(() => import("@/modules/clients/pages/ClientDetailPage"));
+const QuotationListPage = lazy(() => import("@/modules/quotations/pages/QuotationListPage"));
+const QuotationDetailPage = lazy(() => import("@/modules/quotations/pages/QuotationDetailPage"));
 const VendorCategoryListPage = lazy(() => import("@/modules/vendor-categories/pages/VendorCategoryListPage"));
 const MilestoneTemplateListPage = lazy(() => import("@/modules/milestone-templates/pages/MilestoneTemplateListPage"));
 const PackageTemplateListPage = lazy(() => import("@/modules/package-templates/pages/PackageTemplateListPage"));
@@ -61,16 +63,31 @@ export const protectedRoutes: RouteObject = {
             { path: "dokumen", element: <ProjectEvidenceTabPage /> },
             { path: "aktivitas", element: <ProjectActivityTabPage /> },
             { path: "venue", element: <ProjectVenueTabPage /> },
-            { path: "paket", element: <ProjectPackageTabPage /> },
+            // Tab "Paket & PO" dihapus (lihat ProjectDetailLayout) — rute
+            // lamanya dipertahankan sebagai pengalihan supaya tautan/bookmark
+            // lama mendarat di sesuatu yang nyata, bukan 404. Preseden sama
+            // dengan "ringkasan"/"venue" di client-portal.routes.tsx.
+            { path: "paket", element: <Navigate to="../vendor" replace /> },
           ],
         },
         {
           element: <RequireRole allow={["Owner", "Admin"]} />,
           children: [
             { path: ROUTE_PATHS.dashboard, element: <DashboardPage /> },
-            { path: ROUTE_PATHS.clients, element: <ClientListPage /> },
             { path: ROUTE_PATHS.vendors, element: <VendorListPage /> },
             { path: ROUTE_PATHS.venues, element: <VenueListPage /> },
+          ],
+        },
+        {
+          // Client + Penawaran terbuka untuk Sales (menyusun penawaran butuh
+          // memilih/menambah pasangan); Wedding Planner membuka keduanya
+          // tidak.
+          element: <RequireRole allow={["Owner", "Admin", "Sales"]} />,
+          children: [
+            { path: ROUTE_PATHS.clients, element: <ClientListPage /> },
+            { path: "/clients/:clientId", element: <ClientDetailPage /> },
+            { path: ROUTE_PATHS.quotations, element: <QuotationListPage /> },
+            { path: "/quotations/:quotationId", element: <QuotationDetailPage /> },
           ],
         },
         {

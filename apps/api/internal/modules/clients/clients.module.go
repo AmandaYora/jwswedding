@@ -1,6 +1,6 @@
-// Package clients wires the clients module — Fase 4, bundled with `projects`
-// since a client row can't exist without a real project_id to reference
-// (see PLAN.md Fase 3 scope note).
+// Package clients wires the clients module — master pasangan (Client) +
+// kontak/akun portal (ClientContact), tenant-scoped (PLAN
+// penawaran-client-master, Fase 1).
 package clients
 
 import (
@@ -13,6 +13,8 @@ import (
 	"jwswedding/internal/modules/clients/presentation"
 	identitycontracts "jwswedding/internal/modules/identity/contracts"
 	projectscontracts "jwswedding/internal/modules/projects/contracts"
+	quotationscontracts "jwswedding/internal/modules/quotations/contracts"
+	"jwswedding/internal/shared/storage"
 )
 
 type Module struct {
@@ -20,10 +22,15 @@ type Module struct {
 	contracts contracts.Contracts
 }
 
-func NewModule(db *sql.DB, projects projectscontracts.Contracts, identity identitycontracts.Contracts) *Module {
+func NewModule(db *sql.DB, projects projectscontracts.Contracts, quotations quotationscontracts.Contracts, identity identitycontracts.Contracts, storageClient *storage.Client) *Module {
 	repo := infrastructure.NewMySQLClientRepository(db)
-	service := application.NewClientService(repo, projects, identity)
-	return &Module{handler: presentation.NewHandler(service), contracts: contracts.New(service)}
+	contactRepo := infrastructure.NewMySQLClientContactRepository(db)
+	contacts := application.NewClientContactService(contactRepo, repo, identity)
+	service := application.NewClientService(repo, contacts, projects, quotations, identity)
+	contacts.SetSyncer(service)
+	signatureRepo := infrastructure.NewMySQLClientSignatureRepository(db)
+	signatures := application.NewClientSignatureService(signatureRepo, repo, storageClient)
+	return &Module{handler: presentation.NewHandler(service, contacts, signatures), contracts: contracts.New(service, signatures)}
 }
 
 func (m *Module) Contracts() contracts.Contracts {

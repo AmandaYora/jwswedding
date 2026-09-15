@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { FileText, FolderOpen, Eye } from "lucide-react";
 import { Badge } from "@/shared/components/ui/Badge";
-import { EvidenceViewerModal } from "@/shared/components/ui/EvidenceViewerModal";
+import { ClientEvidenceViewerModal } from "@/modules/client-portal/components/ClientEvidenceViewerModal";
+import { PortalEmpty, PortalError, PortalLoading } from "@/modules/client-portal/components/PortalState";
+import { usePortalSections } from "@/modules/client-portal/hooks/usePortalSections";
+import { clientEvidenceTypeLabel } from "@/modules/client-portal/lib/labels";
 import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
 import type { Evidence } from "@/modules/projects/types";
 import { formatDate } from "@/shared/lib/formatters";
@@ -17,12 +20,9 @@ import type { ClientPortalContext } from "@/modules/client-portal/layouts/Client
 export default function DokumenTabPage() {
   const { projectId } = useOutletContext<ClientPortalContext>();
   const documents = useProjectStore((s) => s.documents);
-  const fetchDocuments = useProjectStore((s) => s.fetchDocuments);
   const [viewingEvidence, setViewingEvidence] = useState<Evidence | null>(null);
 
-  useEffect(() => {
-    void fetchDocuments(projectId);
-  }, [projectId, fetchDocuments]);
+  const { loading, error, reload } = usePortalSections(projectId, ["documents"]);
 
   const sortedDocuments = [...documents].sort((a, b) => (a.uploadedAt < b.uploadedAt ? 1 : -1));
 
@@ -30,7 +30,7 @@ export default function DokumenTabPage() {
     <div className="flex flex-col gap-6 sm:gap-8">
       <section>
         <div className="mb-4 flex items-center gap-3 border-b border-border pb-4 sm:mb-6">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-info-soft text-info">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-info-soft text-info">
             <FileText className="h-5 w-5 shrink-0" />
           </div>
           <div>
@@ -41,21 +41,23 @@ export default function DokumenTabPage() {
           </div>
         </div>
 
-        {sortedDocuments.length === 0 ? (
-          <div className="flex flex-col items-center gap-4 rounded-3xl border border-border bg-white p-10 text-center shadow-sm sm:p-16">
-            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-info-soft text-info mb-2">
-              <FolderOpen className="h-10 w-10" />
-            </div>
-            <p className="max-w-md text-[15px] font-bold text-navy-950 sm:text-[16px]">Belum Ada Dokumen</p>
-            <p className="max-w-sm text-[14px] text-text-secondary mt-1">
-              Dokumen umum acara Anda akan muncul di sini setelah dibagikan oleh tim kami.
-            </p>
-          </div>
+        {loading ? (
+          <PortalLoading label="Memuat dokumen..." />
+        ) : error ? (
+          <PortalError message={error} onRetry={reload} />
+        ) : sortedDocuments.length === 0 ? (
+          <PortalEmpty
+            icon={FolderOpen}
+            tone="info"
+            title="Belum Ada Dokumen"
+            description="Dokumen umum acara Anda akan muncul di sini setelah dibagikan oleh tim kami."
+          />
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {sortedDocuments.map((doc) => (
               <button
                 key={doc.id}
+                type="button"
                 onClick={() => setViewingEvidence(doc)}
                 className="flex items-start gap-3 rounded-2xl border border-border bg-white p-4 text-left shadow-sm transition-colors hover:border-navy-200 hover:bg-surface-muted/50"
               >
@@ -65,7 +67,7 @@ export default function DokumenTabPage() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[14px] font-semibold text-navy-950">{doc.name}</p>
                   <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[12px] text-text-secondary">
-                    <Badge tone="neutral">{doc.type}</Badge>
+                    <Badge tone="neutral">{clientEvidenceTypeLabel(doc.type)}</Badge>
                     <span>{formatDate(doc.documentDate)}</span>
                   </div>
                   {doc.description && (
@@ -80,7 +82,11 @@ export default function DokumenTabPage() {
       </section>
 
       {viewingEvidence && (
-        <EvidenceViewerModal open onClose={() => setViewingEvidence(null)} projectId={projectId} evidence={viewingEvidence} />
+        <ClientEvidenceViewerModal
+          evidence={viewingEvidence}
+          projectId={projectId}
+          onClose={() => setViewingEvidence(null)}
+        />
       )}
     </div>
   );

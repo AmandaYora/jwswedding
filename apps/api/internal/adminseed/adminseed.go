@@ -195,15 +195,19 @@ var truncateTables = []string{
 	"venue_payments",
 	"venues",
 	"project_milestone_templates",
-	// PO Paket (PLAN.md po-paket-client, migrations 000052-000054). Order is
-	// cosmetic here — truncateAll disables FK checks — but children are listed
-	// before parents to match the rest of this list.
-	"project_package_adjustments",
-	"project_package_blocks",
-	"project_package_orders",
+	// Penawaran-client-master (migrations 000056-000062): komposisi PO lama
+	// dibuang; penawaran + anak-anaknya dan kontak terpisah dari master.
+	// Order is cosmetic here — truncateAll disables FK checks — but children
+	// are listed before parents to match the rest of this list.
+	"quotation_adjustments",
+	"quotation_blocks",
+	"quotations",
+	"client_contacts",
 	"package_template_blocks",
-	"package_template_terms",
 	"package_templates",
+	// TTD Penawaran (migrations 000066-000067): specimen + link tanda tangan.
+	"quotation_signature_links",
+	"client_signatures",
 	// platform's own pending-charge index (D8/D11) — not a business ledger,
 	// safe to wipe along with everything else.
 	"pending_subscription_charges",

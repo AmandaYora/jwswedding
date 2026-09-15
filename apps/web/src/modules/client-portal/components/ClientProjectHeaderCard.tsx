@@ -1,19 +1,19 @@
-import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { HeartHandshake } from "lucide-react";
 import { Badge } from "@/shared/components/ui/Badge";
 import { ProgressMeter } from "@/shared/components/ui/ProgressMeter";
-import { ProjectStatusBadge } from "@/modules/projects/components/StatusBadges";
+import { ClientProjectStatusBadge } from "@/modules/client-portal/components/ClientBadges";
 import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
+import { usePortalSections } from "@/modules/client-portal/hooks/usePortalSections";
 import { CLIENT_CONDITION_COPY } from "@/modules/client-portal/lib/condition";
 import { formatCurrency, formatDate } from "@/shared/lib/formatters";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 
 function InfoField({ label, value }: { label: string; value: string }) {
   return (
-    <div>
+    <div className="min-w-0">
       <p className="text-[11.5px] font-medium uppercase tracking-wide text-text-secondary">{label}</p>
-      <p className="mt-1 text-[14px] font-semibold text-navy-950">{value}</p>
+      <p className="mt-1 break-words text-[14px] font-semibold text-navy-950">{value}</p>
     </div>
   );
 }
@@ -32,23 +32,24 @@ export function ClientProjectHeaderCard({ projectId }: { projectId: string }) {
   const vendorMilestones = useProjectStore((s) => s.vendorMilestones);
   const clientPayments = useProjectStore((s) => s.clientPayments);
   const issues = useProjectStore((s) => s.issues);
-  const fetchMilestones = useProjectStore((s) => s.fetchMilestones);
-  const fetchVendorSection = useProjectStore((s) => s.fetchVendorSection);
-  const fetchClientPayments = useProjectStore((s) => s.fetchClientPayments);
-  const fetchIssues = useProjectStore((s) => s.fetchIssues);
 
-  useEffect(() => {
-    void fetchMilestones(projectId);
-    void fetchVendorSection(projectId);
-    void fetchClientPayments(projectId);
-    void fetchIssues(projectId);
-  }, [projectId, fetchMilestones, fetchVendorSection, fetchClientPayments, fetchIssues]);
+  // Shared with whichever tab is mounted below (usePortalSections dedupes
+  // concurrent requests) — this card used to fire its own four fetches on
+  // top of the tab's overlapping set, doubling every request on tab switch.
+  const { loading, error } = usePortalSections(projectId, ["milestones", "vendors", "clientPayments", "issues"]);
+  // A failed fetch is as untrustworthy as an unfinished one here: both leave
+  // the arrays empty, and deriving Sisa Tagihan from an empty payment list
+  // bills the client for the whole contract again.
+  const figuresReady = !loading && !error;
 
   if (!project) return null;
 
   // Sisa Tagihan — identical formula to WO Console's own "Sisa Tagihan
   // Client" (ProjectHeaderCard.tsx), independently re-derived here since no
-  // shared helper exists yet for it.
+  // shared helper exists yet for it. Held back until the payments actually
+  // land: deriving it from an empty array shows the FULL contract value as
+  // outstanding for a beat, then drops — the client watches a bill they have
+  // already paid appear and disappear.
   const totalReceived = clientPayments.reduce((sum, p) => (p.type === "Refund" ? sum - p.amount : sum + p.amount), 0);
   const outstanding = project.contractValue - totalReceived;
   const openIssueCount = issues.filter((i) => i.status !== "Resolved" && i.status !== "Closed").length;
@@ -56,26 +57,29 @@ export function ClientProjectHeaderCard({ projectId }: { projectId: string }) {
   const progress = project.progress;
   const segments = [...milestones, ...vendorMilestones];
   const totalMilestones = (progress?.projectMilestoneStats.total ?? 0) + (progress?.vendorMilestoneStats.total ?? 0);
-  const completedMilestones = (progress?.projectMilestoneStats.completed ?? 0) + (progress?.vendorMilestoneStats.completed ?? 0);
+  const completedMilestones =
+    (progress?.projectMilestoneStats.completed ?? 0) + (progress?.vendorMilestoneStats.completed ?? 0);
   const conditionCopy = progress ? CLIENT_CONDITION_COPY[progress.condition] : null;
 
   return (
     <div className="flex flex-col gap-5 rounded-3xl border border-border bg-white p-6 shadow-sm sm:p-8">
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-bold text-navy-950">{project.name}</h1>
-        <ProjectStatusBadge status={project.status} />
+        <ClientProjectStatusBadge status={project.status} />
       </div>
 
       <div className="grid grid-cols-2 gap-4 border-t border-border-light pt-4 sm:grid-cols-3 lg:grid-cols-5">
         <InfoField label="Tanggal Acara" value={formatDate(project.eventDate)} />
-        <InfoField label="Paket / Layanan" value={project.packageName} />
+        <InfoField label="Paket / Layanan" value={project.packageName || "-"} />
         <InfoField label="Nilai Kontrak" value={formatCurrency(project.contractValue)} />
-        <InfoField label="Sisa Tagihan" value={formatCurrency(outstanding)} />
+        <InfoField label="Sisa Tagihan" value={figuresReady ? formatCurrency(outstanding) : "—"} />
         <InfoField label="Penanggung Jawab" value={project.picName || "-"} />
       </div>
 
       {project.description && (
-        <p className="rounded-md bg-surface-muted px-4 py-3 text-[13px] text-text-secondary">{project.description}</p>
+        <p className="whitespace-pre-line rounded-md bg-surface-muted px-4 py-3 text-[13px] text-text-secondary">
+          {project.description}
+        </p>
       )}
 
       {progress && conditionCopy && (
@@ -91,7 +95,11 @@ export function ClientProjectHeaderCard({ projectId }: { projectId: string }) {
           </div>
           <ProgressMeter
             percent={progress.overallPercent}
-            segments={segments}
+            // Notches come from the milestone lists, which arrive after the
+            // percent does (the percent ships with the project itself) —
+            // passing a half-loaded list would draw the wrong number of
+            // segments and then re-draw.
+            segments={figuresReady ? segments : []}
             caption={`${completedMilestones}/${totalMilestones} timeline selesai berdasarkan pencapaian nyata — bukan estimasi manual.`}
           />
         </div>
@@ -110,7 +118,7 @@ export function ClientProjectHeaderCard({ projectId }: { projectId: string }) {
               Terdapat kendala aktif yang sedang kami tangani.
             </p>
           </div>
-          <span className="inline-flex items-center gap-1.5 text-[13px] font-bold text-warning-strong group-hover:underline underline-offset-4">
+          <span className="inline-flex items-center gap-1.5 text-[13px] font-bold text-warning-strong underline-offset-4 group-hover:underline">
             Lihat detail <HeartHandshake className="h-4 w-4" />
           </span>
         </Link>

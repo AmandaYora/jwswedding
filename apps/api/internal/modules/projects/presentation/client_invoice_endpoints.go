@@ -97,6 +97,21 @@ func (h *Handler) createClientInvoice(w http.ResponseWriter, r *http.Request, cl
 		response.Error(w, http.StatusUnprocessableEntity, "Format tanggal tidak valid", map[string][]string{"dueDate": {"Gunakan format YYYY-MM-DD"}})
 		return
 	}
+	// Penawaran yang sedang direvisi belum dikirim ulang, jadi nilai kontrak
+	// project saat ini BELUM disepakati klien — menerbitkan Tagihan di atasnya
+	// berarti menagih angka yang belum ia setujui. Ditahan sampai revisinya
+	// dikirim; itu satu klik di menu Penawaran, bukan jalan buntu.
+	project, err := h.projects.Get(r.Context(), claims.tenantID, projectID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	if h.projects.QuotationUnderRevision(r.Context(), claims.tenantID, project.QuotationID) {
+		response.Error(w, http.StatusUnprocessableEntity,
+			"Penawaran project ini sedang direvisi dan belum dikirim ulang — Nilai Kontrak-nya belum disepakati klien",
+			map[string][]string{"quotation": {"Kirim ulang penawarannya dulu, baru terbitkan Tagihan."}})
+		return
+	}
 	inv, err := h.clientInvoices.Create(r.Context(), claims.tenantID, projectID, claims.staffID, application.ClientInvoiceInput{
 		Type: domain.PaymentType(body.Type), Description: body.Description, Amount: body.Amount, DueDate: dueDate,
 	})
@@ -291,7 +306,20 @@ func (h *Handler) downloadClientInvoicePDF(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	pdf, err := buildClientInvoicePDF(*project, *inv, profile, logo, signature, totalPaid)
+	// Konteks PO: keduanya display-only dan menelan errornya sendiri (lihat
+	// ResolvePONumber/QuotationComposition), jadi project pra-penawaran —
+	// atau penawaran yang barisnya sudah hilang — mencetak tagihan tanpa
+	// tabel komposisi, bukan gagal mencetak.
+	// ResolvePONumber bertri-state (nil = tidak ada penawaran yang bisa
+	// dituju, "" = ada tapi belum bernomor). Di atas kertas keduanya sama
+	// saja: tidak ada nomor untuk dicantumkan, jadi keduanya jatuh ke "-".
+	poNumber := ""
+	if n := h.projects.ResolvePONumber(r.Context(), claims.tenantID, project.QuotationID); n != nil {
+		poNumber = *n
+	}
+	composition := h.projects.QuotationComposition(r.Context(), claims.tenantID, project.QuotationID)
+
+	pdf, err := buildClientInvoicePDF(*project, *inv, profile, logo, signature, totalPaid, poNumber, composition)
 	if err != nil {
 		writeAppError(w, err)
 		return

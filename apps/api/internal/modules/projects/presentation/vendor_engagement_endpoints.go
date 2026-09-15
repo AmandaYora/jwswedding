@@ -85,6 +85,9 @@ type vendorEngagementInputBody struct {
 	DueDate          string `json:"dueDate"`
 	PICStaffID       int64  `json:"picStaffId"`
 	Notes            string `json:"notes"`
+	// Diisi hanya saat komitmen ini membuat total biaya melampaui Nilai
+	// Kontrak — tanpa itu servernya menolak 422. Lihat guardBudget.
+	OverBudgetReason string `json:"overBudgetReason"`
 }
 
 func toVendorEngagementInput(body vendorEngagementInputBody) (application.VendorEngagementInput, error) {
@@ -100,6 +103,7 @@ func toVendorEngagementInput(body vendorEngagementInputBody) (application.Vendor
 		EngagementStatus: domain.EngagementStatus(body.EngagementStatus), BookingDate: bookingDate, EventDate: eventDate,
 		EventStartTime: body.EventStartTime, EventEndTime: body.EventEndTime,
 		DPAmount: body.DPAmount, DueDate: dueDate, PICStaffID: body.PICStaffID, Notes: body.Notes,
+		OverBudgetReason: body.OverBudgetReason,
 	}, nil
 }
 
@@ -125,7 +129,7 @@ func (h *Handler) createVendorEngagement(w http.ResponseWriter, r *http.Request,
 		response.Error(w, http.StatusUnprocessableEntity, "Format tanggal tidak valid", map[string][]string{"eventDate": {"Gunakan format YYYY-MM-DD"}})
 		return
 	}
-	pv, err := h.vendors.Create(r.Context(), projectID, claims.staffID, input)
+	pv, err := h.vendors.Create(r.Context(), claims.tenantID, projectID, claims.staffID, input)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -151,7 +155,7 @@ func (h *Handler) updateVendorEngagement(w http.ResponseWriter, r *http.Request,
 		response.Error(w, http.StatusUnprocessableEntity, "Format tanggal tidak valid", map[string][]string{"eventDate": {"Gunakan format YYYY-MM-DD"}})
 		return
 	}
-	pv, err := h.vendors.Update(r.Context(), projectID, pvID, claims.staffID, claims.role, input)
+	pv, err := h.vendors.Update(r.Context(), claims.tenantID, projectID, pvID, claims.staffID, claims.role, input)
 	if err != nil {
 		writeAppError(w, err)
 		return

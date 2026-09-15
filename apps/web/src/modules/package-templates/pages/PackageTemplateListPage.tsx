@@ -10,10 +10,9 @@ import { IconActionButton } from "@/shared/components/ui/IconActionButton";
 import {
   usePackageTemplateStore,
   type BlockDraft,
-  type TermDraft,
   type PackageTemplateSubmitValues,
 } from "@/modules/package-templates/stores/usePackageTemplateStore";
-import type { PackageTemplate, PackageTermType } from "@/modules/package-templates/types";
+import type { PackageTemplate, PackageTemplateSummary } from "@/modules/package-templates/types";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
 import { formatCurrency } from "@/shared/lib/formatters";
 
@@ -25,38 +24,71 @@ const EMPTY_TEMPLATE: PackageTemplateSubmitValues = {
   isActive: true,
 };
 
-const TERM_TYPES: PackageTermType[] = ["DP", "Termin", "Pelunasan"];
+// Draft rows carry a local key rather than being addressed by array index, so
+// deleting row 2 does not hand row 3's text to row 2's textarea mid-edit.
+let rowSeq = 0;
+const nextRowKey = () => `row-${(rowSeq += 1)}`;
+
+type BlockRow = BlockDraft & { key: string };
+
+/**
+ * A failed save leaves its modal open, so the message has to render INSIDE
+ * the modal — the card behind it is covered by the overlay, and an error shown
+ * only there reads as "the button did nothing".
+ */
+function ErrorNote({ message }: { message: string }) {
+  return (
+    <p
+      role="alert"
+      className="rounded-md border border-danger/30 bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger"
+    >
+      {message}
+    </p>
+  );
+}
 
 /**
  * Pengaturan → Template Paket.
  *
- * A template is what makes the PO worth having: its blocks and payment
- * schedule are typed once here and copied into every deal, so the composition
- * editor below accepts a whole category as pasted text rather than asking for
- * sixty separate rows.
+ * A template is what makes the PO worth having: its blocks are typed once here
+ * and copied into every deal, so the composition editor below accepts a whole
+ * category as pasted text rather than asking for sixty separate rows.
+ *
+ * List rows are summaries — a count, no composition. The editor loads the
+ * template by id when it opens, so what it shows, and therefore what its
+ * whole-list PUT writes back, is always what is actually stored.
  */
 export default function PackageTemplateListPage() {
   const templates = usePackageTemplateStore((s) => s.templates);
   const loading = usePackageTemplateStore((s) => s.loading);
   const fetchTemplates = usePackageTemplateStore((s) => s.fetchTemplates);
+  const getTemplate = usePackageTemplateStore((s) => s.getTemplate);
   const createTemplate = usePackageTemplateStore((s) => s.createTemplate);
   const updateTemplate = usePackageTemplateStore((s) => s.updateTemplate);
   const deleteTemplate = usePackageTemplateStore((s) => s.deleteTemplate);
   const saveBlocks = usePackageTemplateStore((s) => s.saveBlocks);
-  const saveTerms = usePackageTemplateStore((s) => s.saveTerms);
 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Which row's editor is being fetched, e.g. "blocks:7" — drives its label. */
+  const [opening, setOpening] = useState<string | null>(null);
   const [formDraft, setFormDraft] = useState<{ id: string | null; values: PackageTemplateSubmitValues } | null>(null);
   const [blocksFor, setBlocksFor] = useState<PackageTemplate | null>(null);
-  const [blockRows, setBlockRows] = useState<BlockDraft[]>([]);
-  const [termsFor, setTermsFor] = useState<PackageTemplate | null>(null);
-  const [termRows, setTermRows] = useState<TermDraft[]>([]);
-  const [confirmDelete, setConfirmDelete] = useState<PackageTemplate | null>(null);
+  const [blockRows, setBlockRows] = useState<BlockRow[]>([]);
+  const [confirmDelete, setConfirmDelete] = useState<PackageTemplateSummary | null>(null);
 
   useEffect(() => {
     void fetchTemplates();
   }, [fetchTemplates]);
+
+  // Closing a modal drops its error with it — left behind, the message would
+  // resurface on the card detached from the action that caused it.
+  function dismiss(close: () => void) {
+    return () => {
+      close();
+      setError(null);
+    };
+  }
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -69,6 +101,53 @@ export default function PackageTemplateListPage() {
       setBusy(false);
     }
   }
+
+  // The editor reads the template fresh rather than from the list row: the
+  // list carries a count only, and the PUT below replaces the entire block
+  // list, so editing anything but the stored rows would overwrite them.
+  async function openEditor(summary: PackageTemplateSummary) {
+    setError(null);
+    setOpening(`blocks:${summary.id}`);
+    try {
+      const full = await getTemplate(summary.id);
+      setBlocksFor(full);
+      setBlockRows(
+        full.blocks.map(({ category, body, qtyText, bonusNote }) => ({
+          key: nextRowKey(),
+          category,
+          body,
+          qtyText,
+          bonusNote,
+        })),
+      );
+    } catch (err) {
+      setError(getApiErrorMessage(err, "Gagal memuat template"));
+    } finally {
+      setOpening(null);
+    }
+  }
+
+  // Saving an empty editor is a legitimate way to clear a template, but it
+  // must never happen unnoticed — the warning and the button say so outright.
+  const clearingBlocks = blocksFor !== null && blockRows.length === 0 && blocksFor.blocks.length > 0;
+
+  function submitBlocks() {
+    if (!blocksFor) return;
+    const blank = blockRows.findIndex((r) => !r.category.trim());
+    if (blank !== -1) {
+      setError(`Rincian ke-${blank + 1} belum diberi kategori.`);
+      return;
+    }
+    void run(async () => {
+      await saveBlocks(
+        blocksFor.id,
+        blockRows.map(({ category, body, qtyText, bonusNote }) => ({ category, body, qtyText, bonusNote })),
+      );
+      setBlocksFor(null);
+    });
+  }
+
+  const modalOpen = formDraft !== null || blocksFor !== null || confirmDelete !== null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -83,7 +162,11 @@ export default function PackageTemplateListPage() {
           }
         />
         <CardContent>
-          {error && <p className="mb-3 text-[13px] text-danger">{error}</p>}
+          {error && !modalOpen && (
+            <div className="mb-3">
+              <ErrorNote message={error} />
+            </div>
+          )}
           {loading && templates.length === 0 ? (
             <p className="py-10 text-center text-[13px] text-text-secondary">Memuat template...</p>
           ) : templates.length === 0 ? (
@@ -109,37 +192,12 @@ export default function PackageTemplateListPage() {
                       {!t.isActive && <Badge tone="neutral">Nonaktif</Badge>}
                     </div>
                     <p className="mt-0.5 text-[13px] text-text-secondary">
-                      {formatCurrency(t.basePrice)} · {t.blocks.length} rincian · {t.terms.length} termin
+                      {formatCurrency(t.basePrice)} · {t.blockCount} rincian
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        setBlocksFor(t);
-                        setBlockRows(t.blocks.map(({ category, body, qtyText, bonusNote }) => ({ category, body, qtyText, bonusNote })));
-                      }}
-                    >
-                      Isi Paket
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        setTermsFor(t);
-                        setTermRows(
-                          t.terms.map(({ label, type, percent, fixedAmount, daysBeforeEvent }) => ({
-                            label,
-                            type,
-                            percent,
-                            fixedAmount,
-                            daysBeforeEvent,
-                          })),
-                        );
-                      }}
-                    >
-                      Termin
+                    <Button size="sm" variant="secondary" disabled={opening !== null} onClick={() => void openEditor(t)}>
+                      {opening === `blocks:${t.id}` ? "Memuat..." : "Isi Paket"}
                     </Button>
                     <IconActionButton
                       icon={Pencil}
@@ -170,12 +228,12 @@ export default function PackageTemplateListPage() {
       {/* --- Modal: identitas paket --- */}
       <Modal
         open={formDraft !== null}
-        onClose={() => setFormDraft(null)}
+        onClose={dismiss(() => setFormDraft(null))}
         title={formDraft?.id === null ? "Tambah Paket" : "Ubah Paket"}
         size="lg"
         footer={
           <>
-            <Button variant="ghost" onClick={() => setFormDraft(null)}>
+            <Button variant="ghost" onClick={dismiss(() => setFormDraft(null))}>
               Batal
             </Button>
             <Button
@@ -196,6 +254,7 @@ export default function PackageTemplateListPage() {
       >
         {formDraft && (
           <div className="flex flex-col gap-3">
+            {error && <ErrorNote message={error} />}
             <Field label="Nama paket" htmlFor="pt-name" required>
               <Input
                 id="pt-name"
@@ -205,9 +264,9 @@ export default function PackageTemplateListPage() {
               />
             </Field>
             <Field
-              label="Harga paket"
+              label="Harga Standar"
               htmlFor="pt-price"
-              hint="Harga standar paket ini. Masih bisa disesuaikan di setiap project."
+              hint="Nilai awal saat paket dipilih di penawaran — Sales/Admin/Owner boleh mengubahnya di tiap penawaran."
             >
               <CurrencyInput
                 id="pt-price"
@@ -249,36 +308,33 @@ export default function PackageTemplateListPage() {
       {/* --- Modal: isi paket --- */}
       <Modal
         open={blocksFor !== null}
-        onClose={() => setBlocksFor(null)}
+        onClose={dismiss(() => setBlocksFor(null))}
         title={`Isi Paket — ${blocksFor?.name ?? ""}`}
         size="lg"
         footer={
           <>
-            <Button variant="ghost" onClick={() => setBlocksFor(null)}>
+            <Button variant="ghost" onClick={dismiss(() => setBlocksFor(null))}>
               Batal
             </Button>
-            <Button
-              disabled={busy}
-              onClick={() => {
-                if (!blocksFor) return;
-                void run(async () => {
-                  await saveBlocks(blocksFor.id, blockRows);
-                  setBlocksFor(null);
-                });
-              }}
-            >
-              Simpan isi paket
+            <Button variant={clearingBlocks ? "danger" : "primary"} disabled={busy} onClick={submitBlocks}>
+              {clearingBlocks ? "Hapus semua rincian" : "Simpan isi paket"}
             </Button>
           </>
         }
       >
         <div className="flex flex-col gap-3">
+          {error && <ErrorNote message={error} />}
+          {clearingBlocks && (
+            <ErrorNote
+              message={`Daftar ini kosong. Menyimpan sekarang akan menghapus ${blocksFor?.blocks.length} rincian yang tersimpan.`}
+            />
+          )}
           <p className="text-[13px] text-text-secondary">
             Isi paket yang akan tercetak di PO. Tempel daftar item langsung dari Excel; baris yang diketik HURUF
             KAPITAL akan dicetak tebal.
           </p>
           {blockRows.map((row, i) => (
-            <div key={i} className="rounded-lg border border-border p-3">
+            <div key={row.key} className="rounded-lg border border-border p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <Input
                   value={row.category}
@@ -317,134 +373,20 @@ export default function PackageTemplateListPage() {
           <Button
             variant="secondary"
             icon={<Plus className="h-3.5 w-3.5" />}
-            onClick={() => setBlockRows([...blockRows, { category: "", body: "", qtyText: "", bonusNote: "" }])}
+            onClick={() => setBlockRows([...blockRows, { key: nextRowKey(), category: "", body: "", qtyText: "", bonusNote: "" }])}
           >
             Tambah rincian
           </Button>
         </div>
       </Modal>
 
-      {/* --- Modal: preset termin --- */}
-      <Modal
-        open={termsFor !== null}
-        onClose={() => setTermsFor(null)}
-        title={`Termin — ${termsFor?.name ?? ""}`}
-        size="lg"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setTermsFor(null)}>
-              Batal
-            </Button>
-            <Button
-              disabled={busy}
-              onClick={() => {
-                if (!termsFor) return;
-                void run(async () => {
-                  await saveTerms(termsFor.id, termRows);
-                  setTermsFor(null);
-                });
-              }}
-            >
-              Simpan termin
-            </Button>
-          </>
-        }
-      >
-        <div className="flex flex-col gap-3">
-          <p className="text-[13px] text-text-secondary">
-            Nominal setiap tahap dihitung otomatis dari total tiap project.
-          </p>
-          {termRows.map((row, i) => (
-            <div key={i} className="grid items-end gap-2 rounded-lg border border-border p-3 sm:grid-cols-[1fr_auto_auto_auto_auto]">
-              <Field label="Label" htmlFor={`term-label-${i}`}>
-                <Input
-                  id={`term-label-${i}`}
-                  value={row.label}
-                  placeholder="Pembayaran 1"
-                  onChange={(e) => setTermRows(termRows.map((r, j) => (j === i ? { ...r, label: e.target.value } : r)))}
-                />
-              </Field>
-              <Field label="Jenis" htmlFor={`term-type-${i}`}>
-                <Select
-                  value={row.type}
-                  onChange={(e) => setTermRows(termRows.map((r, j) => (j === i ? { ...r, type: e.target.value as PackageTermType } : r)))}
-                >
-                  {TERM_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label="Persen" htmlFor={`term-pct-${i}`}>
-                <Input
-                  id={`term-pct-${i}`}
-                  type="number"
-                  value={row.percent ?? ""}
-                  placeholder="30"
-                  onChange={(e) =>
-                    setTermRows(
-                      termRows.map((r, j) =>
-                        j === i ? { ...r, percent: e.target.value === "" ? null : Number(e.target.value), fixedAmount: null } : r,
-                      ),
-                    )
-                  }
-                />
-              </Field>
-              <Field label="Nominal tetap" htmlFor={`term-fixed-${i}`}>
-                <Input
-                  id={`term-fixed-${i}`}
-                  type="number"
-                  value={row.fixedAmount ?? ""}
-                  placeholder="10000000"
-                  onChange={(e) =>
-                    setTermRows(
-                      termRows.map((r, j) =>
-                        j === i ? { ...r, fixedAmount: e.target.value === "" ? null : Number(e.target.value), percent: null } : r,
-                      ),
-                    )
-                  }
-                />
-              </Field>
-              <div className="flex items-end gap-2">
-                <Field label="Jatuh tempo" htmlFor={`term-days-${i}`}>
-                  <Input
-                    id={`term-days-${i}`}
-                    type="number"
-                    value={row.daysBeforeEvent}
-                    onChange={(e) =>
-                      setTermRows(termRows.map((r, j) => (j === i ? { ...r, daysBeforeEvent: Number(e.target.value) } : r)))
-                    }
-                  />
-                </Field>
-                <IconActionButton
-                  icon={Trash2}
-                  label="Hapus termin"
-                  tone="danger"
-                  onClick={() => setTermRows(termRows.filter((_, j) => j !== i))}
-                />
-              </div>
-            </div>
-          ))}
-          <Button
-            variant="secondary"
-            icon={<Plus className="h-3.5 w-3.5" />}
-            onClick={() =>
-              setTermRows([...termRows, { label: "", type: "Termin", percent: null, fixedAmount: null, daysBeforeEvent: 30 }])
-            }
-          >
-            Tambah termin
-          </Button>
-        </div>
-      </Modal>
-
       <Modal
         open={confirmDelete !== null}
-        onClose={() => setConfirmDelete(null)}
+        onClose={dismiss(() => setConfirmDelete(null))}
         title="Hapus template paket?"
         footer={
           <>
-            <Button variant="ghost" onClick={() => setConfirmDelete(null)}>
+            <Button variant="ghost" onClick={dismiss(() => setConfirmDelete(null))}>
               Batal
             </Button>
             <Button
@@ -463,10 +405,13 @@ export default function PackageTemplateListPage() {
           </>
         }
       >
-        <p className="text-[13px] text-text-primary">
-          <strong>{confirmDelete?.name}</strong> akan dihapus beserta isi dan terminnya. PO project yang sudah
-          memakainya tidak terpengaruh.
-        </p>
+        <div className="flex flex-col gap-3">
+          {error && <ErrorNote message={error} />}
+          <p className="text-[13px] text-text-primary">
+            <strong>{confirmDelete?.name}</strong> akan dihapus beserta isi dan terminnya. PO project yang sudah
+            memakainya tidak terpengaruh.
+          </p>
+        </div>
       </Modal>
     </div>
   );

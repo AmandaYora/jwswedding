@@ -2,94 +2,96 @@ package application
 
 import (
 	"context"
-	"time"
 
 	identitycontracts "jwswedding/internal/modules/identity/contracts"
 	projectscontracts "jwswedding/internal/modules/projects/contracts"
+	quotationscontracts "jwswedding/internal/modules/quotations/contracts"
 
 	"jwswedding/internal/modules/clients/domain"
 	"jwswedding/internal/shared/apperror"
 	"jwswedding/internal/shared/logger"
 	"jwswedding/internal/shared/pagination"
-	"jwswedding/internal/shared/validator"
 )
 
 type ClientRepository interface {
-	ListByProject(ctx context.Context, tenantID, projectID int64) ([]domain.Client, error)
-	ListByTenant(ctx context.Context, tenantID int64) ([]domain.Client, error)
-	ListByTenantPaginated(ctx context.Context, tenantID int64, params pagination.Params, search string) ([]domain.Client, int64, error)
 	FindByID(ctx context.Context, tenantID, id int64) (*domain.Client, error)
+	// FindByIDs memuat sekumpulan client dalam satu query — dipakai
+	// CoupleNamesBatch supaya daftar Penawaran tidak jadi N+1 (§11).
+	FindByIDs(ctx context.Context, tenantID int64, ids []int64) ([]domain.Client, error)
+	ListPaginated(ctx context.Context, tenantID int64, params pagination.Params, search string) ([]domain.Client, int64, error)
 	Create(ctx context.Context, c *domain.Client) error
 	Update(ctx context.Context, c *domain.Client) error
-	SetActive(ctx context.Context, tenantID, id int64, isActive bool) error
-	SetCredentialResetAt(ctx context.Context, tenantID, id int64, when time.Time) error
 	Delete(ctx context.Context, tenantID, id int64) error
 }
 
+// ClientService mengelola master pasangan (T1.8) — Client baru. Bertindak
+// sebagai SyncCredentialActive (D4), direktori nama/telepon untuk modul
+// quotations, dan orkestrasi hapus-berjenjang (T3.5).
 type ClientService struct {
-	repo     ClientRepository
-	projects projectscontracts.Contracts
-	identity identitycontracts.Contracts
+	repo       ClientRepository
+	contacts   *ClientContactService
+	projects   projectscontracts.Contracts
+	quotations quotationscontracts.Contracts
+	identity   identitycontracts.Contracts
 }
 
-func NewClientService(repo ClientRepository, projects projectscontracts.Contracts, identity identitycontracts.Contracts) *ClientService {
-	return &ClientService{repo: repo, projects: projects, identity: identity}
+func NewClientService(repo ClientRepository, contacts *ClientContactService, projects projectscontracts.Contracts, quotations quotationscontracts.Contracts, identity identitycontracts.Contracts) *ClientService {
+	return &ClientService{repo: repo, contacts: contacts, projects: projects, quotations: quotations, identity: identity}
 }
 
-func (s *ClientService) ListByProject(ctx context.Context, tenantID, projectID int64) ([]domain.Client, error) {
-	return s.repo.ListByProject(ctx, tenantID, projectID)
+type CreateClientInput struct {
+	BrideName string
+	GroomName string
+	Phone     string
+	Email     string
+	Notes     string
 }
 
-// VerifyProjectReadAccess scopes a Wedding Planner ("Staff" role) or Sales
-// staff member to reading client data only for a project they're
-// PIC/PIC Sales of — the same restriction `projects` itself already
-// enforces on every one of its own sub-resources (see handler.go's
-// resolveProjectAccess there); Owner/Admin pass through unconditionally,
-// matching their full-tenant access everywhere else.
-func (s *ClientService) VerifyProjectReadAccess(ctx context.Context, tenantID, projectID, staffID int64, role string) error {
-	switch role {
-	case "Staff":
-		picStaffID, err := s.projects.ProjectPICStaffID(ctx, tenantID, projectID)
-		if err != nil {
-			return err
-		}
-		if picStaffID != staffID {
-			return apperror.Forbidden("Anda tidak memiliki akses ke project ini")
-		}
-	case "Sales":
-		if err := s.VerifyProjectSalesOwner(ctx, tenantID, projectID, staffID); err != nil {
-			return err
-		}
+func (s *ClientService) Create(ctx context.Context, tenantID int64, input CreateClientInput) (*domain.Client, error) {
+	if input.BrideName == "" || input.GroomName == "" {
+		return nil, apperror.Validation("Data pasangan belum lengkap", map[string][]string{
+			"brideName": {"Nama mempelai wanita wajib diisi"},
+			"groomName": {"Nama mempelai pria wajib diisi"},
+		})
 	}
-	return nil
+	c := &domain.Client{
+		TenantID: tenantID, BrideName: input.BrideName, GroomName: input.GroomName,
+		Phone: input.Phone, Email: input.Email, Notes: input.Notes,
+	}
+	if err := s.repo.Create(ctx, c); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
-// VerifyProjectSalesOwner confirms a Sales-role caller is the PIC Sales of
-// projectID — used both by VerifyProjectReadAccess above and by the
-// handler's write-side gate (requireManagerOrProjectSales), since a Sales
-// staff member's write access to Client (PLAN.md
-// revisi-timeline-vendor-role-sales, confirmed: full write, unlike a
-// Wedding Planner's read-only) is scoped to their own project the same way
-// their read access is.
-func (s *ClientService) VerifyProjectSalesOwner(ctx context.Context, tenantID, projectID, staffID int64) error {
-	picSalesStaffID, err := s.projects.ProjectPICSalesStaffID(ctx, tenantID, projectID)
+type UpdateClientInput struct {
+	BrideName string
+	GroomName string
+	Phone     string
+	Email     string
+	Notes     string
+}
+
+func (s *ClientService) Update(ctx context.Context, tenantID, id int64, input UpdateClientInput) (*domain.Client, error) {
+	c, err := s.Get(ctx, tenantID, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if picSalesStaffID != staffID {
-		return apperror.Forbidden("Anda tidak memiliki akses ke project ini")
+	if input.BrideName == "" || input.GroomName == "" {
+		return nil, apperror.Validation("Data pasangan belum lengkap", map[string][]string{
+			"brideName": {"Nama mempelai wanita wajib diisi"},
+			"groomName": {"Nama mempelai pria wajib diisi"},
+		})
 	}
-	return nil
-}
-
-// ListByTenant powers the WO Console's global search, which needs to match
-// client names across every project at once rather than one project at a time.
-func (s *ClientService) ListByTenant(ctx context.Context, tenantID int64) ([]domain.Client, error) {
-	return s.repo.ListByTenant(ctx, tenantID)
-}
-
-func (s *ClientService) ListByTenantPaginated(ctx context.Context, tenantID int64, params pagination.Params, search string) ([]domain.Client, int64, error) {
-	return s.repo.ListByTenantPaginated(ctx, tenantID, params, search)
+	c.BrideName = input.BrideName
+	c.GroomName = input.GroomName
+	c.Phone = input.Phone
+	c.Email = input.Email
+	c.Notes = input.Notes
+	if err := s.repo.Update(ctx, c); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 func (s *ClientService) Get(ctx context.Context, tenantID, id int64) (*domain.Client, error) {
@@ -103,175 +105,233 @@ func (s *ClientService) Get(ctx context.Context, tenantID, id int64) (*domain.Cl
 	return c, nil
 }
 
-type CreateClientInput struct {
-	ProjectID    int64
-	Role         domain.ClientRole
-	RelationNote string
-	Name         string
-	Phone        string
-	Username     string
-	Email        string
-	Password     string
+// ClientListItem adalah satu baris daftar Client: pasangan + hitungannya.
+// ContactCount dari subquery agregat satu halaman (§11); ProjectCount dari
+// satu panggilan batch ke projects (tanpa join lintas modul).
+type ClientListItem struct {
+	Client       domain.Client
+	ContactCount int
+	ProjectCount int
 }
 
-// Create validates project_id belongs to the caller's tenant via the
-// `projects` module's contract (no cross-module FK — see ADR-0004) and
-// provisions a real login credential in the same flow, mirroring how
-// `platform`'s tenant registration works (ADR-0008).
-func (s *ClientService) Create(ctx context.Context, tenantID int64, input CreateClientInput) (*domain.Client, error) {
-	if err := validator.Username(input.Username); err != nil {
-		return nil, err
-	}
-
-	exists, err := s.projects.ProjectExists(ctx, tenantID, input.ProjectID)
+func (s *ClientService) ListPaginated(ctx context.Context, tenantID int64, params pagination.Params, search string) ([]ClientListItem, int64, error) {
+	list, total, err := s.repo.ListPaginated(ctx, tenantID, params, search)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	if !exists {
-		return nil, apperror.Validation("Project tidak valid", map[string][]string{"projectId": {"Project tidak ditemukan"}})
-	}
-
-	c := &domain.Client{
-		TenantID: tenantID, ProjectID: input.ProjectID, Role: input.Role, Username: input.Username, RelationNote: input.RelationNote,
-		Name: input.Name, Phone: input.Phone, Email: input.Email, IsActive: true,
-	}
-	if err := s.repo.Create(ctx, c); err != nil {
-		return nil, err
-	}
-
-	// identity.CreateCredential can fail on its own terms (e.g. username
-	// already taken by ANY principal on the platform — usernames aren't
-	// tenant-scoped, see identity's credentials.username column) after the
-	// client row above already committed. clients and identity own separate
-	// tables in separate modules, so there's no single DB transaction to
-	// wrap both in (see backend-modular-monolith rule); compensate manually
-	// instead, or the client row is left orphaned with no login credential
-	// — permanently unable to log in or have "Reset Credential" succeed,
-	// since that also resolves through identity by principal.
-	if err := s.identity.CreateCredential(ctx, identitycontracts.CreateCredentialInput{
-		TenantID: &tenantID, PrincipalType: identitycontracts.PrincipalClient, PrincipalID: formatID(c.ID),
-		Username: input.Username, Email: input.Email, Password: input.Password, Role: string(input.Role), DisplayName: input.Name,
-	}); err != nil {
-		if delErr := s.repo.Delete(ctx, tenantID, c.ID); delErr != nil {
-			logger.Error("failed to roll back orphaned client %d after credential creation failed: %v", c.ID, delErr)
-		}
-		return nil, err
-	}
-	return c, nil
-}
-
-type UpdateContactInput struct {
-	Name  string
-	Phone string
-	Email string
-}
-
-func (s *ClientService) UpdateContact(ctx context.Context, tenantID, id int64, input UpdateContactInput) (*domain.Client, error) {
-	c, err := s.Get(ctx, tenantID, id)
-	if err != nil {
-		return nil, err
-	}
-	c.Name = input.Name
-	c.Phone = input.Phone
-	c.Email = input.Email
-	if err := s.repo.Update(ctx, c); err != nil {
-		return nil, err
-	}
-	return c, nil
-}
-
-// Delete permanently removes a client row — the one hard-delete in this
-// module (every other toggle elsewhere in the codebase is soft, via
-// SetActive/is_active). It exists specifically to let an operator clear out
-// a client stuck with no working login credential (e.g. left behind by the
-// compensating rollback in Create, or from before that rollback existed) —
-// SetActive alone wouldn't free up the client's role slot for the project,
-// since ProjectClientsSection looks up "the client for this role" without
-// filtering on is_active. Best-effort deactivates the identity credential
-// first (if one even exists) so its username isn't left silently usable;
-// failure there doesn't block the delete itself, since the whole point of
-// this method is to clear rows that may have no working credential at all.
-func (s *ClientService) Delete(ctx context.Context, tenantID, id int64) error {
-	c, err := s.Get(ctx, tenantID, id)
-	if err != nil {
-		return err
-	}
-	if err := s.identity.SetActive(ctx, identitycontracts.PrincipalClient, formatID(c.ID), false); err != nil {
-		logger.Error("failed to deactivate credential for client %d before delete: %v", c.ID, err)
-	}
-	return s.repo.Delete(ctx, tenantID, id)
-}
-
-// DeleteAllForProject best-effort deletes every client tied to a project —
-// called only by `projects`' hard-delete flow (ADR-0013) via the
-// ClientCleaner bridge (see projects.module.go's two-phase wiring). Continues
-// past an individual client's failure (logged) rather than aborting, same
-// best-effort spirit as Delete's own credential-deactivation step — the
-// whole point is clearing out a project being permanently removed, not
-// preserving partial state if one row is awkward.
-func (s *ClientService) DeleteAllForProject(ctx context.Context, tenantID, projectID int64) error {
-	list, err := s.repo.ListByProject(ctx, tenantID, projectID)
-	if err != nil {
-		return err
-	}
-	var firstErr error
+	ids := make([]int64, 0, len(list))
 	for _, c := range list {
-		if err := s.Delete(ctx, tenantID, c.ID); err != nil {
-			logger.Error("failed to delete client %d while cleaning up deleted project %d: %v", c.ID, projectID, err)
-			if firstErr == nil {
-				firstErr = err
+		ids = append(ids, c.ID)
+	}
+	contactCounts, err := s.contacts.repo.CountByClients(ctx, tenantID, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	projectCounts, err := s.projects.ProjectCountsForClients(ctx, tenantID, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	items := make([]ClientListItem, 0, len(list))
+	for _, c := range list {
+		items = append(items, ClientListItem{
+			Client: c, ContactCount: contactCounts[c.ID], ProjectCount: projectCounts[c.ID],
+		})
+	}
+	return items, total, nil
+}
+
+// VerifyClientAccess membatasi Staff (Wedding Planner) dan Sales pada client
+// yang punya >=1 project PIC mereka — Owner/Admin lewat tanpa syarat (aturan
+// yang sama dengan VerifyProjectReadAccess yang lama, digeser ke master).
+//
+// Pengecualian untuk PROSPEK: client yang belum punya project sama sekali
+// terbuka untuk Sales. Tanpa ini alur utama fitur ini mati — Sales membuat
+// client calon, lalu langsung 403 saat membuka detailnya, karena project baru
+// lahir setelah penawaran Diterima. Wedding Planner tidak ikut dikecualikan:
+// prospek belum jadi pekerjaan siapa pun sampai ada project.
+func (s *ClientService) VerifyClientAccess(ctx context.Context, tenantID, clientID, staffID int64, role string) error {
+	switch role {
+	case "Staff", "Sales":
+		projectIDs, err := s.projects.ProjectIDsForClient(ctx, tenantID, clientID)
+		if err != nil {
+			return err
+		}
+		if len(projectIDs) == 0 && role == "Sales" {
+			return nil
+		}
+		for _, pid := range projectIDs {
+			var picID int64
+			var err error
+			if role == "Staff" {
+				picID, err = s.projects.ProjectPICStaffID(ctx, tenantID, pid)
+			} else {
+				picID, err = s.projects.ProjectPICSalesStaffID(ctx, tenantID, pid)
+			}
+			if err != nil {
+				continue
+			}
+			if picID == staffID {
+				return nil
 			}
 		}
+		return apperror.Forbidden("Anda tidak memiliki akses ke client ini")
 	}
-	return firstErr
+	return nil
 }
 
-func (s *ClientService) SetActive(ctx context.Context, tenantID, id int64, isActive bool) (*domain.Client, error) {
-	c, err := s.Get(ctx, tenantID, id)
+// SyncCredentialActive menghitung ulang login efektif seluruh kontak milik
+// satu client (D4): credential.IsActive = is_active DAN (client punya ≥1
+// project). Dipanggil dari Create/SetActive kontak, dari luar saat project
+// lahir (best-effort), dan setelah project dihapus.
+func (s *ClientService) SyncCredentialActive(ctx context.Context, tenantID, clientID int64) error {
+	hasProject, err := s.projects.ClientHasProject(ctx, tenantID, clientID)
+	if err != nil {
+		return err
+	}
+	list, err := s.contacts.repo.ListByClient(ctx, tenantID, clientID)
+	if err != nil {
+		return err
+	}
+	for _, c := range list {
+		effective := c.IsActive && hasProject
+		if err := s.identity.SetActive(ctx, identitycontracts.PrincipalClient, formatID(c.ID), effective); err != nil {
+			logger.Error("gagal sinkron kredensial kontak %d (client %d): %v", c.ID, clientID, err)
+		}
+	}
+	return nil
+}
+
+// ClientIDForContact memetakan token portal (id kontak) ke master client-nya
+// — langkah pertama resolusi akses portal (T1.10).
+func (s *ClientService) ClientIDForContact(ctx context.Context, tenantID, contactID int64) (int64, error) {
+	c, err := s.contacts.Get(ctx, tenantID, contactID)
+	if err != nil {
+		return 0, err
+	}
+	if !c.IsActive {
+		return 0, apperror.Forbidden("Akun client ini sudah dinonaktifkan")
+	}
+	return c.ClientID, nil
+}
+
+// CoupleNames / CoupleNamesBatch / PhoneForClient adalah direktori baca untuk
+// modul quotations (kop PO, daftar Penawaran) — satu baris atau satu halaman
+// dalam satu panggilan, tidak pernah join lintas modul (§11).
+func (s *ClientService) CoupleNames(ctx context.Context, tenantID, clientID int64) (bride, groom string, err error) {
+	c, err := s.Get(ctx, tenantID, clientID)
+	if err != nil {
+		return "", "", err
+	}
+	return c.BrideName, c.GroomName, nil
+}
+
+func (s *ClientService) CoupleNamesBatch(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64][2]string, error) {
+	out := make(map[int64][2]string, len(clientIDs))
+	if len(clientIDs) == 0 {
+		return out, nil
+	}
+	list, err := s.repo.FindByIDs(ctx, tenantID, clientIDs)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.repo.SetActive(ctx, tenantID, id, isActive); err != nil {
-		return nil, err
+	for _, c := range list {
+		out[c.ID] = [2]string{c.BrideName, c.GroomName}
 	}
-	c.IsActive = isActive
-	return c, nil
+	return out, nil
 }
 
-func (s *ClientService) ResetCredential(ctx context.Context, tenantID, id int64, newPassword string) (*domain.Client, error) {
-	c, err := s.Get(ctx, tenantID, id)
+func (s *ClientService) PhoneForClient(ctx context.Context, tenantID, clientID int64) (string, error) {
+	c, err := s.Get(ctx, tenantID, clientID)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	if err := s.identity.ResetPassword(ctx, identitycontracts.PrincipalClient, formatID(c.ID), newPassword); err != nil {
-		return nil, err
+	if c.Phone != "" {
+		return c.Phone, nil
 	}
-	now := time.Now()
-	if err := s.repo.SetCredentialResetAt(ctx, tenantID, id, now); err != nil {
-		return nil, err
+	list, err := s.contacts.repo.ListByClient(ctx, tenantID, clientID)
+	if err != nil {
+		return "", err
 	}
-	c.LastCredentialResetAt = &now
-	return c, nil
+	for _, contact := range list {
+		if contact.Phone != "" {
+			return contact.Phone, nil
+		}
+	}
+	return "", nil
 }
 
-// ReplaceRepresentative overwrites the same Family Representative row with
-// new contact details — no history is kept (matches the frontend mock's
-// existing behavior; see PLAN.md §6.3, an explicitly open decision, not an
-// oversight).
-func (s *ClientService) ReplaceRepresentative(ctx context.Context, tenantID, id int64, input UpdateContactInput, relationNote string) (*domain.Client, error) {
+// ClientDeleteImpact adalah bahan dialog konfirmasi hapus Client (D14, T3.5):
+// digabung dari tiga sumber yang masing-masing menjawab dari datanya sendiri.
+type ClientDeleteImpact struct {
+	Client           domain.Client
+	ContactCount     int
+	ProjectCount     int
+	ProjectNames     []string
+	PaidInvoiceCount int
+	PaidInvoiceTotal int64
+	QuotationCount   int
+	QuotationNumbers []string
+}
+
+func (s *ClientService) DeleteImpact(ctx context.Context, tenantID, id int64) (ClientDeleteImpact, error) {
+	var out ClientDeleteImpact
 	c, err := s.Get(ctx, tenantID, id)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	if c.Role != domain.RoleFamilyRepresentative {
-		return nil, apperror.Forbidden("Hanya Family Representative yang dapat diganti")
+	out.Client = *c
+
+	list, err := s.contacts.repo.ListByClient(ctx, tenantID, id)
+	if err != nil {
+		return out, err
 	}
-	c.Name = input.Name
-	c.Phone = input.Phone
-	c.Email = input.Email
-	c.RelationNote = relationNote
-	if err := s.repo.Update(ctx, c); err != nil {
-		return nil, err
+	out.ContactCount = len(list)
+
+	pImpact, err := s.projects.ImpactForClient(ctx, tenantID, id)
+	if err != nil {
+		return out, err
 	}
-	return c, nil
+	out.ProjectCount = pImpact.ProjectCount
+	out.ProjectNames = pImpact.ProjectNames
+	out.PaidInvoiceCount = pImpact.PaidInvoiceCount
+	out.PaidInvoiceTotal = pImpact.PaidInvoiceTotal
+
+	qImpact, err := s.quotations.ImpactForClient(ctx, tenantID, id)
+	if err != nil {
+		return out, err
+	}
+	out.QuotationCount = qImpact.Count
+	out.QuotationNumbers = qImpact.Numbers
+	return out, nil
+}
+
+// Delete menghapus Client berjenjang (D14, T3.5) — selalu tersedia, tanpa
+// pengecualian yang memblokir. Urutan dari yang merujuk ke yang dirujuk:
+// project (beserta isinya + penawaran Diterima-nya) → penawaran yang belum
+// jadi project → kontak (+akun portal) → baris client. Lintas modul
+// sekuensial (bukan satu transaksi); kegagalan di tengah dicatat, tidak
+// menggagalkan yang sudah terjadi.
+func (s *ClientService) Delete(ctx context.Context, tenantID, id int64) error {
+	if _, err := s.Get(ctx, tenantID, id); err != nil {
+		return err
+	}
+	if err := s.projects.DeleteProjectsForClient(ctx, tenantID, id); err != nil {
+		logger.Error("gagal menghapus project milik client %d: %v", id, err)
+	}
+	if err := s.quotations.DeleteForClient(ctx, tenantID, id); err != nil {
+		logger.Error("gagal menghapus penawaran milik client %d: %v", id, err)
+	}
+	list, err := s.contacts.repo.ListByClient(ctx, tenantID, id)
+	if err != nil {
+		return err
+	}
+	for _, c := range list {
+		if err := s.identity.SetActive(ctx, identitycontracts.PrincipalClient, formatID(c.ID), false); err != nil {
+			logger.Error("gagal menonaktifkan kredensial kontak %d saat menghapus client %d: %v", c.ID, id, err)
+		}
+	}
+	if err := s.contacts.repo.DeleteForClient(ctx, tenantID, id); err != nil {
+		return err
+	}
+	return s.repo.Delete(ctx, tenantID, id)
 }

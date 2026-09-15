@@ -9,10 +9,15 @@ export interface ProjectDetailContext {
   projectId: string;
 }
 
+// "Paket & PO" dihapus: setelah PO pindah ke menu Penawaran, tab itu tinggal
+// kartu ringkasan baca-saja yang isinya "dikelola di tempat lain" — dan selalu
+// 403 untuk Wedding Planner, peran yang paling sering membuka halaman ini.
+// Yang benar-benar hilang cuma satu, jalan dari project ke penawarannya, dan
+// itu sekarang jadi field "Penawaran" di ProjectHeaderCard — tepat di sebelah
+// Nilai Kontrak, tempat orang bertanya "angka ini asalnya dari mana".
 const TABS = [
   { to: "vendor", label: "Vendor" },
   { to: "venue", label: "Venue" },
-  { to: "paket", label: "Paket & PO" },
   { to: "milestone", label: "Timeline" },
   { to: "client", label: "Client" },
   { to: "pembayaran", label: "Pembayaran" },

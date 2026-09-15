@@ -18,11 +18,16 @@ func formatDatePtr(t *time.Time) *string {
 }
 
 type projectResponse struct {
-	ID        int64  `json:"id"`
-	Name      string `json:"name"`
-	BrideName string `json:"brideName"`
-	GroomName string `json:"groomName"`
-	EventDate string `json:"eventDate"`
+	ID int64 `json:"id"`
+	// ClientID/QuotationID adalah relasi master (Fase penawaran-client-master):
+	// client pemilik dan penawaran yang melahirkannya (0 = project lama
+	// pra-penawaran). Frontend memakai quotationId untuk tautan ke Penawaran.
+	ClientID    int64  `json:"clientId"`
+	QuotationID int64  `json:"quotationId"`
+	Name        string `json:"name"`
+	BrideName   string `json:"brideName"`
+	GroomName   string `json:"groomName"`
+	EventDate   string `json:"eventDate"`
 	// EventStartTime/EventEndTime are the project-level Jam Acara ("HH:MM"),
 	// null when "Belum ditentukan" -- Blok A, PLAN.md revisi-putri-mom-25082026.
 	EventStartTime *string `json:"eventStartTime"`
@@ -48,15 +53,36 @@ type projectResponse struct {
 	// pattern as Progress below. Empty string when unresolved (e.g. the
 	// staff row was hard-deleted) rather than omitted, so the frontend never
 	// has to distinguish "not fetched yet" from "no name available".
-	PICName     string            `json:"picName"`
-	Description string            `json:"description"`
-	IsArchived  bool              `json:"isArchived"`
-	Progress    *progressResponse `json:"progress,omitempty"`
+	PICName string `json:"picName"`
+	// PONumber, seperti PICName di atas, diisi terpisah oleh getProject lewat
+	// ResolvePONumber — toProjectResponse tidak pernah menyentuh modul
+	// `quotations`. Mengisi label tautan "Penawaran" di header detail project
+	// (pengganti tab "Paket & PO").
+	//
+	// null = tidak ada penawaran yang bisa dituju (project pra-penawaran,
+	// quotation_id menggantung, atau pemanggil tidak berhak membuka
+	// penawaran); "" = penawarannya ada tapi belum bernomor. Lihat
+	// ResolvePONumber untuk kenapa keduanya tidak boleh disamakan.
+	PONumber *string `json:"poNumber"`
+	// PackageNameFromQuotation menyatakan bahwa "Paket / Layanan" project ini
+	// diatur penawarannya — nilainya didorong tiap kali penawaran diedit.
+	// Frontend memakainya untuk mengunci field tersebut di Ubah Project.
+	// false pada project pra-penawaran dan penawaran pra-000065: di sana
+	// tidak ada yang mendorongnya, jadi harus bisa diketik untuk dirapikan.
+	// Seperti PONumber, hanya diisi getProject dan hanya untuk staff.
+	PackageNameFromQuotation bool `json:"packageNameFromQuotation"`
+	// QuotationUnderRevision: penawarannya sedang direvisi dan belum dikirim
+	// ulang — nilai kontrak yang tampil belum disepakati klien.
+	QuotationUnderRevision bool              `json:"quotationUnderRevision"`
+	Description            string            `json:"description"`
+	IsArchived             bool              `json:"isArchived"`
+	Progress               *progressResponse `json:"progress,omitempty"`
 }
 
 func toProjectResponse(p domain.Project) projectResponse {
 	return projectResponse{
-		ID: p.ID, Name: p.Name, BrideName: p.BrideName, GroomName: p.GroomName,
+		ID: p.ID, ClientID: p.ClientID, QuotationID: p.QuotationID,
+		Name: p.Name, BrideName: p.BrideName, GroomName: p.GroomName,
 		EventDate:      p.EventDate.Format(dateLayout),
 		EventStartTime: p.EventStartTime, EventEndTime: p.EventEndTime, Pax: p.Pax,
 		Venue: p.Venue, VenueID: p.VenueID,

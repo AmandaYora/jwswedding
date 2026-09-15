@@ -3,6 +3,7 @@ import { Plus, Pencil, Trash2, CheckCircle2, Undo2, FileDown } from "lucide-reac
 import { Card, CardHeader, CardContent } from "@/shared/components/ui/Card";
 import { Badge, type BadgeTone } from "@/shared/components/ui/Badge";
 import { Button } from "@/shared/components/ui/Button";
+import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
 import { Modal } from "@/shared/components/ui/Modal";
 import { Input, Textarea, Select, Field } from "@/shared/components/ui/Input";
 import { CurrencyInput } from "@/shared/components/ui/CurrencyInput";
@@ -15,6 +16,7 @@ import { useProjectStore, ClientPaymentEvidenceError } from "@/modules/projects/
 import { useAuthStore } from "@/shared/stores/useAuthStore";
 import { useTenantBrandingStore } from "@/shared/stores/useTenantBrandingStore";
 import { IncompleteProfileDialog } from "@/shared/components/IncompleteProfileDialog";
+import { openPdfInNewTab } from "@/shared/lib/open-pdf";
 import {
   clientInvoiceSchema,
   markInvoicePaidSchema,
@@ -48,6 +50,7 @@ export function ClientInvoicesSection({ projectId }: { projectId: string }) {
   const markClientInvoicePaid = useProjectStore((s) => s.markClientInvoicePaid);
   const unmarkClientInvoicePaid = useProjectStore((s) => s.unmarkClientInvoicePaid);
   const downloadClientInvoicePDF = useProjectStore((s) => s.downloadClientInvoicePDF);
+  const underRevision = useProjectStore((s) => s.currentProject?.quotationUnderRevision ?? false);
   // Owner-or-Admin only for every write action here (Tambah/Ubah/Tandai
   // Lunas/Batalkan Pelunasan/Hapus) — confirmed role rule, PLAN.md
   // mom-25082026-item-sebagian §3c, matching the backend's
@@ -147,8 +150,20 @@ export function ClientInvoicesSection({ projectId }: { projectId: string }) {
       return;
     }
     try {
-      const blob = await downloadClientInvoicePDF(projectId, invoice.id);
-      window.open(URL.createObjectURL(blob), "_blank");
+      // Harus sinkron sampai baris pertama openPdfInNewTab: helper itu memesan
+      // tab selagi klik masih berstatus user activation. Ejaan lama
+      // `window.open(URL.createObjectURL(await ...))` mengembalikan null begitu
+      // permintaan melewati jendela itu — tombolnya diam tanpa pesan apa pun.
+      // Perbaikan yang sama sudah lebih dulu dilakukan di portal klien; dua
+      // layar staff ini tertinggal. Lihat open-pdf.ts.
+      await openPdfInNewTab(
+        () => downloadClientInvoicePDF(projectId, invoice.id),
+        // invoiceNumber "" sampai pertama kali dicetak, dan mengandung garis
+        // miring bila terisi — keduanya tidak bisa jadi nama berkas apa adanya.
+        invoice.invoiceNumber
+          ? `Tagihan-${invoice.invoiceNumber.replace(/\//g, "-")}`
+          : `Tagihan-${invoice.id}`
+      );
     } catch (err) {
       setActionError(await getApiErrorMessageFromBlob(err, "Gagal membuat PDF Tagihan"));
     }
@@ -189,7 +204,12 @@ export function ClientInvoicesSection({ projectId }: { projectId: string }) {
           subtitle="Tagihan yang diterbitkan ke client. Menandai Lunas otomatis mencatatnya di riwayat pembayaran di bawah."
           action={
             canManage ? (
-              <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setModalOpen(true)}>
+              <Button
+                size="sm"
+                icon={<Plus className="h-3.5 w-3.5" />}
+                onClick={() => setModalOpen(true)}
+                disabled={underRevision}
+              >
                 Tambah Tagihan
               </Button>
             ) : undefined
@@ -198,6 +218,17 @@ export function ClientInvoicesSection({ projectId }: { projectId: string }) {
         <CardContent className="flex flex-col gap-4">
           {actionError && (
             <p className="rounded-md border border-danger/30 bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger">{actionError}</p>
+          )}
+
+          {/* Backend menolak penerbitan Tagihan selama penawarannya berstatus
+              Draft karena sedang direvisi. Tombolnya dinonaktifkan dengan
+              alasan tertulis, bukan dibiarkan mengantar orang ke galat 422
+              setelah form terisi. */}
+          {underRevision && (
+            <p className="rounded-md border border-warning/40 bg-warning-soft px-3.5 py-2.5 text-[13px] font-medium text-warning-strong">
+              Penerbitan Tagihan ditahan: penawaran project ini sedang direvisi dan belum dikirim ulang, sehingga Nilai Kontraknya belum
+              disepakati klien. Kirim ulang penawarannya lebih dulu.
+            </p>
           )}
 
           {invoices.length === 0 ? (
@@ -297,58 +328,44 @@ export function ClientInvoicesSection({ projectId }: { projectId: string }) {
         />
       )}
 
-      {unmarkingInvoice && (
-        <Modal
-          open
-          onClose={() => setUnmarkingInvoice(null)}
-          title="Batalkan Pelunasan"
-          description={`Tagihan ${unmarkingInvoice.invoiceNumber} akan dikembalikan ke status "Terkirim".`}
-          footer={
-            <>
-              <Button variant="secondary" onClick={() => setUnmarkingInvoice(null)} disabled={unmarking}>Batal</Button>
-              <Button variant="danger" onClick={() => void handleUnmarkPaid()} disabled={unmarking}>
-                {unmarking ? "Memproses..." : "Ya, Batalkan Pelunasan"}
-              </Button>
-            </>
-          }
-        >
-          <div className="flex flex-col gap-3">
-            {unmarkError && (
-              <p className="rounded-md border border-danger/30 bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger">{unmarkError}</p>
-            )}
-            <p className="text-[13.5px] text-text-primary">
-              Pembayaran yang tercatat dari pelunasan ini <strong>beserta bukti transfernya akan dihapus</strong>. Tindakan ini tidak
-              dapat dibatalkan.
-            </p>
-          </div>
-        </Modal>
-      )}
+      <ConfirmDialog
+        open={unmarkingInvoice !== null}
+        onClose={() => setUnmarkingInvoice(null)}
+        onConfirm={() => void handleUnmarkPaid()}
+        title="Batalkan Pelunasan"
+        message={
+          <>
+            Yakin ingin membatalkan pelunasan Tagihan <strong>{unmarkingInvoice?.invoiceNumber}</strong>?
+          </>
+        }
+        details={
+          <>
+            Tagihan kembali ke status &quot;Terkirim&quot;, dan pembayaran yang tercatat dari pelunasan ini{" "}
+            <strong>beserta bukti transfernya ikut terhapus</strong>. Tindakan ini tidak dapat dibatalkan.
+          </>
+        }
+        confirmLabel="Ya, Batalkan Pelunasan"
+        busyLabel="Memproses..."
+        busy={unmarking}
+        error={unmarkError}
+      />
 
-      {deletingInvoice && (
-        <Modal
-          open
-          onClose={() => setDeletingInvoice(null)}
-          title="Hapus Tagihan"
-          description="Tindakan ini permanen dan tidak dapat dibatalkan."
-          footer={
-            <>
-              <Button variant="secondary" onClick={() => setDeletingInvoice(null)} disabled={deleting}>Batal</Button>
-              <Button variant="danger" onClick={() => void handleDeleteInvoice()} disabled={deleting}>
-                {deleting ? "Menghapus..." : "Ya, Hapus Permanen"}
-              </Button>
-            </>
-          }
-        >
-          <div className="flex flex-col gap-3">
-            {deleteError && (
-              <p className="rounded-md border border-danger/30 bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger">{deleteError}</p>
-            )}
-            <p className="text-[13.5px] text-text-primary">
-              Yakin ingin menghapus Tagihan <strong>{deletingInvoice.invoiceNumber}</strong> secara permanen?
-            </p>
-          </div>
-        </Modal>
-      )}
+      <ConfirmDialog
+        open={deletingInvoice !== null}
+        onClose={() => setDeletingInvoice(null)}
+        onConfirm={() => void handleDeleteInvoice()}
+        title="Hapus Tagihan"
+        message={
+          <>
+            Yakin ingin menghapus Tagihan <strong>{deletingInvoice?.invoiceNumber}</strong> secara permanen?
+          </>
+        }
+        details="Tindakan ini permanen dan tidak dapat dibatalkan."
+        confirmLabel="Ya, Hapus Permanen"
+        busyLabel="Menghapus..."
+        busy={deleting}
+        error={deleteError}
+      />
 
       <IncompleteProfileDialog
         open={profileGateOpen}

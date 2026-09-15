@@ -16,12 +16,21 @@ const (
 )
 
 type Project struct {
-	ID        int64
-	TenantID  int64
-	Name      string
-	BrideName string
-	GroomName string
-	EventDate time.Time
+	ID       int64
+	TenantID int64
+	// ClientID adalah relasi lintas modul ke master Client (modul clients) --
+	// ID primitif TANPA foreign key (database.md). Satu-satunya tempat relasi
+	// client<->project hidup sejak Fase 1 penawaran-client-master.
+	ClientID int64
+	// QuotationID menunjuk penawaran yang melahirkan project ini (modul
+	// quotations) -- ID primitif TANPA foreign key, UNIQUE (1 penawaran
+	// Diterima = 1 project, sekaligus membuat Accept idempoten). 0/NULL untuk
+	// project lama yang lahir sebelum fase penawaran (D11 hanya untuk baru).
+	QuotationID int64
+	Name        string
+	BrideName   string
+	GroomName   string
+	EventDate   time.Time
 	// EventStartTime/EventEndTime are the project-level Jam Acara (PLAN.md
 	// revisi-putri-mom-25082026, Blok A / item 11), stored as "HH:MM" strings.
 	// Both optional: nil means "Belum ditentukan". Independent of the per-vendor
@@ -103,4 +112,32 @@ type ProjectMilestone struct {
 	Status        MilestoneStatus
 	TargetDate    time.Time
 	CompletedDate *time.Time
+}
+
+// ProjectCostSummary adalah sisi biaya sebuah project berhadapan dengan nilai
+// kontraknya — dasar "Sisa Anggaran" dan gerbang komitmen vendor.
+//
+// Dihitung di SERVER, bukan lagi sebagai ekspresi di komponen header: sebuah
+// aturan bisnis yang hanya hidup di frontend bukan aturan, hanya saran yang
+// bisa dilewati siapa pun yang memanggil API langsung.
+//
+// Remaining SENGAJA boleh negatif. Biaya yang sudah disepakati adalah fakta;
+// menolak merepresentasikannya tidak menghilangkan kerugiannya, hanya
+// memindahkannya ke luar sistem.
+type ProjectCostSummary struct {
+	ContractValue int64
+	// VendorCost menjumlahkan contract_value setiap engagement yang TIDAK
+	// Cancelled — termasuk yang masih Planned/Negotiation. Yang belum pasti
+	// pun tetap dihitung di sini karena inilah eksposur terburuknya; UI yang
+	// membedakan "rencana" dari "komitmen", bukan angka ini.
+	VendorCost int64
+	// VenueCost dibaca dari snapshot milik project (venue_rental_price +
+	// venue_charge), bukan dari master venue — supaya Margin project yang
+	// sudah selesai tidak bergeser saat harga venue berubah kemudian.
+	VenueCost int64
+	// CommittedCost = VendorCost + VenueCost.
+	CommittedCost int64
+	// Remaining = ContractValue - CommittedCost. Negatif berarti biaya sudah
+	// melampaui yang disepakati klien.
+	Remaining int64
 }

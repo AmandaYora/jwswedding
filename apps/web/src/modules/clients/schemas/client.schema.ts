@@ -3,6 +3,18 @@ import { usernameSchema } from "@/shared/lib/validators";
 
 export const CLIENT_ROLE_OPTIONS = ["Bride", "Groom", "Family Representative"] as const;
 
+// Master pasangan: kedua nama wajib — dokumen (PO, invoice) selalu
+// menuliskannya berpasangan.
+export const clientMasterSchema = z.object({
+  brideName: z.string().min(2, "Nama mempelai wanita wajib diisi"),
+  groomName: z.string().min(2, "Nama mempelai pria wajib diisi"),
+  phone: z.string().default(""),
+  email: z.string().default(""),
+  notes: z.string().default(""),
+});
+
+export type ClientMasterFormValues = z.infer<typeof clientMasterSchema>;
+
 export const clientContactSchema = z.object({
   name: z.string().min(2, "Nama wajib diisi"),
   phone: z.string().min(6, "Nomor telepon tidak valid"),

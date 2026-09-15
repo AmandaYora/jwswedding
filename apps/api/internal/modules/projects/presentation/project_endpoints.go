@@ -2,13 +2,13 @@ package presentation
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
 
 	"jwswedding/internal/modules/projects/application"
 	"jwswedding/internal/modules/projects/domain"
-	"jwswedding/internal/shared/logger"
 	"jwswedding/internal/shared/middleware"
 	"jwswedding/internal/shared/pagination"
 	"jwswedding/internal/shared/response"
@@ -231,54 +231,11 @@ func toProjectInput(body projectInputBody) (application.ProjectInput, error) {
 // someone else, never creates one themselves; Sales creates a project of
 // their own (see ProjectService.Create's callerRole handling for how their
 // PICSalesStaffID gets forced to themselves).
-func (h *Handler) createProject(w http.ResponseWriter, r *http.Request, claims staffClaims) {
-	if claims.role == "Staff" {
-		response.Error(w, http.StatusForbidden, "Hanya Owner, Admin, atau Sales yang dapat membuat project baru", nil)
-		return
-	}
-	var body projectInputBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
-		return
-	}
-	input, err := toProjectInput(body)
-	if err != nil {
-		response.Error(w, http.StatusUnprocessableEntity, "Format tanggal tidak valid", map[string][]string{"eventDate": {"Gunakan format YYYY-MM-DD"}})
-		return
-	}
-	p, err := h.projects.Create(r.Context(), claims.tenantID, claims.staffID, claims.role, input)
-	if err != nil {
-		writeAppError(w, err)
-		return
-	}
-	// D10 -- applying the chosen Template Paket is orchestrated here, not
-	// inside ProjectService.Create, for the same layering reason as the
-	// duplicate path below: package composition belongs to
-	// PackageOrderService. Non-fatal, because the project itself already
-	// exists: a failure leaves it on the empty-state path (D23), which the
-	// "Paket & PO" tab handles, instead of reporting a created project as an
-	// error. ApplyTemplate reads the project's ContractValue, already written
-	// by Create above, so a manually negotiated figure wins over the
-	// template's list price.
-	if body.PackageTemplateID > 0 {
-		if _, err := h.packageOrders.ApplyTemplate(r.Context(), claims.tenantID, p.ID, body.PackageTemplateID, claims.staffID); err != nil {
-			logger.Error("gagal menerapkan template paket %d ke project %d: %v", body.PackageTemplateID, p.ID, err)
-		} else if refreshed, err := h.projects.Get(r.Context(), claims.tenantID, p.ID); err == nil {
-			// Re-read so the response carries PackageName/ContractValue as
-			// ApplyTemplate left them, not as they were a moment earlier.
-			p = refreshed
-		}
-	}
-	resp := toProjectResponse(*p)
-	resp.PICName = h.projects.ResolvePICName(r.Context(), claims.tenantID, p.PICStaffID)
-	response.Created(w, "Project berhasil dibuat", resp)
-}
-
-// me is the Client Portal's entry point (Fase 6) — a client principal has no
-// other way to learn its own project id (login doesn't return one, and
-// `identity` is deliberately profile-agnostic per ADR-0005), so this mirrors
-// the `platform` module's `GET /tenants/me` self-service pattern from Fase 2
-// (handled as a special segment inside Item, not a separate mux route).
+// me is the Client Portal's entry point — a client principal has no other way
+// to learn its own project ids (login doesn't return them, and `identity` is
+// deliberately profile-agnostic per ADR-0005). Returns the client's OWN
+// projects (T1.13, D5): the portal enters directly when exactly one, and
+// renders a project picker when more than one.
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	claims, ok := middleware.FromContext(r.Context())
 	if !ok || claims.PrincipalType != "client" {
@@ -290,24 +247,46 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusForbidden, "Akun ini tidak terikat ke tenant manapun", nil)
 		return
 	}
-	clientID, err := strconv.ParseInt(claims.PrincipalID, 10, 64)
+	contactID, err := strconv.ParseInt(claims.PrincipalID, 10, 64)
 	if err != nil {
 		response.Error(w, http.StatusForbidden, "Identitas client tidak valid", nil)
 		return
 	}
-	if h.clientAccess == nil {
-		response.Error(w, http.StatusForbidden, "Akses client belum dikonfigurasi", nil)
+	projectIDs, ok := h.clientProjectIDs(r.Context(), tenantID, contactID)
+	if !ok {
+		response.Error(w, http.StatusForbidden, "Akun ini belum terhubung ke project manapun", nil)
 		return
 	}
-	projectID, err := h.clientAccess.ProjectIDForClient(r.Context(), tenantID, clientID)
+	// Progress ikut dibawa: portal client memakai daftar ini apa adanya ketika
+	// client hanya punya satu project (kasus mayoritas) dan tidak lagi memanggil
+	// detail per project, sehingga ring progress akan kosong tanpa ini.
+	// ComputeProgressBatch, bukan ComputeProgress per baris — satu client bisa
+	// punya beberapa project (D5) dan bentuk per-baris itu N+1.
+	progressByProject, err := h.projects.ComputeProgressBatch(r.Context(), tenantID, projectIDs, time.Now())
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	h.getProject(w, r, tenantID, projectID)
+	result := make([]projectResponse, 0, len(projectIDs))
+	for _, pid := range projectIDs {
+		p, err := h.projects.Get(r.Context(), tenantID, pid)
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		resp := toProjectResponse(*p)
+		if pr, ok := progressByProject[p.ID]; ok {
+			progressResp := toProgressResponse(pr)
+			resp.Progress = &progressResp
+		}
+		resp.PICName = h.projects.ResolvePICName(r.Context(), tenantID, p.PICStaffID)
+		result = append(result, resp)
+	}
+	response.OK(w, "ok", result)
 }
 
-func (h *Handler) getProject(w http.ResponseWriter, r *http.Request, tenantID, projectID int64) {
+func (h *Handler) getProject(w http.ResponseWriter, r *http.Request, claims staffClaims, projectID int64) {
+	tenantID := claims.tenantID
 	p, err := h.projects.Get(r.Context(), tenantID, projectID)
 	if err != nil {
 		writeAppError(w, err)
@@ -322,15 +301,54 @@ func (h *Handler) getProject(w http.ResponseWriter, r *http.Request, tenantID, p
 	progressResp := toProgressResponse(*progress)
 	resp.Progress = &progressResp
 	resp.PICName = h.projects.ResolvePICName(r.Context(), tenantID, p.PICStaffID)
+	// Satu lookup primary key ke `quotations`, hanya untuk pemanggil yang
+	// memang boleh membuka penawarannya: yang memakai field ini adalah tautan
+	// "Penawaran" di header detail project (WO Console). Portal klien memanggil
+	// endpoint yang sama saat memilih di antara beberapa project dan tidak
+	// menampilkan nomor PO di mana pun, dan Wedding Planner tidak melihat
+	// tautannya sama sekali — keduanya tidak perlu membayar query itu, apalagi
+	// menerima medannya. Server yang memutuskan, bukan UI. Daftar project dan
+	// /projects/me tidak pernah mengisinya sama sekali (itu akan jadi satu
+	// query per baris).
+	if claims.principalType == "staff" && canReadQuotation(claims.role) {
+		resp.PONumber = h.projects.ResolvePONumber(r.Context(), tenantID, p.QuotationID)
+		resp.PackageNameFromQuotation = h.projects.PackageNameFromQuotation(r.Context(), tenantID, p.QuotationID)
+		resp.QuotationUnderRevision = h.projects.QuotationUnderRevision(r.Context(), tenantID, p.QuotationID)
+	}
 	response.OK(w, "ok", resp)
 }
 
 func (h *Handler) updateProject(w http.ResponseWriter, r *http.Request, claims staffClaims, projectID int64) {
-	var body projectInputBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
 		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
 		return
 	}
+	var body projectInputBody
+	if err := json.Unmarshal(data, &body); err != nil {
+		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
+		return
+	}
+	// PATCH is partial by definition, but projectInputBody decodes every
+	// absent key to its Go zero value — forwarding that straight into
+	// ProjectService.Update silently zeroes stored figures (contractValue,
+	// pax, …) the caller never meant to touch. Fill absent keys from the
+	// current row first, so an omitted key always means "leave it", never
+	// "reset it". venueId/venueRentalPrice/venueCharge are already
+	// presence-aware (*int64, nil = omitted) and are deliberately left out
+	// of the overlay. The frontend always sends the full body, so for its
+	// requests this merge is a strict no-op.
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(data, &present); err != nil {
+		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
+		return
+	}
+	current, err := h.projects.Get(r.Context(), claims.tenantID, projectID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	body = overlayMissingProjectFields(body, present, current)
 	input, err := toProjectInput(body)
 	if err != nil {
 		response.Error(w, http.StatusUnprocessableEntity, "Format tanggal tidak valid", map[string][]string{"eventDate": {"Gunakan format YYYY-MM-DD"}})
@@ -344,6 +362,69 @@ func (h *Handler) updateProject(w http.ResponseWriter, r *http.Request, claims s
 	resp := toProjectResponse(*p)
 	resp.PICName = h.projects.ResolvePICName(r.Context(), claims.tenantID, p.PICStaffID)
 	response.OK(w, "Project berhasil diperbarui", resp)
+}
+
+// overlayMissingProjectFields backs updateProject's partial-PATCH contract
+// above: every key absent from the request body is filled from the stored
+// row, so only keys the caller actually sent can change anything.
+func overlayMissingProjectFields(body projectInputBody, present map[string]json.RawMessage, p *domain.Project) projectInputBody {
+	presentHas := func(key string) bool {
+		_, ok := present[key]
+		return ok
+	}
+	if !presentHas("name") {
+		body.Name = p.Name
+	}
+	if !presentHas("brideName") {
+		body.BrideName = p.BrideName
+	}
+	if !presentHas("groomName") {
+		body.GroomName = p.GroomName
+	}
+	if !presentHas("eventDate") {
+		body.EventDate = p.EventDate.Format(dateLayout)
+	}
+	if !presentHas("eventStartTime") {
+		body.EventStartTime = derefString(p.EventStartTime)
+	}
+	if !presentHas("eventEndTime") {
+		body.EventEndTime = derefString(p.EventEndTime)
+	}
+	if !presentHas("pax") {
+		body.Pax = p.Pax
+	}
+	if !presentHas("venue") {
+		body.Venue = p.Venue
+	}
+	if !presentHas("prepStartDate") {
+		body.PrepStartDate = p.PrepStartDate.Format(dateLayout)
+	}
+	if !presentHas("packageName") {
+		body.PackageName = p.PackageName
+	}
+	if !presentHas("contractValue") {
+		body.ContractValue = p.ContractValue
+	}
+	if !presentHas("status") {
+		body.Status = string(p.Status)
+	}
+	if !presentHas("picStaffId") {
+		body.PICStaffID = p.PICStaffID
+	}
+	if !presentHas("picSalesStaffId") {
+		body.PICSalesStaffID = p.PICSalesStaffID
+	}
+	if !presentHas("description") {
+		body.Description = p.Description
+	}
+	return body
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // getProjectVenue backs GET /projects/{id}/venue (ADR-0016) -- reachable by
@@ -413,55 +494,38 @@ func (h *Handler) deleteProject(w http.ResponseWriter, r *http.Request, claims s
 	response.OK(w, "Project berhasil dihapus permanen", nil)
 }
 
-// duplicateProject clones the source project's Project Milestones and Vendor
-// Engagements (with their Vendor Milestones) into a brand-new project — see
-// ADR-0014. `body` is the new project's own fields (name/dates/etc.), same
-// shape as create/update, since the frontend's duplicate form is the normal
-// ProjectFormModal pre-filled from the source project — the caller decides
-// what to change (e.g. name, event date) before submitting.
-func (h *Handler) duplicateProject(w http.ResponseWriter, r *http.Request, claims staffClaims, projectID int64) {
-	// Duplicating produces a brand-new project, a stricter restriction than
-	// createProject — being the PIC (Wedding Planner or Sales) of the source
-	// project (already verified by resolveProjectAccess before this is ever
-	// reached) doesn't matter; neither role is allowed to create the
-	// resulting copy. Sales explicitly keeps only "create new" + "handover",
-	// never "duplicate as template" (PLAN.md revisi-timeline-vendor-role-sales).
-	if claims.role == "Staff" || claims.role == "Sales" {
-		response.Error(w, http.StatusForbidden, "Hanya Owner atau Admin yang dapat menduplikasi project", nil)
-		return
-	}
-	var body projectInputBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
-		return
-	}
-	input, err := toProjectInput(body)
-	if err != nil {
-		response.Error(w, http.StatusUnprocessableEntity, "Format tanggal tidak valid", map[string][]string{"eventDate": {"Gunakan format YYYY-MM-DD"}})
-		return
-	}
-	p, err := h.projects.Duplicate(r.Context(), claims.tenantID, claims.staffID, projectID, input)
+type projectDeleteImpactResponse struct {
+	ProjectID        int64  `json:"projectId"`
+	ProjectName      string `json:"projectName"`
+	QuotationID      int64  `json:"quotationId"`
+	PONumber         string `json:"poNumber"`
+	PaidInvoiceCount int    `json:"paidInvoiceCount"`
+	PaidInvoiceTotal int64  `json:"paidInvoiceTotal"`
+}
+
+// projectDeleteImpact WAJIB dipanggil sebelum dialog hapus dirender (D14,
+// T3.5) — menyebut nomor PO yang ikut terhapus lewat DeleteForProject.
+func (h *Handler) projectDeleteImpact(w http.ResponseWriter, r *http.Request, claims staffClaims, projectID int64) {
+	p, err := h.projects.Get(r.Context(), claims.tenantID, projectID)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	// Package composition is cloned here rather than inside
-	// ProjectService.Duplicate (D19): those tables belong to
-	// PackageOrderService, and ProjectService reaching into them would put
-	// package logic in two places. Orchestrating at the edge matches how the
-	// duplicate already works — each clone step is its own call, not one
-	// transaction.
-	//
-	// Non-fatal: the project is already created and returned either way. A
-	// failure here leaves the copy without a composition, which the tab's own
-	// empty state handles, rather than reporting a duplicate that did happen
-	// as a failure.
-	if err := h.packageOrders.CloneComposition(r.Context(), claims.tenantID, projectID, p.ID, claims.staffID); err != nil {
-		logger.Error("gagal menyalin komposisi paket saat duplikasi project %d -> %d: %v", projectID, p.ID, err)
+	poNumber, err := h.projects.PONumberForQuotation(r.Context(), claims.tenantID, p.QuotationID)
+	if err != nil {
+		writeAppError(w, err)
+		return
 	}
-	resp := toProjectResponse(*p)
-	resp.PICName = h.projects.ResolvePICName(r.Context(), claims.tenantID, p.PICStaffID)
-	response.Created(w, "Project berhasil diduplikasi", resp)
+	impact, err := h.projects.ProjectDeleteImpact(r.Context(), claims.tenantID, projectID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	response.OK(w, "ok", projectDeleteImpactResponse{
+		ProjectID: p.ID, ProjectName: p.Name,
+		QuotationID: p.QuotationID, PONumber: poNumber,
+		PaidInvoiceCount: impact.PaidInvoiceCount, PaidInvoiceTotal: impact.PaidInvoiceTotal,
+	})
 }
 
 // --- Project milestones ---

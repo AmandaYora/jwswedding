@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
-import { LayoutDashboard, FolderKanban, Users, Tags, Store, Building2, UserCog, Sparkles, Settings, CalendarClock, CalendarCheck, Landmark, Package, ChevronDown, LogOut, X } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Users, Tags, Store, Building2, UserCog, Sparkles, Settings, CalendarClock, CalendarCheck, Landmark, Package, ChevronDown, LogOut, X, FileText } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { Avatar } from "@/shared/components/ui/Avatar";
@@ -38,8 +38,13 @@ type NavEntry = NavLinkItem | NavGroupItem;
 const NAV_ITEMS: NavEntry[] = [
   { kind: "link", to: ROUTE_PATHS.dashboard, label: "Dashboard", icon: LayoutDashboard, allowedRoles: ["Owner", "Admin"] },
   { kind: "link", to: ROUTE_PATHS.projects, label: "Project", icon: FolderKanban },
+  // Penawaran (PLAN penawaran-client-master): Sales/Admin/Owner menyusun PO
+  // pra-deal di sini; Wedding Planner tidak membuka menu ini.
+  { kind: "link", to: ROUTE_PATHS.quotations, label: "Penawaran", icon: FileText, allowedRoles: ["Owner", "Admin", "Sales"] },
   { kind: "link", to: ROUTE_PATHS.clientTimelines, label: "Monitoring Timeline", icon: CalendarCheck, allowedRoles: ["Owner", "Admin", "Staff"] },
-  { kind: "link", to: ROUTE_PATHS.clients, label: "Client", icon: Users, allowedRoles: ["Owner", "Admin"] },
+  // Client terbuka juga untuk Sales (menyusun penawaran butuh memilih/menambah
+  // pasangan); Wedding Planner tetap tidak membuka menu ini.
+  { kind: "link", to: ROUTE_PATHS.clients, label: "Client", icon: Users, allowedRoles: ["Owner", "Admin", "Sales"] },
   { kind: "link", to: ROUTE_PATHS.vendors, label: "Vendor", icon: Store, allowedRoles: ["Owner", "Admin"] },
   { kind: "link", to: ROUTE_PATHS.venues, label: "Venue", icon: Building2, allowedRoles: ["Owner", "Admin"] },
   {

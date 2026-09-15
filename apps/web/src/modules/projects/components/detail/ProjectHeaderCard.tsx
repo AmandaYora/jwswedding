@@ -1,29 +1,27 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Pencil, AlertTriangle, Archive, ArchiveRestore, Copy } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Pencil, AlertTriangle, Archive, ArchiveRestore, ArrowUpRight } from "lucide-react";
 import { Card, CardContent } from "@/shared/components/ui/Card";
 import { Button } from "@/shared/components/ui/Button";
 import { Badge } from "@/shared/components/ui/Badge";
 import { ProgressMeter } from "@/shared/components/ui/ProgressMeter";
 import { ProjectStatusBadge, ConditionBadge } from "@/modules/projects/components/StatusBadges";
 import { ProjectFormModal } from "@/modules/projects/components/ProjectFormModal";
-import { usePackageOrderStore } from "@/modules/projects/stores/usePackageOrderStore";
 import type { ProjectFormValues } from "@/modules/projects/schemas/project.schema";
-import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
+import { useProjectStore, type ProjectDeleteImpact } from "@/modules/projects/stores/useProjectStore";
 import { useStaffStore } from "@/modules/users/stores/useStaffStore";
 import { useAuthStore } from "@/shared/stores/useAuthStore";
 import { daysUntil } from "@/modules/projects/lib/dates";
 import { formatCurrency, formatDate } from "@/shared/lib/formatters";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
+import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
+import { BudgetMeter } from "@/modules/projects/components/BudgetMeter";
+import { activeVendorCost, budgetStateOf } from "@/modules/projects/lib/budget";
 
 export function ProjectHeaderCard({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const project = useProjectStore((s) => s.currentProject);
-  // Populated by the "Paket & PO" tab. Null when that tab has not been opened
-  // in this session, so the lock is best-effort UI guidance -- the backend
-  // recompute is what actually keeps contract_value correct (D15).
-  const hasPackageOrder = usePackageOrderStore((s) => s.order !== null);
   const milestones = useProjectStore((s) => s.milestones);
   const vendorMilestones = useProjectStore((s) => s.vendorMilestones);
   const vendorEngagements = useProjectStore((s) => s.vendorEngagements);
@@ -35,20 +33,13 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
   const cancelProject = useProjectStore((s) => s.cancelProject);
   const toggleArchiveProject = useProjectStore((s) => s.toggleArchiveProject);
   const deleteProject = useProjectStore((s) => s.deleteProject);
-  const duplicateProject = useProjectStore((s) => s.duplicateProject);
+  const fetchProjectDeleteImpact = useProjectStore((s) => s.fetchProjectDeleteImpact);
   const staff = useStaffStore((s) => s.staffSummaries);
   const fetchStaff = useStaffStore((s) => s.fetchStaffSummaries);
   const isOwner = useAuthStore((s) => s.session?.role === "Owner");
-  // Neither Wedding Planner nor Sales duplicates a project (duplicating
-  // creates a new one — same restriction as creating from scratch, see
-  // PLAN.md's RBAC section); the backend already rejects both roles' POST
-  // .../duplicate.
   const role = useAuthStore((s) => s.session?.role);
-  const canDuplicate = role !== "Staff" && role !== "Sales";
   // canEditGeneral gates every field in the Edit modal except Status and
   // Deskripsi — confirmed role rule, PLAN.md mom-25082026-item-sebagian §3c.
-  // The Edit button itself stays visible to every role (unlike canDuplicate)
-  // because a Wedding Planner still needs it to change a project's status.
   const canEditGeneral = role === "Owner" || role === "Admin";
   // Margin/Keuntungan reveals vendor-cost/venue-cost business data — Wedding
   // Planner is not supposed to see this specific computed figure (confirmed
@@ -57,11 +48,19 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
   // Vendor/Venue tabs themselves (no separate fetch to gate here anymore —
   // both now come from data already loaded for this project).
   const canSeeMargin = useAuthStore((s) => s.session?.role) !== "Staff";
+  // Tautan ke penawaran menggantikan tab "Paket & PO", yang isinya sudah
+  // tinggal ringkasan baca-saja plus tombol "Buka di Penawaran". Daftar peran
+  // di sini WAJIB sama dengan dua gerbang yang sebenarnya menentukan:
+  // `RequireRole` pada rute /quotations/:id dan `requireQuotationManager` di
+  // backend. Wedding Planner tidak melihat tautan ini sama sekali — tab lama
+  // tampil untuknya lalu selalu menjawab 403, dan dialah peran yang paling
+  // sering membuka halaman ini.
+  const canSeeQuotation = role === "Owner" || role === "Admin" || role === "Sales";
 
   const [editOpen, setEditOpen] = useState(false);
-  const [duplicateOpen, setDuplicateOpen] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteImpact, setDeleteImpact] = useState<ProjectDeleteImpact | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -76,18 +75,12 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
     return <div className="text-sm text-text-secondary">Project tidak ditemukan.</div>;
   }
 
-  // Margin/Keuntungan = Nilai Kontrak − biaya vendor aktif − biaya venue
-  // (PLAN.md). Cancelled engagements are excluded, same as milestone stats
-  // already exclude Cancelled from every "relevant" computation.
-  const vendorCost = vendorEngagements
-    .filter((v) => v.engagementStatus !== "Cancelled")
-    .reduce((sum, v) => sum + v.contractValue, 0);
-  // Read directly off the project's own cost snapshot — never a live venue
-  // fetch (see PLAN.md "Financial Calculation Correctness"): a completed
-  // project's recorded Margin must never drift just because venue master
-  // data changed later.
-  const venueCost = (project.venueRentalPrice ?? 0) + (project.venueCharge ?? 0);
-  const margin = project.contractValue - vendorCost - venueCost;
+  // Margin/Keuntungan = sisa anggaran: Nilai Kontrak − biaya vendor aktif −
+  // biaya venue. Rumusnya pindah ke lib/budget agar form vendor bisa memakai
+  // yang sama persis saat memproyeksikan komitmen yang sedang diketik; biaya
+  // venue tetap dibaca dari snapshot milik project, tidak pernah dari harga
+  // master venue yang hidup (PLAN.md "Financial Calculation Correctness").
+  const budget = budgetStateOf(project, activeVendorCost(vendorEngagements));
 
   // Sisa Tagihan Client (PLAN.md §1.7/§3.9) — day-to-day operational status
   // ("has the client paid this installment"), visible to every role that
@@ -136,17 +129,6 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
     }
   }
 
-  async function handleDuplicate(values: ProjectFormValues) {
-    setActionError(null);
-    try {
-      const duplicated = await duplicateProject(projectId, values);
-      setDuplicateOpen(false);
-      navigate(ROUTE_PATHS.projectDetail(duplicated.id));
-    } catch (err) {
-      setActionError(getApiErrorMessage(err, "Gagal menduplikasi project"));
-    }
-  }
-
   async function handleDeleteProject() {
     setActionError(null);
     setIsDeleting(true);
@@ -156,6 +138,18 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
     } catch (err) {
       setActionError(getApiErrorMessage(err, "Gagal menghapus project secara permanen"));
       setIsDeleting(false);
+    }
+  }
+
+  // D14: dialog hapus menolak tampil kalau dampaknya gagal dibaca.
+  async function openDeleteConfirm() {
+    setActionError(null);
+    try {
+      const impact = await fetchProjectDeleteImpact(projectId);
+      setDeleteImpact(impact);
+      setConfirmingDelete(true);
+    } catch (err) {
+      setActionError(getApiErrorMessage(err, "Gagal membaca dampak penghapusan"));
     }
   }
 
@@ -177,11 +171,6 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
             <Button variant="secondary" size="sm" icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => setEditOpen(true)}>
               Ubah Project
             </Button>
-            {canDuplicate && (
-              <Button variant="secondary" size="sm" icon={<Copy className="h-3.5 w-3.5" />} onClick={() => setDuplicateOpen(true)}>
-                Duplikat Project
-              </Button>
-            )}
             <Button
               variant="secondary"
               size="sm"
@@ -195,8 +184,8 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
                 Batalkan Project
               </Button>
             )}
-            {isOwner && (project.isArchived || project.status === "Cancelled") && (
-              <Button variant="danger" size="sm" onClick={() => setConfirmingDelete(true)}>
+            {isOwner && (
+              <Button variant="danger" size="sm" onClick={() => void openDeleteConfirm()}>
                 Hapus Permanen
               </Button>
             )}
@@ -207,30 +196,27 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
           <p className="rounded-md border border-danger/30 bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger">{actionError}</p>
         )}
 
-        {confirmingCancel && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger/30 bg-danger-soft px-4 py-3">
-            <span className="flex items-center gap-2 text-[13px] font-medium text-danger">
-              <AlertTriangle className="h-4 w-4" /> Yakin ingin membatalkan project ini? Data yang sudah ada tidak akan dihapus.
+        {/* Penawaran yang ditarik kembali ke Draft untuk direvisi membuat Nilai
+            Kontrak di bawah menjadi angka yang BELUM disepakati klien. Selama
+            itu, penerbitan Tagihan ditahan backend — dan alasannya harus
+            terbaca di sini, bukan baru muncul sebagai galat saat orang sudah
+            mengisi form tagihan. */}
+        {project.quotationUnderRevision && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-warning/40 bg-warning-soft px-4 py-3">
+            <span className="flex items-center gap-2 text-[13px] font-medium text-warning-strong">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              Penawaran project ini sedang direvisi dan belum dikirim ulang. Nilai Kontrak di bawah belum disepakati klien, dan penerbitan
+              Tagihan ditahan sampai penawarannya dikirim dan diterima kembali.
             </span>
-            <span className="flex gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setConfirmingCancel(false)}>Batal</Button>
-              <Button variant="danger" size="sm" onClick={() => void handleCancelProject()}>Ya, Batalkan</Button>
-            </span>
-          </div>
-        )}
-
-        {confirmingDelete && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger/30 bg-danger-soft px-4 py-3">
-            <span className="flex items-center gap-2 text-[13px] font-medium text-danger">
-              <AlertTriangle className="h-4 w-4" /> Yakin ingin menghapus project ini secara permanen? Tindakan ini permanen — seluruh
-              timeline, vendor, pembayaran, kendala, dan evidence akan ikut terhapus dan tidak dapat dipulihkan.
-            </span>
-            <span className="flex gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setConfirmingDelete(false)} disabled={isDeleting}>Batal</Button>
-              <Button variant="danger" size="sm" onClick={() => void handleDeleteProject()} disabled={isDeleting}>
-                {isDeleting ? "Menghapus..." : "Ya, Hapus Permanen"}
-              </Button>
-            </span>
+            {canSeeQuotation && project.poNumber !== null && (
+              <Link
+                to={ROUTE_PATHS.quotationDetail(project.quotationId)}
+                className="inline-flex shrink-0 items-center gap-1 text-[12.5px] font-semibold text-warning-strong underline-offset-2 hover:underline"
+              >
+                Buka Penawaran
+                <ArrowUpRight className="h-3.5 w-3.5" />
+              </Link>
+            )}
           </div>
         )}
 
@@ -245,11 +231,39 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
           <InfoField label="Tanggal Booking" value={formatDate(project.prepStartDate)} />
           <InfoField label="Paket / Layanan" value={project.packageName} />
           <InfoField label="Nilai Kontrak" value={formatCurrency(project.contractValue)} />
+          {/* Digerbangi poNumber, BUKAN quotationId: sebuah project bisa
+              menyimpan quotation_id yang barisnya sudah tidak ada (itulah yang
+              dulu membuat tab lama menjawab "Penawaran tidak ditemukan"), dan
+              menautkannya hanya memindahkan 404 itu satu klik lebih jauh.
+              Backend sudah membedakan keduanya — null berarti tidak ada yang
+              bisa dituju, "" berarti ada tapi belum bernomor. */}
+          {canSeeQuotation && project.poNumber !== null && (
+            <InfoField
+              label="Penawaran"
+              value={project.poNumber || "Tanpa nomor"}
+              to={ROUTE_PATHS.quotationDetail(project.quotationId)}
+            />
+          )}
           <InfoField label="Sisa Tagihan Client" value={formatCurrency(outstanding)} />
-          {canSeeMargin && <InfoField label="Margin/Keuntungan" value={formatCurrency(margin)} />}
           <InfoField label="PIC Wedding Planner" value={pic?.name ?? "Belum ditugaskan"} />
           <InfoField label="PIC Sales" value={picSales?.name ?? "Belum ditugaskan"} />
         </div>
+
+        {/* Menggantikan field "Margin/Keuntungan" yang dulu berdiri sebagai
+            satu angka di grid di atas. Keduanya bilangan yang sama persis —
+            Nilai Kontrak dikurangi seluruh biaya — jadi menampilkan dua-duanya
+            hanya menyajikan angka yang sama dengan dua nama berbeda. Yang
+            bertahan adalah yang memberi tahu lebih banyak: berapa yang sudah
+            dikomitmenkan, dari berapa, dan berapa sisanya. Digerbangi peran
+            yang sama seperti sebelumnya. */}
+        {canSeeMargin && (
+          <BudgetMeter
+            budget={budget}
+            quotationHref={
+              canSeeQuotation && project.poNumber !== null ? ROUTE_PATHS.quotationDetail(project.quotationId) : undefined
+            }
+          />
+        )}
 
         {project.description && (
           <p className="rounded-md bg-surface-muted px-4 py-3 text-[13px] text-text-secondary">{project.description}</p>
@@ -285,14 +299,54 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
         onSubmit={(values) => void handleEdit(values)}
         initialProject={project}
         canEditGeneral={canEditGeneral}
-        contractValueLocked={hasPackageOrder}
       />
-      <ProjectFormModal
-        open={duplicateOpen}
-        onClose={() => setDuplicateOpen(false)}
-        onSubmit={(values) => void handleDuplicate(values)}
-        initialProject={project}
-        mode="duplicate"
+
+      <ConfirmDialog
+        open={confirmingCancel}
+        onClose={() => setConfirmingCancel(false)}
+        onConfirm={() => void handleCancelProject()}
+        title="Batalkan Project"
+        message="Yakin ingin membatalkan project ini?"
+        details="Data yang sudah ada tidak akan dihapus — project hanya ditandai Dibatalkan dan berhenti dihitung sebagai project berjalan."
+        confirmLabel="Ya, Batalkan"
+      />
+
+      {/* Dialog hapus hanya dirender setelah dampaknya terbaca (D14):
+          deleteImpact yang masih null berarti angkanya belum ada, dan
+          persetujuan atas penghapusan permanen tidak boleh diminta tanpa
+          menyebut apa yang ikut hilang. */}
+      <ConfirmDialog
+        open={confirmingDelete && deleteImpact !== null}
+        onClose={() => {
+          setConfirmingDelete(false);
+          setDeleteImpact(null);
+        }}
+        onConfirm={() => void handleDeleteProject()}
+        title="Hapus Project Permanen"
+        message={
+          <>
+            Yakin ingin menghapus <strong>{project.name}</strong> secara permanen?
+          </>
+        }
+        details={
+          <>
+            <p>
+              Seluruh timeline, vendor, pembayaran, kendala, dan evidence ikut terhapus dan tidak dapat dipulihkan.
+              {deleteImpact?.poNumber
+                ? ` Penawaran ${deleteImpact.poNumber} ikut terhapus.`
+                : " Penawaran terkait (bila ada) ikut terhapus."}
+            </p>
+            {(deleteImpact?.paidInvoiceCount ?? 0) > 0 && (
+              <p className="mt-1.5 font-semibold text-danger">
+                Termasuk {deleteImpact?.paidInvoiceCount} tagihan yang sudah lunas senilai{" "}
+                {formatCurrency(deleteImpact?.paidInvoiceTotal ?? 0)}.
+              </p>
+            )}
+          </>
+        }
+        confirmLabel="Ya, Hapus Permanen"
+        busyLabel="Menghapus..."
+        busy={isDeleting}
       />
     </Card>
   );
@@ -306,13 +360,40 @@ function formatEventHours(start: string | null, end: string | null): string {
   return `${start.replace(":", ".")} - ${end.replace(":", ".")}`;
 }
 
-function InfoField({ label, value, emphasize }: { label: string; value: string; emphasize?: boolean }) {
+function InfoField({
+  label,
+  value,
+  emphasize,
+  to,
+}: {
+  label: string;
+  value: string;
+  emphasize?: boolean;
+  /** Merender nilainya sebagai tautan internal, bukan teks biasa. */
+  to?: string;
+}) {
   return (
-    <div>
+    <div className="min-w-0">
       <p className="text-[11.5px] font-medium uppercase tracking-wide text-text-secondary">{label}</p>
-      <p className={emphasize ? "mt-0.5 text-[15px] font-bold tabular-nums text-navy-900" : "mt-0.5 text-[13.5px] font-medium text-text-primary"}>
-        {value}
-      </p>
+      {to ? (
+        <Link
+          to={to}
+          className="mt-0.5 inline-flex max-w-full items-center gap-1 text-[13.5px] font-semibold text-navy-900 underline-offset-2 hover:underline"
+        >
+          <span className="truncate">{value}</span>
+          <ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
+        </Link>
+      ) : (
+        <p
+          className={
+            emphasize
+              ? "mt-0.5 text-[15px] font-bold tabular-nums text-navy-900"
+              : "mt-0.5 text-[13.5px] font-medium text-text-primary"
+          }
+        >
+          {value}
+        </p>
+      )}
     </div>
   );
 }

@@ -91,6 +91,32 @@ export interface ProjectProgress {
 
 export interface Project {
   id: string;
+  /** Master client pemilik ("" = project lama pra-penawaran). */
+  clientId: string;
+  /** Penawaran yang melahirkan project ini ("" = project lama). */
+  quotationId: string;
+  // Nomor PO penawaran di atas, HANYA diisi oleh GET /projects/{id} dan hanya
+  // untuk pemanggil staff ber-peran Owner/Admin/Sales (lihat getProject di
+  // backend) — memberi nama pada tautan "Penawaran" di header detail project.
+  //
+  // null = tidak ada penawaran yang bisa dituju: project pra-penawaran,
+  // quotation_id yang tidak lagi resolve, pemanggil yang tidak berhak, atau
+  // baris daftar/portal klien yang memang tidak pernah mengisinya. "" =
+  // penawarannya ADA tapi belum bernomor (PO lama hasil migrasi) — tetap
+  // layak ditautkan. Jadi gerbang tautannya `poNumber !== null`, BUKAN
+  // `quotationId`: quotationId tetap terisi meski barisnya sudah hilang, dan
+  // menautkannya akan membawa pengguna ke halaman 404.
+  poNumber: string | null;
+  // true berarti "Paket / Layanan" diatur penawarannya: nilainya didorong tiap
+  // kali penawaran diedit, jadi mengetiknya di sini hanya akan tertimpa.
+  // false pada project pra-penawaran dan penawaran lama tanpa nama paket —
+  // di sanalah satu-satunya tempat field ini masih boleh diketik manual.
+  packageNameFromQuotation: boolean;
+  // true selama penawaran project ini kembali berstatus Draft karena sedang
+  // direvisi: Nilai Kontrak yang tampil di bawah BELUM disepakati klien.
+  // Sama seperti poNumber, hanya GET /projects/{id} untuk pemanggil staff
+  // berwenang yang pernah mengisinya — false di mana pun selain itu.
+  quotationUnderRevision: boolean;
   name: string;
   brideName: string;
   groomName: string;
@@ -287,6 +313,9 @@ export type ActivityType =
   | "project_status_changed"
   | "vendor_added"
   | "vendor_status_changed"
+  // Dicatat saat komitmen vendor membuat atau memperdalam pelampauan Nilai
+  // Kontrak, lengkap dengan angka dan alasan yang disetujui penulisnya.
+  | "vendor_over_budget"
   | "milestone_updated"
   | "payment_recorded"
   | "payment_updated"

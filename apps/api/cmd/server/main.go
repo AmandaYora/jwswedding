@@ -20,6 +20,7 @@ import (
 	"jwswedding/internal/modules/identity"
 	"jwswedding/internal/modules/platform"
 	"jwswedding/internal/modules/projects"
+	"jwswedding/internal/modules/quotations"
 	"jwswedding/internal/modules/staff"
 	staffcontracts "jwswedding/internal/modules/staff/contracts"
 	"jwswedding/internal/modules/vendors"
@@ -234,19 +235,23 @@ func serve(cfg config.Config) {
 	// Project Detail tab and Client Portal's Venue tab, but projectsModule is
 	// built above, before vendorsModule exists.
 	projectsModule.SetVenueResolver(vendorsModule.Contracts())
-	clientsModule := clients.NewModule(db, projectsModule.Contracts(), identityModule.Contracts())
-	// Two-phase wiring: projects needs clients' contract (Fase 6 client-portal
-	// scoping) but clients.NewModule already needs projects.Contracts() to
-	// exist first, so this can't be a constructor argument either direction.
+	// Penawaran-client-master (T2.6): quotations dibangun setelah vendors
+	// (butuh venue display) dan projects (butuh ProjectCreator dkk), sebelum
+	// clients (yang butuh QuotationCleaner sebagai argumen konstruktor).
+	quotationsModule := quotations.NewModule(db, platformModule.Contracts(), projectsModule.Contracts(), vendorsModule.Contracts(), storageClient)
+	clientsModule := clients.NewModule(db, projectsModule.Contracts(), quotationsModule.Contracts(), identityModule.Contracts(), storageClient)
+	// Two-phase wiring: projects needs clients' contract (portal multi-project
+	// scoping, T1.10) but clients.NewModule already needs projects.Contracts()
+	// to exist first, so this can't be a constructor argument either direction.
 	projectsModule.SetClientAccessResolver(clientsModule.Contracts())
-	// Same object, second narrow interface — the PO Paket header's phone
-	// number (PLAN.md po-paket-client). Split rather than folded into
-	// ClientAccessResolver for the reason ADR-0013 split out ClientCleaner.
-	projectsModule.SetClientContactResolver(clientsModule.Contracts())
-	// Same bridge, second interface (ADR-0013's hard-delete client cleanup) —
-	// clientsModule.Contracts() satisfies both ClientAccessResolver and
-	// ClientCleaner, so this is the same object as the call above.
-	projectsModule.SetClientCleaner(clientsModule.Contracts())
+	// Same bridge, akun portal (D4): project lahir/hilang menghitung ulang
+	// login efektif.
+	projectsModule.SetClientActivator(clientsModule.Contracts())
+	// Same bridge, arah sebaliknya (T2.8/T3.5): projects butuh hapus + baca
+	// nomor penawaran milik project.
+	projectsModule.SetQuotationResolver(quotationsModule.Contracts())
+	// Same bridge, direktori client untuk kop PO + daftar Penawaran.
+	quotationsModule.SetClientDirectory(clientsModule.Contracts())
 
 	// Runs for the lifetime of the process (T1's safety net for a missed
 	// webhook) — no separate shutdown signal exists anywhere else in this
@@ -259,7 +264,14 @@ func serve(cfg config.Config) {
 	staffModule.RegisterRoutes(mux, authed)
 	vendorsModule.RegisterRoutes(mux, authed)
 	projectsModule.RegisterRoutes(mux, authed)
+	quotationsModule.RegisterRoutes(mux, authed)
 	clientsModule.RegisterRoutes(mux, authed)
+	// Magic link tanda tangan (jalur C, tanpa login) — pemakai pertama
+	// middleware.RateLimit (T5): 30 permintaan/menit per IP. Yang dilindungi
+	// adalah penyalahgunaan sumber daya, bukan tebakan token — pertahanan
+	// token adalah 32 byte entropinya (§9).
+	signatureLimiter := middleware.NewRateLimiter(30, time.Minute)
+	quotationsModule.RegisterPublicRoutes(mux, middleware.RateLimit(signatureLimiter))
 
 	// Serves the built frontend (see infra/docker/Dockerfile, which copies
 	// apps/web's build output here) — a no-op locally, where the frontend

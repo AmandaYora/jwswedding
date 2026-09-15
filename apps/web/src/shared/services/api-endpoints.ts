@@ -92,7 +92,9 @@ export const API = {
     item: (id: string) => `/api/v1/projects/${id}`,
     cancel: (id: string) => `/api/v1/projects/${id}/cancel`,
     toggleArchive: (id: string) => `/api/v1/projects/${id}/toggle-archive`,
-    duplicate: (id: string) => `/api/v1/projects/${id}/duplicate`,
+    // Hapus permanen berjenjang (D14) — `deleteImpact` WAJIB dipanggil sebelum
+    // dialog dirender; dialog menolak tampil kalau panggilan ini gagal.
+    deleteImpact: (id: string) => `/api/v1/projects/${id}/delete-impact`,
     milestones: (id: string) => `/api/v1/projects/${id}/milestones`,
     milestone: (id: string, milestoneId: string) => `/api/v1/projects/${id}/milestones/${milestoneId}`,
     vendors: (id: string) => `/api/v1/projects/${id}/vendors`,
@@ -106,18 +108,6 @@ export const API = {
     clientPayments: (id: string) => `/api/v1/projects/${id}/client-payments`,
     clientPayment: (id: string, paymentId: string) => `/api/v1/projects/${id}/client-payments/${paymentId}`,
     clientPaymentReceiptPdf: (id: string, paymentId: string) => `/api/v1/projects/${id}/client-payments/${paymentId}/receipt-pdf`,
-    // PO Paket (PLAN.md po-paket-client). One PO per project, so these are
-    // project-scoped singletons, not an id-addressed collection.
-    packageOrder: (id: string) => `/api/v1/projects/${id}/package-order`,
-    packageOrderApplyTemplate: (id: string) => `/api/v1/projects/${id}/package-order/apply-template`,
-    packageOrderStartBlank: (id: string) => `/api/v1/projects/${id}/package-order/start-blank`,
-    packageOrderHeader: (id: string) => `/api/v1/projects/${id}/package-order/header`,
-    packageOrderBlocks: (id: string) => `/api/v1/projects/${id}/package-order/blocks`,
-    packageOrderAdjustments: (id: string) => `/api/v1/projects/${id}/package-order/adjustments`,
-    packageOrderIssue: (id: string) => `/api/v1/projects/${id}/package-order/issue`,
-    packageOrderRevise: (id: string) => `/api/v1/projects/${id}/package-order/revise`,
-    packageOrderCancel: (id: string) => `/api/v1/projects/${id}/package-order/cancel`,
-    packageOrderPdf: (id: string) => `/api/v1/projects/${id}/package-order/pdf`,
     clientInvoices: (id: string) => `/api/v1/projects/${id}/client-invoices`,
     clientInvoice: (id: string, invoiceId: string) => `/api/v1/projects/${id}/client-invoices/${invoiceId}`,
     clientInvoiceMarkPaid: (id: string, invoiceId: string) => `/api/v1/projects/${id}/client-invoices/${invoiceId}/mark-paid`,
@@ -151,16 +141,53 @@ export const API = {
     base: "/api/v1/package-templates",
     item: (id: string) => `/api/v1/package-templates/${id}`,
     blocks: (id: string) => `/api/v1/package-templates/${id}/blocks`,
-    terms: (id: string) => `/api/v1/package-templates/${id}/terms`,
+  },
+  // Penawaran sebagai PO pra-deal (PLAN penawaran-client-master, D9): modul
+  // `quotations` — dokumen + komposisi + penyesuaian + PDF. Template Paket
+  // tetap di URL-nya (pindah modul peladen saja).
+  quotations: {
+    base: "/api/v1/quotations",
+    item: (id: string) => `/api/v1/quotations/${id}`,
+    deleteImpact: (id: string) => `/api/v1/quotations/${id}/delete-impact`,
+    categories: "/api/v1/quotations/categories",
+    blocks: (id: string) => `/api/v1/quotations/${id}/blocks`,
+    adjustments: (id: string) => `/api/v1/quotations/${id}/adjustments`,
+    issue: (id: string) => `/api/v1/quotations/${id}/issue`,
+    withdraw: (id: string) => `/api/v1/quotations/${id}/withdraw`,
+    revise: (id: string) => `/api/v1/quotations/${id}/revise`,
+    accept: (id: string) => `/api/v1/quotations/${id}/accept`,
+    reject: (id: string) => `/api/v1/quotations/${id}/reject`,
+    expire: (id: string) => `/api/v1/quotations/${id}/expire`,
+    cancel: (id: string) => `/api/v1/quotations/${id}/cancel`,
+    duplicate: (id: string) => `/api/v1/quotations/${id}/duplicate`,
+    pdf: (id: string) => `/api/v1/quotations/${id}/pdf`,
+    // TTD Penawaran: magic link 24 jam + opsi Atas Nama/specimen.
+    signatureLink: (id: string) => `/api/v1/quotations/${id}/signature-link`,
+    signatureOptions: (id: string) => `/api/v1/quotations/${id}/signature-options`,
+  },
+  // Magic link tanda tangan (jalur C, tanpa login) — halaman publik.
+  publicSignature: {
+    resolve: (token: string) => `/api/v1/public/quotation-signature/${token}`,
+    accept: (token: string) => `/api/v1/public/quotation-signature/${token}/accept`,
+    reject: (token: string) => `/api/v1/public/quotation-signature/${token}/reject`,
   },
   dashboard: "/api/v1/dashboard",
   clientTimelines: "/api/v1/client-timelines",
+  // Client master pasangan + kontaknya (PLAN penawaran-client-master, D1).
   clients: {
     base: "/api/v1/clients",
-    byProject: (projectId: string) => `/api/v1/clients?projectId=${projectId}`,
     item: (id: string) => `/api/v1/clients/${id}`,
-    toggleActive: (id: string) => `/api/v1/clients/${id}/toggle-active`,
-    resetCredential: (id: string) => `/api/v1/clients/${id}/reset-credential`,
-    replaceRepresentative: (id: string) => `/api/v1/clients/${id}/replace-representative`,
+    deleteImpact: (id: string) => `/api/v1/clients/${id}/delete-impact`,
+    contacts: (id: string) => `/api/v1/clients/${id}/contacts`,
+    contact: (clientId: string, contactId: string) => `/api/v1/clients/${clientId}/contacts/${contactId}`,
+    contactToggleActive: (clientId: string, contactId: string) =>
+      `/api/v1/clients/${clientId}/contacts/${contactId}/toggle-active`,
+    contactResetCredential: (clientId: string, contactId: string) =>
+      `/api/v1/clients/${clientId}/contacts/${contactId}/reset-credential`,
+    contactReplaceRepresentative: (clientId: string, contactId: string) =>
+      `/api/v1/clients/${clientId}/contacts/${contactId}/replace-representative`,
+    // TTD Penawaran (D, D12): specimen tunggal + gambarnya.
+    signature: (id: string) => `/api/v1/clients/${id}/signature`,
+    signatureImage: (id: string) => `/api/v1/clients/${id}/signature/image`,
   },
 } as const;

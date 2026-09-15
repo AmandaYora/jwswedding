@@ -7,6 +7,13 @@ interface MilestoneRailProps {
   size?: "sm" | "md";
   showCount?: boolean;
   className?: string;
+  /**
+   * Lets the ticks flow onto a second row instead of overflowing their
+   * container. Off by default so table cells keep their single-line height;
+   * the Client Portal's vendor cards turn it on, since a vendor with ~25
+   * tahapan overran the card and got clipped.
+   */
+  wrap?: boolean;
 }
 
 const STRIPE_STYLE = {
@@ -40,7 +47,7 @@ function Tick({ status, size }: { status: RailMilestoneStatus; size: "sm" | "md"
   return <span className={cn(dims, "rounded-[2px] border border-border bg-white")} title="Belum dimulai" />;
 }
 
-export function MilestoneRail({ milestones, size = "md", showCount = true, className }: MilestoneRailProps) {
+export function MilestoneRail({ milestones, size = "md", showCount = true, className, wrap = false }: MilestoneRailProps) {
   const relevant = milestones.filter((m) => m.status !== "Cancelled");
   const completed = relevant.filter((m) => m.status === "Completed").length;
   const total = relevant.length;
@@ -50,8 +57,8 @@ export function MilestoneRail({ milestones, size = "md", showCount = true, class
   }
 
   return (
-    <div className={cn("flex items-center gap-2.5", className)}>
-      <div className="flex items-center gap-[3px]">
+    <div className={cn("flex items-center gap-2.5", wrap && "flex-wrap", className)}>
+      <div className={cn("flex items-center gap-[3px]", wrap && "flex-wrap gap-y-1.5")}>
         {relevant.map((m, idx) => (
           <Tick key={idx} status={m.status} size={size} />
         ))}

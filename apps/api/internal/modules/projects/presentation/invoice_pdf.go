@@ -9,6 +9,7 @@ import (
 	"github.com/go-pdf/fpdf"
 
 	platformcontracts "jwswedding/internal/modules/platform/contracts"
+	"jwswedding/internal/modules/projects/application"
 	"jwswedding/internal/modules/projects/domain"
 	"jwswedding/internal/shared/terbilang"
 )
@@ -205,14 +206,27 @@ func drawInvoiceTableHeader(pdf *fpdf.Fpdf, theme pdfTheme, y float64) {
 }
 
 // buildClientInvoicePDF renders an Invoice/Tagihan (PLAN.md
-// redesain-pdf-invoice-kwitansi-v2 §5.3). Not itemized (a single
-// Type+Description+Amount line — an earlier decision reaffirmed, "no line
-// items"). totalPaid (ClientPaymentService.TotalReceived) feeds the "Nilai
+// redesain-pdf-invoice-kwitansi-v2 §5.3).
+//
+// Yang DITAGIHKAN tetap satu baris Jenis+Keterangan+Jumlah — keputusan lama
+// "no line items" masih berlaku, karena satu Tagihan menagih satu termin,
+// bukan daftar barang. Di ATASNYA kini tercetak tabel KOMPOSISI PAKET
+// (KATEGORI/PRODUK/QTY/BONUS) yang sama persis dengan PDF PO, plus Nomor PO
+// di kartu detail: keduanya KONTEKS, bukan yang ditagih. Tanpa itu, penerima
+// tagihan tidak punya cara tahu tagihan ini milik PO yang mana, atau paket
+// apa yang sedang dicicilnya, tanpa membuka dokumen kedua.
+//
+// poNumber "" dan composition nil adalah keadaan sah: project lama yang lahir
+// sebelum fase penawaran tidak punya PO sama sekali. Barisnya lalu jatuh ke
+// "-" dan tabelnya tidak tercetak, bukan gagal.
+//
+// totalPaid (ClientPaymentService.TotalReceived) feeds the "Nilai
 // Kontrak / Total Sudah Dibayar / Sisa Tagihan" summary strip (K3) —
 // deliberately a caller-supplied parameter rather than this function
 // querying `projects`' own payment repository itself, since a PDF builder
 // has no business reaching past its own arguments into another service.
-func buildClientInvoicePDF(project domain.Project, inv domain.ClientInvoice, profile platformcontracts.TenantProfile, logo, signature []byte, totalPaid int64) (*fpdf.Fpdf, error) {
+// poNumber/composition ikut konvensi yang sama: disodorkan pemanggil.
+func buildClientInvoicePDF(project domain.Project, inv domain.ClientInvoice, profile platformcontracts.TenantProfile, logo, signature []byte, totalPaid int64, poNumber string, composition []application.QuotationCompositionRow) (*fpdf.Fpdf, error) {
 	pdf, theme := newDocument(profile, logo, "INVOICE", "Tagihan kepada Client")
 	y := pdf.GetY()
 
@@ -226,6 +240,7 @@ func buildClientInvoicePDF(project domain.Project, inv domain.ClientInvoice, pro
 	label, bg, fg := invoiceStatusBadge(inv.Status)
 	rightRows := [][2]string{
 		{"Nomor Invoice", inv.InvoiceNumber},
+		{"Nomor PO", orDash(poNumber)},
 		{"Tanggal Terbit", formatTanggalPDF(inv.CreatedAt)},
 		{"Jatuh Tempo", formatTanggalPDF(inv.DueDate)},
 	}
@@ -233,6 +248,19 @@ func buildClientInvoicePDF(project domain.Project, inv domain.ClientInvoice, pro
 	y1 := infoCard(pdf, theme, pML, y, cardW, "Ditagihkan Kepada", leftRows, nil)
 	y2 := infoCard(pdf, theme, pMR-cardW, y, cardW, "Detail Tagihan", rightRows, badge)
 	y = max(y1, y2) + 8
+
+	// Komposisi paket lebih dulu: ia KONTEKS untuk baris tagihan di bawahnya,
+	// jadi pembaca melihat "paket apa" sebelum "berapa yang ditagih sekarang".
+	// Label seksinya wajib — tanpa itu tabel ini gampang disalahbaca sebagai
+	// rincian yang sedang ditagihkan.
+	if len(composition) > 0 {
+		y = ensureSpace(pdf, theme, y, 20)
+		sectionLabel(pdf, theme, pML, y, "Komposisi Paket")
+		y = drawCompositionTable(pdf, theme, y+5, composition)
+		y = ensureSpace(pdf, theme, y+8, 20)
+		sectionLabel(pdf, theme, pML, y, "Yang Ditagihkan")
+		y += 5
+	}
 
 	// Measure the row BEFORE drawing anything — fpdf renders immediately
 	// (no retained-mode undo), so the header must not be painted until we

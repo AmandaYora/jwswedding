@@ -37,7 +37,7 @@ interface TimelineMonitorState {
 // item 17) — one fetch, already scoped server-side to the caller's own
 // PIC'd projects for a Wedding Planner (Owner/Admin get every project's).
 // Every filter on the page itself (search/bulan/status) works client-side
-// over this one list, same pattern as ClientListPage's own allClients.
+// over this one list.
 export const useTimelineMonitorStore = create<TimelineMonitorState>((set) => ({
   timelines: [],
 

@@ -1,0 +1,21 @@
+-- Nama paket/layanan jadi milik PENAWARAN, bukan turunan kategori blok.
+--
+-- Sebelumnya projects.package_name diisi Accept dari KATEGORI BLOK PERTAMA
+-- penawaran (packageNameFrom) — sehingga Portal Klien dan baris "Paket" di
+-- PDF Invoice menampilkan "CATERING", bukan "Silver"; dan kosong bila
+-- penawarannya belum punya blok. Field itu juga terkunci di Ubah Project
+-- dengan alasan "diubah dari Penawaran", padahal di Penawaran tidak ada
+-- input semacam itu sama sekali.
+--
+-- Nama DISALIN dari Template Paket saat penawaran dibuat, tidak pernah
+-- dirujuk: template bisa di-rename dan bisa dihapus permanen, dan mengganti
+-- nama template pada Maret tidak boleh mengganti nama paket yang sudah
+-- diteken klien pada Januari. Alasan yang sama membuat blok komposisi pun
+-- disalin, bukan dirujuk (D22).
+--
+-- DEFAULT '' bukan NULL: "" berarti penawaran lama yang lahir sebelum kolom
+-- ini ada. Accept memakainya sebagai penanda untuk jatuh ke perilaku lama
+-- (kategori blok pertama), dan Ubah Project membuka kunci field-nya persis
+-- pada project-project itu supaya datanya bisa dirapikan sekali.
+ALTER TABLE quotations
+  ADD COLUMN package_name VARCHAR(150) NOT NULL DEFAULT '' AFTER base_price;

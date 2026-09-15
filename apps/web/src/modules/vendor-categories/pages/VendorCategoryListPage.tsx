@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Plus, Pencil, CheckCircle2, Ban, Trash2, AlertTriangle } from "lucide-react";
+import { Plus, Pencil, CheckCircle2, Ban, Trash2 } from "lucide-react";
 import { Card } from "@/shared/components/ui/Card";
 import { Button } from "@/shared/components/ui/Button";
+import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
 import { SearchInput } from "@/shared/components/ui/SearchInput";
 import { Badge } from "@/shared/components/ui/Badge";
 import { Modal } from "@/shared/components/ui/Modal";
@@ -110,6 +111,12 @@ export default function VendorCategoryListPage() {
       setIsDeleting(false);
     }
   }
+
+  // Dipakai dua tempat di bawah (pemberitahuan dan konfirmasi), jadi
+  // dihitung sekali di sini alih-alih lewat IIFE di dalam JSX.
+  const categoryInUseCount = deleteTarget
+    ? vendors.filter((v) => v.categoryId === deleteTarget.id).length
+    : 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -233,51 +240,40 @@ export default function VendorCategoryListPage() {
         initialCategory={editingCategory}
       />
 
-      <Modal
-        open={deleteTarget !== null}
+      {/* Dua keadaan berbeda, dua komponen berbeda — sengaja. "Tidak bisa
+          dihapus" adalah PEMBERITAHUAN (satu tombol Tutup), bukan pertanyaan;
+          menempelkannya ke dalam dialog konfirmasi akan membuat dialog itu
+          kadang bertanya dan kadang tidak. */}
+      {deleteTarget && categoryInUseCount > 0 && (
+        <Modal
+          open
+          onClose={() => setDeleteTarget(null)}
+          title={`Hapus Kategori — ${deleteTarget.name}`}
+          size="sm"
+          footer={
+            <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+              Tutup
+            </Button>
+          }
+        >
+          <p className="text-[13.5px] leading-relaxed text-text-primary">
+            Kategori ini masih digunakan oleh <strong>{categoryInUseCount} vendor</strong> dan tidak dapat dihapus. Ubah kategori pada
+            vendor tersebut terlebih dahulu.
+          </p>
+        </Modal>
+      )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null && categoryInUseCount === 0}
         onClose={() => setDeleteTarget(null)}
+        onConfirm={() => void handleConfirmDelete()}
         title={deleteTarget ? `Hapus Kategori — ${deleteTarget.name}` : "Hapus Kategori"}
-        size="sm"
-      >
-        {deleteTarget &&
-          (() => {
-            const inUseCount = vendors.filter((v) => v.categoryId === deleteTarget.id).length;
-            if (inUseCount > 0) {
-              return (
-                <div className="flex flex-col gap-4">
-                  <p className="flex items-start gap-2 text-[13px] text-text-secondary">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
-                    <span>
-                      Kategori ini masih digunakan oleh <strong className="text-text-primary">{inUseCount} vendor</strong> dan tidak
-                      dapat dihapus. Ubah kategori pada vendor tersebut terlebih dahulu.
-                    </span>
-                  </p>
-                  <div className="flex justify-end">
-                    <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
-                      Tutup
-                    </Button>
-                  </div>
-                </div>
-              );
-            }
-            return (
-              <div className="flex flex-col gap-4">
-                <p className="flex items-start gap-2 text-[13px] text-text-secondary">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
-                  <span>Data ini akan dihapus secara permanen dan tidak dapat dikembalikan. Apakah Anda yakin?</span>
-                </p>
-                <div className="flex justify-end gap-2">
-                  <Button variant="secondary" onClick={() => setDeleteTarget(null)} disabled={isDeleting}>
-                    Batal
-                  </Button>
-                  <Button variant="danger" onClick={() => void handleConfirmDelete()} disabled={isDeleting}>
-                    {isDeleting ? "Menghapus..." : "Ya, Hapus Permanen"}
-                  </Button>
-                </div>
-              </div>
-            );
-          })()}
-      </Modal>
+        message="Yakin ingin menghapus kategori ini secara permanen?"
+        details="Data ini dihapus permanen dan tidak dapat dikembalikan."
+        confirmLabel="Ya, Hapus Permanen"
+        busyLabel="Menghapus..."
+        busy={isDeleting}
+      />
     </div>
   );
 }

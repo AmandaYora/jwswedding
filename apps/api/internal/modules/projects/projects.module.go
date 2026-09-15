@@ -18,7 +18,6 @@ import (
 type Module struct {
 	handler                  *presentation.Handler
 	milestoneTemplateHandler *presentation.MilestoneTemplateHandler
-	packageTemplateHandler   *presentation.PackageTemplateHandler
 	contracts                contracts.Contracts
 	projectService           *application.ProjectService
 }
@@ -37,8 +36,6 @@ func NewModule(db *sql.DB, storageClient *storage.Client, staff application.Staf
 	evidenceRepo := infrastructure.NewMySQLEvidenceRepository(db)
 	activityRepo := infrastructure.NewMySQLActivityRepository(db)
 	dashboardRepo := infrastructure.NewMySQLDashboardRepository(db)
-	packageTemplateRepo := infrastructure.NewMySQLPackageTemplateRepository(db)
-	packageOrderRepo := infrastructure.NewMySQLPackageOrderRepository(db)
 
 	activityService := application.NewActivityService(activityRepo)
 	evidenceService := application.NewEvidenceService(evidenceRepo, storageClient, storage.BuildKey, activityService)
@@ -51,21 +48,20 @@ func NewModule(db *sql.DB, storageClient *storage.Client, staff application.Staf
 	venuePaymentService := application.NewVenuePaymentService(venuePaymentRepo, evidenceService, activityService)
 	issueService := application.NewIssueService(issueRepo, vendorMilestoneRepo, activityService)
 	dashboardService := application.NewDashboardService(projectService, dashboardRepo, evidenceService)
-	packageTemplateService := application.NewPackageTemplateService(packageTemplateRepo)
-	// packageOrderService takes projectRepo directly (as its narrow
-	// PackageOrderProjectStore) rather than projectService: the only project
-	// state it writes is contract_value and package_name, and going through
-	// ProjectService.Update would drag in RBAC and konteks-umum validation
-	// meant for a user editing the form, not for a derived recompute.
-	packageOrderService := application.NewPackageOrderService(packageOrderRepo, packageTemplateRepo, projectRepo, clientInvoiceService, activityService)
+	// Ledger tagihan untuk SyncContractValue + ImpactForClient (T3.3, T3.5) —
+	// setter supaya konstruktor ProjectService tidak berubah.
+	projectService.SetClientInvoiceService(clientInvoiceService)
+	// Gerbang komitmen biaya vendor membaca anggaran dari ProjectService —
+	// satu modul, jadi ini perakitan biasa, bukan lintas batas. Setter karena
+	// keduanya saling membutuhkan pada waktu yang berbeda.
+	vendorEngagementService.SetBudgetReader(projectService)
 
-	handler := presentation.NewHandler(projectService, vendorEngagementService, paymentService, clientPaymentService, clientInvoiceService, venuePaymentService, issueService, evidenceService, activityService, dashboardService, platform, packageOrderService)
+	handler := presentation.NewHandler(projectService, vendorEngagementService, paymentService, clientPaymentService, clientInvoiceService, venuePaymentService, issueService, evidenceService, activityService, dashboardService, platform)
 
 	return &Module{
 		handler:                  handler,
 		milestoneTemplateHandler: presentation.NewMilestoneTemplateHandler(milestoneTemplateService),
-		packageTemplateHandler:   presentation.NewPackageTemplateHandler(packageTemplateService),
-		contracts:                contracts.New(projectService, vendorEngagementService, milestoneTemplateService),
+		contracts:                contracts.New(projectService, vendorEngagementService, milestoneTemplateService, clientPaymentService),
 		projectService:           projectService,
 	}
 }
@@ -84,18 +80,16 @@ func (m *Module) SetClientAccessResolver(resolver presentation.ClientAccessResol
 	m.handler.SetClientAccessResolver(resolver)
 }
 
-// SetClientContactResolver is the twin of SetClientAccessResolver, for the
-// phone number on the PO Paket header (PLAN.md po-paket-client, blok B1).
-// main.go passes the same clients.Contracts object into both.
-func (m *Module) SetClientContactResolver(resolver presentation.ClientContactResolver) {
-	m.handler.SetClientContactResolver(resolver)
+// SetClientActivator memasok port aktivasi akun portal (D4) — dipanggil dari
+// main.go setelah clientsModule ada.
+func (m *Module) SetClientActivator(activator application.ClientActivator) {
+	m.projectService.SetClientActivator(activator)
 }
 
-// SetClientCleaner completes the same two-phase wiring as
-// SetClientAccessResolver above, for ProjectService.Delete's (ADR-0013)
-// best-effort client cleanup — see application.ClientCleaner's doc comment.
-func (m *Module) SetClientCleaner(cleaner application.ClientCleaner) {
-	m.projectService.SetClientCleaner(cleaner)
+// SetQuotationResolver memasok port penawaran (T2.8, T3.5) — dipanggil dari
+// main.go setelah quotationsModule ada.
+func (m *Module) SetQuotationResolver(resolver application.QuotationResolver) {
+	m.projectService.SetQuotationResolver(resolver)
 }
 
 // SetVenueResolver completes the same two-phase wiring, for resolving a
@@ -112,6 +106,4 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux, authed func(http.Handler) ht
 	mux.Handle("/api/v1/client-timelines", authed(http.HandlerFunc(m.handler.ClientTimelines)))
 	mux.Handle("/api/v1/milestone-templates", authed(http.HandlerFunc(m.milestoneTemplateHandler.Collection)))
 	mux.Handle("/api/v1/milestone-templates/", authed(http.HandlerFunc(m.milestoneTemplateHandler.Item)))
-	mux.Handle("/api/v1/package-templates", authed(http.HandlerFunc(m.packageTemplateHandler.Collection)))
-	mux.Handle("/api/v1/package-templates/", authed(http.HandlerFunc(m.packageTemplateHandler.Item)))
 }

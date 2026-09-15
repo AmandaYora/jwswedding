@@ -40,6 +40,13 @@ func (s *ClientInvoiceService) List(ctx context.Context, projectID int64) ([]dom
 	return s.repo.ListByProject(ctx, projectID)
 }
 
+// NextSequence membuka pembacaan sekuens penomoran untuk aloj batch Accept
+// (buildSeedInvoices): baseline MAX tersimpan untuk satu periode; pemanggil
+// menaikannya sendiri per baris dalam batch.
+func (s *ClientInvoiceService) NextSequence(ctx context.Context, tenantID int64, period string) (int, error) {
+	return s.repo.NextInvoiceSequence(ctx, tenantID, period)
+}
+
 func (s *ClientInvoiceService) Get(ctx context.Context, projectID, id int64) (*domain.ClientInvoice, error) {
 	inv, err := s.repo.FindByID(ctx, projectID, id)
 	if err != nil {

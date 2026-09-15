@@ -23,6 +23,9 @@ import { useAuthStore } from "@/shared/stores/useAuthStore";
 import { compressFileForUpload } from "@/shared/lib/image-compression";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
 import { formatCurrency, formatDate } from "@/shared/lib/formatters";
+import { BudgetMeter } from "@/modules/projects/components/BudgetMeter";
+import { activeVendorCost, budgetStateOf, projectedVendorCost, worsensOverBudget } from "@/modules/projects/lib/budget";
+import { ROUTE_PATHS } from "@/app/routes/route-paths";
 
 interface ProjectVendorFormModalProps {
   projectId: string;
@@ -30,6 +33,12 @@ interface ProjectVendorFormModalProps {
   onClose: () => void;
   onSubmit: (values: ProjectVendorFormValues) => void;
   initialProjectVendor?: ProjectVendor;
+  /**
+   * Galat dari upaya simpan terakhir. Dirender DI DALAM modal karena modal ini
+   * tetap terbuka saat penyimpanan gagal — penolakan gerbang anggaran yang
+   * hanya tampil di kartu di belakangnya sama saja dengan tidak tampil.
+   */
+  error?: string | null;
 }
 
 const CUSTOM_HOURS = "__custom__";
@@ -50,6 +59,7 @@ function toFormValues(pv?: ProjectVendor, defaults?: { vendorId: string; staffId
       dueDate: "",
       picStaffId: defaults?.staffId ?? "",
       notes: "",
+      overBudgetReason: "",
     };
   }
   return {
@@ -66,6 +76,9 @@ function toFormValues(pv?: ProjectVendor, defaults?: { vendorId: string; staffId
     dueDate: pv.dueDate ?? "",
     picStaffId: pv.picStaffId,
     notes: pv.notes,
+    // Selalu kosong saat form dibuka: alasan melampaui anggaran dimintakan
+    // per penyimpanan, bukan diwariskan dari penyimpanan sebelumnya.
+    overBudgetReason: "",
   };
 }
 
@@ -78,7 +91,7 @@ function presetKeyFor(start: string, end: string): string {
   return match ? match.label : CUSTOM_HOURS;
 }
 
-export function ProjectVendorFormModal({ projectId, open, onClose, onSubmit, initialProjectVendor }: ProjectVendorFormModalProps) {
+export function ProjectVendorFormModal({ projectId, open, onClose, onSubmit, initialProjectVendor, error }: ProjectVendorFormModalProps) {
   const vendors = useVendorStore((s) => s.vendors);
   const fetchVendors = useVendorStore((s) => s.fetchVendors);
   const categories = useVendorCategoryStore((s) => s.categories);
@@ -91,6 +104,14 @@ export function ProjectVendorFormModal({ projectId, open, onClose, onSubmit, ini
   // VendorEngagementService.Update (backend) knows to keep the stored value
   // instead of overwriting it from this form's zero-valued submission.
   const canEditMoney = useAuthStore((s) => s.session?.role === "Owner" || s.session?.role === "Admin");
+  // Daftar peran WAJIB sama dengan RequireRole pada rute /quotations/:id dan
+  // requireQuotationManager di backend — menawarkan jalan keluar yang berujung
+  // 403 lebih buruk daripada tidak menawarkannya.
+  const canSeeQuotation = useAuthStore(
+    (s) => s.session?.role === "Owner" || s.session?.role === "Admin" || s.session?.role === "Sales"
+  );
+  const project = useProjectStore((s) => s.currentProject);
+  const vendorEngagements = useProjectStore((s) => s.vendorEngagements);
   const evidence = useProjectStore((s) => s.evidence);
   const fetchEvidence = useProjectStore((s) => s.fetchEvidence);
   const uploadEvidence = useProjectStore((s) => s.uploadEvidence);
@@ -131,6 +152,29 @@ export function ProjectVendorFormModal({ projectId, open, onClose, onSubmit, ini
       setValues((prev) => ({ ...prev, picStaffId: staff[0].id }));
     }
   }, [initialProjectVendor, vendors, staff, values.vendorId, values.picStaffId]);
+
+  // Anggaran project, diproyeksikan terhadap nilai yang SEDANG diketik —
+  // bukan keadaan saat form dibuka. Inilah alasan perhitungannya ada di
+  // frontend sama sekali: backend baru bisa menilai setelah angkanya terkirim.
+  //
+  // Hanya ditampilkan untuk peran yang memang memegang angkanya (canEditMoney,
+  // Owner/Admin). Wedding Planner dan Sales tidak mengirim Nilai Kerja Sama,
+  // jadi proyeksi apa pun untuk mereka akan keliru — dan Margin memang bukan
+  // untuk mata mereka.
+  const budget =
+    canEditMoney && project
+      ? budgetStateOf(
+          project,
+          projectedVendorCost(vendorEngagements, initialProjectVendor?.id, values.contractValue, values.engagementStatus)
+        )
+      : null;
+  // Alasan diminta HANYA bila tulisan ini membuat atau memperdalam pelampauan
+  // — syarat yang sama ditegakkan guardBudget. Panelnya tetap merah selama
+  // anggarannya minus, karena keadaan itu memang harus terlihat; yang tidak
+  // diminta adalah tanda tangan untuk sesuatu yang tidak diperburuk siapa pun
+  // pada penyimpanan ini.
+  const needsOverBudgetReason =
+    budget != null && project != null && worsensOverBudget(budget, budgetStateOf(project, activeVendorCost(vendorEngagements)));
 
   const selectedVendor = vendors.find((v) => v.id === values.vendorId);
   const vendorsInCategory = vendors.filter(
@@ -195,6 +239,13 @@ export function ProjectVendorFormModal({ projectId, open, onClose, onSubmit, ini
       setErrors(fieldErrors);
       return;
     }
+    // Melampaui anggaran boleh — tanpa alasan tercatat, tidak. Backend
+    // menegakkan syarat yang sama; yang di sini hanya supaya orangnya tahu
+    // sebelum menekan simpan, bukan sesudah ditolak.
+    if (needsOverBudgetReason && !result.data.overBudgetReason.trim()) {
+      setErrors({ overBudgetReason: "Alasan wajib diisi karena komitmen ini melampaui Nilai Kontrak" });
+      return;
+    }
     onSubmit(result.data);
     setErrors({});
   }
@@ -223,6 +274,14 @@ export function ProjectVendorFormModal({ projectId, open, onClose, onSubmit, ini
     }
   }
 
+  // Sama seperti tautan Penawaran di header project: digerbangi poNumber,
+  // bukan quotationId — sebuah project bisa menyimpan quotation_id yang
+  // barisnya sudah tidak ada, dan menautkannya hanya memindahkan 404 itu satu
+  // klik lebih jauh. Peran yang tidak boleh membuka penawaran tidak
+  // mendapatkan tautannya.
+  const quotationHref =
+    canSeeQuotation && project && project.poNumber !== null ? ROUTE_PATHS.quotationDetail(project.quotationId) : undefined;
+
   const currentHoursPresetKey = presetKeyFor(values.eventStartTime, values.eventEndTime);
 
   return (
@@ -240,6 +299,11 @@ export function ProjectVendorFormModal({ projectId, open, onClose, onSubmit, ini
       }
     >
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {error && (
+          <p className="rounded-md border border-danger/30 bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger sm:col-span-2">
+            {error}
+          </p>
+        )}
         <Field label="Kategori Vendor">
           <Select value={values.categoryId} onChange={(e) => handleCategoryChange(e.target.value)} disabled={Boolean(initialProjectVendor)}>
             <option value="">Semua Kategori</option>
@@ -291,6 +355,27 @@ export function ProjectVendorFormModal({ projectId, open, onClose, onSubmit, ini
               }}
             />
           </Field>
+        )}
+        {budget && (
+          <div className="sm:col-span-2">
+            <BudgetMeter budget={budget} quotationHref={quotationHref} compact />
+            {needsOverBudgetReason && (
+              <div className="mt-3">
+                <Field
+                  label="Alasan melampaui Nilai Kontrak"
+                  required
+                  hint={errors.overBudgetReason ?? "Tercatat di Aktivitas Project bersama nama dan waktu Anda."}
+                >
+                  <Textarea
+                    rows={2}
+                    value={values.overBudgetReason}
+                    onChange={(e) => set("overBudgetReason", e.target.value)}
+                    placeholder="cth. Tambahan permintaan klien, penawaran menyusul direvisi"
+                  />
+                </Field>
+              </div>
+            )}
+          </div>
         )}
         <Field label="PIC Internal WO" required hint={errors.picStaffId}>
           <Select value={values.picStaffId} onChange={(e) => set("picStaffId", e.target.value)}>

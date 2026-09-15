@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Plus, Pencil, Trash2, Eye, AlertTriangle } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye } from "lucide-react";
 import { Card, CardHeader, CardContent } from "@/shared/components/ui/Card";
 import { Badge } from "@/shared/components/ui/Badge";
 import { Button } from "@/shared/components/ui/Button";
+import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
 import { Modal } from "@/shared/components/ui/Modal";
 import { Input, Textarea, Select, Field } from "@/shared/components/ui/Input";
 import { CurrencyInput } from "@/shared/components/ui/CurrencyInput";
@@ -121,6 +122,13 @@ export function VenuePaymentsSection({ projectId }: { projectId: string }) {
       </Card>
     );
   }
+
+  // Berkas evidence yang ikut terhapus bersama pembayaran ini — angka
+  // yang harus dibaca SEBELUM memutuskan, jadi ia dihitung di sini dan
+  // diserahkan ke dialog, bukan diselipkan sebagai IIFE di dalam JSX.
+  const deleteEvidenceCount = deletingPayment
+    ? evidence.filter((e) => e.relatedKind === "venuePayment" && e.relatedId === deletingPayment.id).length
+    : 0;
 
   return (
     <div>
@@ -250,41 +258,23 @@ export function VenuePaymentsSection({ projectId }: { projectId: string }) {
         />
       )}
 
-      {deletingPayment && (
-        <Modal
-          open={Boolean(deletingPayment)}
-          onClose={() => setDeletingPayment(null)}
-          title="Hapus Pembayaran Venue"
-          description="Tindakan ini permanen dan tidak dapat dibatalkan."
-          footer={
-            <>
-              <Button variant="secondary" onClick={() => setDeletingPayment(null)} disabled={deleting}>Batal</Button>
-              <Button variant="danger" onClick={() => void handleDeletePayment()} disabled={deleting}>
-                {deleting ? "Menghapus..." : "Ya, Hapus Permanen"}
-              </Button>
-            </>
-          }
-        >
-          <div className="flex flex-col gap-3">
-            {deleteError && (
-              <p className="rounded-md border border-danger/30 bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger">{deleteError}</p>
-            )}
-            <p className="flex items-start gap-2 text-[13.5px] text-text-primary">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
-              <span>
-                Yakin ingin menghapus pembayaran venue <strong>{formatCurrency(deletingPayment.amount)}</strong> ({deletingPayment.type})
-                ini secara permanen?
-                {(() => {
-                  const count = evidence.filter((e) => e.relatedKind === "venuePayment" && e.relatedId === deletingPayment.id).length;
-                  return count > 0
-                    ? ` ${count} berkas evidence yang terlampir pada pembayaran ini akan ikut terhapus.`
-                    : "";
-                })()}
-              </span>
-            </p>
-          </div>
-        </Modal>
-      )}
+      <ConfirmDialog
+        open={deletingPayment !== null}
+        onClose={() => setDeletingPayment(null)}
+        onConfirm={() => void handleDeletePayment()}
+        title="Hapus Pembayaran Venue"
+        message={
+          <>
+            Yakin ingin menghapus pembayaran venue <strong>{formatCurrency(deletingPayment?.amount ?? 0)}</strong> (
+            {deletingPayment?.type}) ini secara permanen?
+          </>
+        }
+        details={deleteEvidenceCount > 0 ? `${deleteEvidenceCount} berkas evidence yang terlampir pada pembayaran ini ikut terhapus.` : undefined}
+        confirmLabel="Ya, Hapus Permanen"
+        busyLabel="Menghapus..."
+        busy={deleting}
+        error={deleteError}
+      />
 
       {viewingEvidencePayment && (
         <EvidenceListModal

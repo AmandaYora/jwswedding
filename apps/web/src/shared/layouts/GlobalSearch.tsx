@@ -25,18 +25,18 @@ export function GlobalSearch() {
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
   const vendors = useVendorStore((s) => s.vendors);
   const fetchVendors = useVendorStore((s) => s.fetchVendors);
-  const allClients = useClientStore((s) => s.allClients);
-  const fetchAllClients = useClientStore((s) => s.fetchAllClients);
+  const clients = useClientStore((s) => s.clients);
+  const fetchClients = useClientStore((s) => s.fetchClients);
 
   useEffect(() => {
     void fetchProjects();
     void fetchVendors();
-    // A Wedding Planner ("Staff" role) gets 403 here — tenant-wide client
-    // search is Owner/Admin only (see PLAN.md's RBAC section) — swallow it
-    // so global search still works for projects/vendors, just without
-    // client results for that role, instead of an unhandled rejection.
-    fetchAllClients().catch(() => {});
-  }, [fetchProjects, fetchVendors, fetchAllClients]);
+    // Wedding Planner ("Staff") gets 403 here — menu Client Owner/Admin/
+    // Sales only — swallow it so global search still works for
+    // projects/vendors, just without client results for that role, instead
+    // of an unhandled rejection.
+    fetchClients().catch(() => {});
+  }, [fetchProjects, fetchVendors, fetchClients]);
 
   const results = useMemo<ResultItem[]>(() => {
     const q = query.trim().toLowerCase();
@@ -52,13 +52,13 @@ export function GlobalSearch() {
       .slice(0, 4)
       .map((v) => ({ key: `v-${v.id}`, label: v.name, sublabel: "Vendor", icon: Store, path: ROUTE_PATHS.vendors }));
 
-    const clientResults: ResultItem[] = allClients
-      .filter((c) => c.name.toLowerCase().includes(q))
+    const clientResults: ResultItem[] = clients
+      .filter((c) => c.displayName.toLowerCase().includes(q))
       .slice(0, 4)
-      .map((c) => ({ key: `c-${c.id}`, label: c.name, sublabel: "Client", icon: Users, path: ROUTE_PATHS.clients }));
+      .map((c) => ({ key: `c-${c.id}`, label: c.displayName, sublabel: "Client", icon: Users, path: ROUTE_PATHS.clientDetail(c.id) }));
 
     return [...projectResults, ...vendorResults, ...clientResults].slice(0, 8);
-  }, [query, projects, vendors, allClients]);
+  }, [query, projects, vendors, clients]);
 
   return (
     <div className="relative w-full max-w-sm" ref={containerRef}>

@@ -3,12 +3,36 @@
   --brand-navy-900: #1e3a5f;
   --brand-navy-800: #24476f;
 
+  /* Brand ramp (ADR-0012 addendum). Only 950/900/800 + primary-soft are
+     picked per preset (brandPresets.ts) and overridden at runtime by
+     applyBrandColorPreset(). The lighter/mid steps below are DERIVED from
+     those, so a tenant switching to e.g. `bronze` gets a bronze 700/600/
+     200/100 too instead of a stray navy tint — and so the ~20 call sites
+     that were already writing `text-navy-700`, `bg-navy-50`,
+     `hover:border-navy-200` (mostly in the Client Portal) resolve to real
+     CSS instead of silently generating nothing at all.
+     color-mix() resolves against this element's own computed
+     --brand-navy-800, inline override included, so the ramp tracks the
+     preset automatically with no extra work in applyBrandColorPreset(). */
+  --brand-navy-700: color-mix(in oklab, var(--brand-navy-800) 80%, white);
+  --brand-navy-600: color-mix(in oklab, var(--brand-navy-800) 64%, white);
+  --brand-navy-300: color-mix(in oklab, var(--brand-navy-800) 34%, white);
+  --brand-navy-200: color-mix(in oklab, var(--brand-navy-800) 20%, white);
+  --brand-navy-100: color-mix(in oklab, var(--brand-navy-800) 11%, white);
+  /* 50 reuses the preset's own tuned light tint rather than another mix —
+     that value already exists per preset and is the shade this ramp's
+     "tinted background" role is meant to be. */
+  --brand-navy-50: var(--color-primary-soft);
+
   --color-background: #f8fafc;
   --color-surface: #ffffff;
   --color-surface-muted: #f1f5f9;
 
   --color-text-primary: #0f172a;
   --color-text-secondary: #64748b;
+  /* Third text step, for decorative/secondary iconography that must not
+     compete with real copy. */
+  --color-text-tertiary: #94a3b8;
   --color-text-on-dark: #ffffff;
 
   --color-border: #d6e0ea;
@@ -18,6 +42,11 @@
   --color-success-soft: #dcfce7;
   --color-warning: #d97706;
   --color-warning-soft: #fef3c7;
+  /* Readable warning text/icon color ON --color-warning-soft. Plain
+     --color-warning (amber-600) only measures ~3.0:1 there, under AA for
+     the small bold labels the Client Portal puts on warning panels;
+     amber-800 measures ~7.5:1. */
+  --color-warning-strong: #92400e;
   --color-danger: #dc2626;
   --color-danger-soft: #fee2e2;
   --color-info: #2563eb;
@@ -46,6 +75,12 @@
   --color-navy-950: var(--brand-navy-950);
   --color-navy-900: var(--brand-navy-900);
   --color-navy-800: var(--brand-navy-800);
+  --color-navy-700: var(--brand-navy-700);
+  --color-navy-600: var(--brand-navy-600);
+  --color-navy-300: var(--brand-navy-300);
+  --color-navy-200: var(--brand-navy-200);
+  --color-navy-100: var(--brand-navy-100);
+  --color-navy-50: var(--brand-navy-50);
 
   --color-background: var(--color-background);
   --color-surface: var(--color-surface);
@@ -53,6 +88,7 @@
 
   --color-text-primary: var(--color-text-primary);
   --color-text-secondary: var(--color-text-secondary);
+  --color-text-tertiary: var(--color-text-tertiary);
   --color-text-on-dark: var(--color-text-on-dark);
 
   --color-border: var(--color-border);
@@ -62,6 +98,7 @@
   --color-success-soft: var(--color-success-soft);
   --color-warning: var(--color-warning);
   --color-warning-soft: var(--color-warning-soft);
+  --color-warning-strong: var(--color-warning-strong);
   --color-danger: var(--color-danger);
   --color-danger-soft: var(--color-danger-soft);
   --color-info: var(--color-info);

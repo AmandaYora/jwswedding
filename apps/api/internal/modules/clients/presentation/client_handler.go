@@ -15,16 +15,38 @@ import (
 )
 
 type Handler struct {
-	clients *application.ClientService
+	clients    *application.ClientService
+	contacts   *application.ClientContactService
+	signatures *application.ClientSignatureService
 }
 
-func NewHandler(clients *application.ClientService) *Handler {
-	return &Handler{clients: clients}
+func NewHandler(clients *application.ClientService, contacts *application.ClientContactService, signatures *application.ClientSignatureService) *Handler {
+	return &Handler{clients: clients, contacts: contacts, signatures: signatures}
 }
 
 type clientResponse struct {
+	ID           int64  `json:"id"`
+	BrideName    string `json:"brideName"`
+	GroomName    string `json:"groomName"`
+	DisplayName  string `json:"displayName"`
+	Phone        string `json:"phone"`
+	Email        string `json:"email"`
+	Notes        string `json:"notes"`
+	ContactCount int    `json:"contactCount"`
+	ProjectCount int    `json:"projectCount"`
+}
+
+func toClientResponse(item application.ClientListItem) clientResponse {
+	return clientResponse{
+		ID: item.Client.ID, BrideName: item.Client.BrideName, GroomName: item.Client.GroomName,
+		DisplayName: item.Client.DisplayName(), Phone: item.Client.Phone, Email: item.Client.Email,
+		Notes: item.Client.Notes, ContactCount: item.ContactCount, ProjectCount: item.ProjectCount,
+	}
+}
+
+type contactResponse struct {
 	ID                    int64   `json:"id"`
-	ProjectID             int64   `json:"projectId"`
+	ClientID              int64   `json:"clientId"`
 	Role                  string  `json:"role"`
 	Username              string  `json:"username"`
 	RelationNote          string  `json:"relationNote"`
@@ -35,14 +57,14 @@ type clientResponse struct {
 	LastCredentialResetAt *string `json:"lastCredentialResetAt"`
 }
 
-func toClientResponse(c domain.Client) clientResponse {
+func toContactResponse(c domain.ClientContact) contactResponse {
 	var lastReset *string
 	if c.LastCredentialResetAt != nil {
 		s := c.LastCredentialResetAt.Format("2006-01-02")
 		lastReset = &s
 	}
-	return clientResponse{
-		ID: c.ID, ProjectID: c.ProjectID, Role: string(c.Role), Username: c.Username, RelationNote: c.RelationNote,
+	return contactResponse{
+		ID: c.ID, ClientID: c.ClientID, Role: string(c.Role), Username: c.Username, RelationNote: c.RelationNote,
 		Name: c.Name, Phone: c.Phone, Email: c.Email, IsActive: c.IsActive, LastCredentialResetAt: lastReset,
 	}
 }
@@ -61,37 +83,24 @@ func requireTenant(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	return tenantID, true
 }
 
-// requireManagerRole is the extra gate the standalone (non-project-scoped)
-// list needs on top of requireTenant — mirrors vendors/venue_handler.go's
-// own requireManagerRole exactly: Owner/Admin only, since a tenant-wide
-// client list has no single project to scope a Wedding Planner or Sales
-// staff member against.
-func requireManagerRole(w http.ResponseWriter, r *http.Request) bool {
-	claims, _ := middleware.FromContext(r.Context())
-	if !claims.HasRole("Owner", "Admin") {
-		response.Error(w, http.StatusForbidden, "Hanya Owner atau Admin yang dapat melakukan aksi ini", nil)
-		return false
+func requireStaff(w http.ResponseWriter, r *http.Request) (int64, string, bool) {
+	claims, ok := middleware.FromContext(r.Context())
+	if !ok || claims.PrincipalType != "staff" {
+		response.Error(w, http.StatusForbidden, "Hanya staff WO yang dapat melakukan aksi ini", nil)
+		return 0, "", false
 	}
-	return true
+	staffID, err := strconv.ParseInt(claims.PrincipalID, 10, 64)
+	if err != nil {
+		response.Error(w, http.StatusForbidden, "Identitas staff tidak valid", nil)
+		return 0, "", false
+	}
+	return staffID, claims.Role, true
 }
 
-// requireManagerOrProjectPIC is the extra gate every Client **write**
-// action needs on top of requireTenant — Owner/Admin write freely across
-// every project (same as before); a Sales or Staff (Wedding Planner) staff
-// member additionally gets full write access, but only within the one
-// project they're PIC of (PLAN.md mom-25082026-item-belum item 2: WP was
-// previously rejected outright here, same as everyone but Owner/Admin/Sales
-// — now delegated to VerifyProjectReadAccess, which already scopes both
-// roles correctly: Staff by ProjectPICStaffID, Sales by PIC Sales).
-//
-// The PrincipalType == "staff" check is not optional: VerifyProjectReadAccess's
-// switch only has cases for "Staff"/"Sales" and falls through to a bare nil
-// (pass) for anything else, since it was written assuming only staff-role
-// callers ever reach it. Without this check here, a Client Portal principal
-// (role "Bride"/"Groom"/"Family Representative") would match none of those
-// cases and be silently granted write access — including creating client
-// accounts and resetting credentials — for any project in their own tenant.
-func (h *Handler) requireManagerOrProjectPIC(w http.ResponseWriter, r *http.Request, tenantID, projectID int64) bool {
+// requireManagerOrClientPIC: Owner/Admin bebas; Staff/Sales hanya untuk client
+// yang punya ≥1 project PIC mereka (aturan yang sama dengan gerbang lama,
+// digeser dari project ke master).
+func (h *Handler) requireManagerOrClientPIC(w http.ResponseWriter, r *http.Request, tenantID, clientID int64) bool {
 	claims, ok := middleware.FromContext(r.Context())
 	if !ok || claims.PrincipalType != "staff" {
 		response.Error(w, http.StatusForbidden, "Hanya staff WO yang dapat melakukan aksi ini", nil)
@@ -101,13 +110,16 @@ func (h *Handler) requireManagerOrProjectPIC(w http.ResponseWriter, r *http.Requ
 		return true
 	}
 	staffID, err := strconv.ParseInt(claims.PrincipalID, 10, 64)
-	if err == nil && h.clients.VerifyProjectReadAccess(r.Context(), tenantID, projectID, staffID, claims.Role) == nil {
+	if err == nil && h.clients.VerifyClientAccess(r.Context(), tenantID, clientID, staffID, claims.Role) == nil {
 		return true
 	}
 	response.Error(w, http.StatusForbidden, "Anda tidak memiliki akses untuk melakukan aksi ini", nil)
 	return false
 }
 
+// Collection melayani /api/v1/clients — CRUD master pasangan (T1.11).
+// Daftar + create: Owner/Admin/Sales (Sales membuat prospek penawaran);
+// Wedding Planner ("Staff") tidak membuka menu Client.
 func (h *Handler) Collection(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := requireTenant(w, r)
 	if !ok {
@@ -124,110 +136,63 @@ func (h *Handler) Collection(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request, tenantID int64) {
-	projectIDRaw := r.URL.Query().Get("projectId")
-
-	if projectIDRaw != "" {
-		projectID, err := strconv.ParseInt(projectIDRaw, 10, 64)
-		if err != nil {
-			response.Error(w, http.StatusBadRequest, "projectId tidak valid", nil)
-			return
-		}
-		// A Wedding Planner may read clients for exactly the project they're
-		// PIC of (used by Project Detail's own Client tab) — anyone else
-		// (Owner/Admin) reads any project's clients freely.
-		claims, _ := middleware.FromContext(r.Context())
-		staffID, _ := strconv.ParseInt(claims.PrincipalID, 10, 64)
-		if err := h.clients.VerifyProjectReadAccess(r.Context(), tenantID, projectID, staffID, claims.Role); err != nil {
-			writeAppError(w, err)
-			return
-		}
-		list, err := h.clients.ListByProject(r.Context(), tenantID, projectID)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		result := make([]clientResponse, 0, len(list))
-		for _, c := range list {
-			result = append(result, toClientResponse(c))
-		}
-		response.OK(w, "ok", result)
+	if _, role, ok := requireStaff(w, r); !ok {
+		return
+	} else if role == "Staff" {
+		response.Error(w, http.StatusForbidden, "Hanya Owner, Admin, atau Sales yang dapat mengakses menu ini", nil)
 		return
 	}
-
-	// No projectId filter — list every client for the tenant. `all=true` is
-	// used by WO Console's global search, which matches names across all
-	// projects in one shot; otherwise this is the tenant-wide Client list
-	// page. Both are Owner/Admin only (a Wedding Planner has no legitimate
-	// need to see clients across projects that aren't theirs).
-	if !requireManagerRole(w, r) {
-		return
-	}
-	if r.URL.Query().Get("all") == "true" {
-		list, err := h.clients.ListByTenant(r.Context(), tenantID)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		result := make([]clientResponse, 0, len(list))
-		for _, c := range list {
-			result = append(result, toClientResponse(c))
-		}
-		response.OK(w, "ok", result)
-		return
-	}
-
 	params := pagination.FromRequest(r)
 	search := r.URL.Query().Get("search")
-	list, total, err := h.clients.ListByTenantPaginated(r.Context(), tenantID, params, search)
+	items, total, err := h.clients.ListPaginated(r.Context(), tenantID, params, search)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	result := make([]clientResponse, 0, len(list))
-	for _, c := range list {
-		result = append(result, toClientResponse(c))
+	result := make([]clientResponse, 0, len(items))
+	for _, item := range items {
+		result = append(result, toClientResponse(item))
 	}
 	response.OKPaginated(w, "ok", result, pagination.BuildMeta(params, total))
 }
 
 type createClientBody struct {
-	ProjectID    int64  `json:"projectId"`
-	Role         string `json:"role"`
-	RelationNote string `json:"relationNote"`
-	Name         string `json:"name"`
-	Phone        string `json:"phone"`
-	Username     string `json:"username"`
-	Email        string `json:"email"`
-	Password     string `json:"password"`
+	BrideName string `json:"brideName"`
+	GroomName string `json:"groomName"`
+	Phone     string `json:"phone"`
+	Email     string `json:"email"`
+	Notes     string `json:"notes"`
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request, tenantID int64) {
+	staffID, role, ok := requireStaff(w, r)
+	if !ok {
+		return
+	}
+	if role == "Staff" {
+		response.Error(w, http.StatusForbidden, "Hanya Owner, Admin, atau Sales yang dapat menambah client", nil)
+		return
+	}
 	var body createClientBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
 		return
 	}
-	if !h.requireManagerOrProjectPIC(w, r, tenantID, body.ProjectID) {
-		return
-	}
+	_ = staffID
 	c, err := h.clients.Create(r.Context(), tenantID, application.CreateClientInput{
-		ProjectID: body.ProjectID, Role: domain.ClientRole(body.Role), RelationNote: body.RelationNote,
-		Name: body.Name, Phone: body.Phone, Username: body.Username, Email: body.Email, Password: body.Password,
+		BrideName: body.BrideName, GroomName: body.GroomName,
+		Phone: body.Phone, Email: body.Email, Notes: body.Notes,
 	})
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	response.Created(w, "Client berhasil ditambahkan", toClientResponse(*c))
+	response.Created(w, "Client berhasil ditambahkan", toClientResponse(application.ClientListItem{Client: *c}))
 }
 
-// Item only ever dispatches write actions (update/delete/toggle-active/
-// reset-credential/replace-representative — no GET case exists here), so
-// the whole function is gated in one place — Owner/Admin unconditionally, or
-// a Sales/Staff member scoped to this client's own project (see
-// requireManagerOrProjectPIC). The client row is fetched once here just to
-// resolve its ProjectID for that check; every sub-handler below still does
-// its own lookup when it needs the row's other fields, same as before.
+// Item melayani /api/v1/clients/... — satu client, kontaknya, dan dampak
+// hapusnya (T1.11, T3.5). Seluruh subtree tulis butuh Owner/Admin/Sales,
+// atau Staff/Sales dalam lingkup PIC (lihat requireManagerOrClientPIC).
 func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := requireTenant(w, r)
 	if !ok {
@@ -243,29 +208,194 @@ func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "ID tidak valid", nil)
 		return
 	}
+	rest := segments[1:]
+
+	// Cabang kontak di-scope ke client induknya; cabang master ke client itu
+	// sendiri. Satu gerbang untuk semuanya.
+	if !h.requireManagerOrClientPIC(w, r, tenantID, id) {
+		return
+	}
+
+	switch {
+	case len(rest) == 0 && r.Method == http.MethodGet:
+		h.get(w, r, tenantID, id)
+	case len(rest) == 0 && r.Method == http.MethodPatch:
+		h.update(w, r, tenantID, id)
+	case len(rest) == 0 && r.Method == http.MethodDelete:
+		h.delete(w, r, tenantID, id)
+	case len(rest) == 1 && rest[0] == "delete-impact" && r.Method == http.MethodGet:
+		h.deleteImpact(w, r, tenantID, id)
+	// TTD Penawaran (D, D12): specimen tunggal — tanpa segmen {role}, karena
+	// hasilnya selalu nol atau satu baris.
+	case len(rest) == 1 && rest[0] == "signature" && r.Method == http.MethodGet:
+		h.getSignature(w, r, tenantID, id)
+	case len(rest) == 1 && rest[0] == "signature" && r.Method == http.MethodDelete:
+		h.deleteSignature(w, r, tenantID, id)
+	case len(rest) == 2 && rest[0] == "signature" && rest[1] == "image" && r.Method == http.MethodGet:
+		h.signatureImage(w, r, tenantID, id)
+	case len(rest) == 1 && rest[0] == "contacts" && r.Method == http.MethodGet:
+		h.listContacts(w, r, tenantID, id)
+	case len(rest) == 1 && rest[0] == "contacts" && r.Method == http.MethodPost:
+		h.createContact(w, r, tenantID, id)
+	case len(rest) == 2 && rest[0] == "contacts" && r.Method == http.MethodPatch:
+		h.updateContact(w, r, tenantID, id, rest[1])
+	case len(rest) == 2 && rest[0] == "contacts" && r.Method == http.MethodDelete:
+		h.deleteContact(w, r, tenantID, id, rest[1])
+	case len(rest) == 3 && rest[0] == "contacts" && rest[2] == "toggle-active" && r.Method == http.MethodPost:
+		h.toggleContactActive(w, r, tenantID, id, rest[1])
+	case len(rest) == 3 && rest[0] == "contacts" && rest[2] == "reset-credential" && r.Method == http.MethodPost:
+		h.resetContactCredential(w, r, tenantID, id, rest[1])
+	case len(rest) == 3 && rest[0] == "contacts" && rest[2] == "replace-representative" && r.Method == http.MethodPost:
+		h.replaceRepresentative(w, r, tenantID, id, rest[1])
+	default:
+		response.Error(w, http.StatusNotFound, "Endpoint tidak ditemukan", nil)
+	}
+}
+
+func (h *Handler) get(w http.ResponseWriter, r *http.Request, tenantID, id int64) {
 	c, err := h.clients.Get(r.Context(), tenantID, id)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	if !h.requireManagerOrProjectPIC(w, r, tenantID, c.ProjectID) {
+	contacts, err := h.contacts.ListByClient(r.Context(), tenantID, id)
+	if err != nil {
+		writeAppError(w, err)
 		return
 	}
-
-	switch {
-	case len(segments) == 1 && r.Method == http.MethodPatch:
-		h.updateContact(w, r, tenantID, id)
-	case len(segments) == 1 && r.Method == http.MethodDelete:
-		h.delete(w, r, tenantID, id)
-	case len(segments) == 2 && segments[1] == "toggle-active" && r.Method == http.MethodPost:
-		h.toggleActive(w, r, tenantID, id)
-	case len(segments) == 2 && segments[1] == "reset-credential" && r.Method == http.MethodPost:
-		h.resetCredential(w, r, tenantID, id)
-	case len(segments) == 2 && segments[1] == "replace-representative" && r.Method == http.MethodPost:
-		h.replaceRepresentative(w, r, tenantID, id)
-	default:
-		response.Error(w, http.StatusNotFound, "Endpoint tidak ditemukan", nil)
+	contactResps := make([]contactResponse, 0, len(contacts))
+	for _, contact := range contacts {
+		contactResps = append(contactResps, toContactResponse(contact))
 	}
+	response.OK(w, "ok", map[string]interface{}{"client": toClientResponse(application.ClientListItem{Client: *c, ContactCount: len(contacts)}), "contacts": contactResps})
+}
+
+func (h *Handler) update(w http.ResponseWriter, r *http.Request, tenantID, id int64) {
+	var body createClientBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
+		return
+	}
+	c, err := h.clients.Update(r.Context(), tenantID, id, application.UpdateClientInput{
+		BrideName: body.BrideName, GroomName: body.GroomName,
+		Phone: body.Phone, Email: body.Email, Notes: body.Notes,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	response.OK(w, "Client berhasil diperbarui", toClientResponse(application.ClientListItem{Client: *c}))
+}
+
+type deleteImpactResponse struct {
+	Client           clientResponse `json:"client"`
+	ContactCount     int            `json:"contactCount"`
+	ProjectCount     int            `json:"projectCount"`
+	ProjectNames     []string       `json:"projectNames"`
+	PaidInvoiceCount int            `json:"paidInvoiceCount"`
+	PaidInvoiceTotal int64          `json:"paidInvoiceTotal"`
+	QuotationCount   int            `json:"quotationCount"`
+	QuotationNumbers []string       `json:"quotationNumbers"`
+}
+
+// deleteImpact WAJIB dipanggil sebelum dialog hapus dirender (D14, T3.5) —
+// dialog menolak tampil kalau panggilan ini gagal, supaya tidak pernah ada
+// konfirmasi yang berbohong.
+func (h *Handler) deleteImpact(w http.ResponseWriter, r *http.Request, tenantID, id int64) {
+	impact, err := h.clients.DeleteImpact(r.Context(), tenantID, id)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	response.OK(w, "ok", deleteImpactResponse{
+		Client:           toClientResponse(application.ClientListItem{Client: impact.Client, ContactCount: impact.ContactCount, ProjectCount: impact.ProjectCount}),
+		ContactCount:     impact.ContactCount,
+		ProjectCount:     impact.ProjectCount,
+		ProjectNames:     impact.ProjectNames,
+		PaidInvoiceCount: impact.PaidInvoiceCount,
+		PaidInvoiceTotal: impact.PaidInvoiceTotal,
+		QuotationCount:   impact.QuotationCount,
+		QuotationNumbers: impact.QuotationNumbers,
+	})
+}
+
+// delete selalu tersedia tanpa pengecualian pemblokir (D14) — selalu lewat
+// dialog konfirmasi yang datanya berasal dari delete-impact di atas.
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request, tenantID, id int64) {
+	if err := h.clients.Delete(r.Context(), tenantID, id); err != nil {
+		writeAppError(w, err)
+		return
+	}
+	response.OK(w, "Client berhasil dihapus permanen", nil)
+}
+
+func (h *Handler) listContacts(w http.ResponseWriter, r *http.Request, tenantID, clientID int64) {
+	list, err := h.contacts.ListByClient(r.Context(), tenantID, clientID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	result := make([]contactResponse, 0, len(list))
+	for _, c := range list {
+		result = append(result, toContactResponse(c))
+	}
+	response.OK(w, "ok", result)
+}
+
+type createContactBody struct {
+	Role         string `json:"role"`
+	RelationNote string `json:"relationNote"`
+	Name         string `json:"name"`
+	Phone        string `json:"phone"`
+	Username     string `json:"username"`
+	Email        string `json:"email"`
+	Password     string `json:"password"`
+}
+
+func (h *Handler) createContact(w http.ResponseWriter, r *http.Request, tenantID, clientID int64) {
+	var body createContactBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
+		return
+	}
+	c, err := h.contacts.Create(r.Context(), tenantID, application.CreateContactInput{
+		ClientID: clientID, Role: domain.ClientRole(body.Role), RelationNote: body.RelationNote,
+		Name: body.Name, Phone: body.Phone, Username: body.Username, Email: body.Email, Password: body.Password,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	response.Created(w, "Kontak berhasil ditambahkan", toContactResponse(*c))
+}
+
+func (h *Handler) parseContactID(w http.ResponseWriter, raw string) (int64, bool) {
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "ID kontak tidak valid", nil)
+		return 0, false
+	}
+	return id, true
+}
+
+// requireContactOfClient menolak kontak yang bukan milik parent client di
+// path — tanpa ini /clients/1/contacts/999 bisa menyentuh kontak milik
+// client 2 selama penelepon punya akses ke client 1.
+func (h *Handler) requireContactOfClient(w http.ResponseWriter, r *http.Request, tenantID, clientID int64, raw string) (int64, bool) {
+	id, ok := h.parseContactID(w, raw)
+	if !ok {
+		return 0, false
+	}
+	c, err := h.contacts.Get(r.Context(), tenantID, id)
+	if err != nil {
+		writeAppError(w, err)
+		return 0, false
+	}
+	if c.ClientID != clientID {
+		response.Error(w, http.StatusNotFound, "Kontak tidak ditemukan", nil)
+		return 0, false
+	}
+	return id, true
 }
 
 type contactBody struct {
@@ -274,58 +404,74 @@ type contactBody struct {
 	Email string `json:"email"`
 }
 
-func (h *Handler) updateContact(w http.ResponseWriter, r *http.Request, tenantID, id int64) {
+func (h *Handler) updateContact(w http.ResponseWriter, r *http.Request, tenantID, clientID int64, raw string) {
+	id, ok := h.requireContactOfClient(w, r, tenantID, clientID, raw)
+	if !ok {
+		return
+	}
 	var body contactBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
 		return
 	}
-	c, err := h.clients.UpdateContact(r.Context(), tenantID, id, application.UpdateContactInput{Name: body.Name, Phone: body.Phone, Email: body.Email})
+	c, err := h.contacts.UpdateContact(r.Context(), tenantID, id, application.UpdateContactInput{Name: body.Name, Phone: body.Phone, Email: body.Email})
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	response.OK(w, "Kontak client berhasil diperbarui", toClientResponse(*c))
+	response.OK(w, "Kontak client berhasil diperbarui", toContactResponse(*c))
 }
 
-func (h *Handler) delete(w http.ResponseWriter, r *http.Request, tenantID, id int64) {
-	if err := h.clients.Delete(r.Context(), tenantID, id); err != nil {
+func (h *Handler) deleteContact(w http.ResponseWriter, r *http.Request, tenantID, clientID int64, raw string) {
+	id, ok := h.requireContactOfClient(w, r, tenantID, clientID, raw)
+	if !ok {
+		return
+	}
+	if err := h.contacts.Delete(r.Context(), tenantID, id); err != nil {
 		writeAppError(w, err)
 		return
 	}
-	response.OK(w, "Client berhasil dihapus", nil)
+	response.OK(w, "Kontak berhasil dihapus", nil)
 }
 
-func (h *Handler) toggleActive(w http.ResponseWriter, r *http.Request, tenantID, id int64) {
-	current, err := h.clients.Get(r.Context(), tenantID, id)
+func (h *Handler) toggleContactActive(w http.ResponseWriter, r *http.Request, tenantID, clientID int64, raw string) {
+	id, ok := h.requireContactOfClient(w, r, tenantID, clientID, raw)
+	if !ok {
+		return
+	}
+	current, err := h.contacts.Get(r.Context(), tenantID, id)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	c, err := h.clients.SetActive(r.Context(), tenantID, id, !current.IsActive)
+	c, err := h.contacts.SetActive(r.Context(), tenantID, id, !current.IsActive)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	response.OK(w, "Status client diperbarui", toClientResponse(*c))
+	response.OK(w, "Status kontak diperbarui", toContactResponse(*c))
 }
 
 type resetCredentialBody struct {
 	Password string `json:"password"`
 }
 
-func (h *Handler) resetCredential(w http.ResponseWriter, r *http.Request, tenantID, id int64) {
+func (h *Handler) resetContactCredential(w http.ResponseWriter, r *http.Request, tenantID, clientID int64, raw string) {
+	id, ok := h.requireContactOfClient(w, r, tenantID, clientID, raw)
+	if !ok {
+		return
+	}
 	var body resetCredentialBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
 		return
 	}
-	c, err := h.clients.ResetCredential(r.Context(), tenantID, id, body.Password)
+	c, err := h.contacts.ResetCredential(r.Context(), tenantID, id, body.Password)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	response.OK(w, "Kredensial client berhasil direset", toClientResponse(*c))
+	response.OK(w, "Kredensial kontak berhasil direset", toContactResponse(*c))
 }
 
 type replaceRepresentativeBody struct {
@@ -335,19 +481,69 @@ type replaceRepresentativeBody struct {
 	RelationNote string `json:"relationNote"`
 }
 
-func (h *Handler) replaceRepresentative(w http.ResponseWriter, r *http.Request, tenantID, id int64) {
+func (h *Handler) replaceRepresentative(w http.ResponseWriter, r *http.Request, tenantID, clientID int64, raw string) {
+	id, ok := h.requireContactOfClient(w, r, tenantID, clientID, raw)
+	if !ok {
+		return
+	}
 	var body replaceRepresentativeBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
 		return
 	}
-	c, err := h.clients.ReplaceRepresentative(r.Context(), tenantID, id,
+	c, err := h.contacts.ReplaceRepresentative(r.Context(), tenantID, id,
 		application.UpdateContactInput{Name: body.Name, Phone: body.Phone, Email: body.Email}, body.RelationNote)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	response.OK(w, "Perwakilan keluarga berhasil diganti", toClientResponse(*c))
+	response.OK(w, "Perwakilan keluarga berhasil diganti", toContactResponse(*c))
+}
+
+// clientSignatureResponse adalah pratinjau specimen tunggal (D12): milik
+// siapa (role + nama), kapan diperbarui, dan dari jalur mana. Gambarnya
+// diambil lewat .../signature/image; storage_key tidak pernah keluar.
+type clientSignatureResponse struct {
+	Role       string `json:"role"`
+	SignerName string `json:"signerName"`
+	Source     string `json:"source"`
+	UpdatedAt  string `json:"updatedAt"`
+}
+
+func (h *Handler) getSignature(w http.ResponseWriter, r *http.Request, tenantID, id int64) {
+	spec, err := h.signatures.Specimen(r.Context(), tenantID, id)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	if spec == nil {
+		response.OK(w, "ok", nil)
+		return
+	}
+	response.OK(w, "ok", clientSignatureResponse{
+		Role: string(spec.Role), SignerName: spec.SignerName,
+		Source: string(spec.Source), UpdatedAt: spec.UpdatedAt.Format("2006-01-02"),
+	})
+}
+
+func (h *Handler) signatureImage(w http.ResponseWriter, r *http.Request, tenantID, id int64) {
+	data, err := h.signatures.SpecimenImage(r.Context(), tenantID, id)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", http.DetectContentType(data))
+	w.Header().Set("Content-Disposition", `inline; filename="specimen.png"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (h *Handler) deleteSignature(w http.ResponseWriter, r *http.Request, tenantID, id int64) {
+	if err := h.signatures.DeleteSpecimen(r.Context(), tenantID, id); err != nil {
+		writeAppError(w, err)
+		return
+	}
+	response.OK(w, "TTD tersimpan berhasil dihapus", nil)
 }
 
 func writeAppError(w http.ResponseWriter, err error) {

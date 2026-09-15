@@ -3,10 +3,10 @@ package infrastructure
 import (
 	"context"
 	"database/sql"
-	"time"
 
 	"jwswedding/internal/modules/clients/domain"
 	"jwswedding/internal/shared/pagination"
+	"jwswedding/internal/shared/utils"
 )
 
 type MySQLClientRepository struct {
@@ -17,30 +17,36 @@ func NewMySQLClientRepository(db *sql.DB) *MySQLClientRepository {
 	return &MySQLClientRepository{db: db}
 }
 
-const clientColumns = `id, tenant_id, project_id, role, username, relation_note, name, phone, email, is_active,
-	last_credential_reset_at, created_at, updated_at`
+const clientColumns = `id, tenant_id, bride_name, groom_name, phone, email, notes, created_at, updated_at`
 
 func scanClient(scan func(dest ...interface{}) error) (*domain.Client, error) {
 	var c domain.Client
-	var role string
-	var lastReset sql.NullTime
-	err := scan(&c.ID, &c.TenantID, &c.ProjectID, &role, &c.Username, &c.RelationNote, &c.Name, &c.Phone, &c.Email, &c.IsActive,
-		&lastReset, &c.CreatedAt, &c.UpdatedAt)
+	err := scan(&c.ID, &c.TenantID, &c.BrideName, &c.GroomName, &c.Phone, &c.Email, &c.Notes,
+		&c.CreatedAt, &c.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	c.Role = domain.ClientRole(role)
-	if lastReset.Valid {
-		c.LastCredentialResetAt = &lastReset.Time
-	}
 	return &c, nil
 }
 
-func (r *MySQLClientRepository) ListByProject(ctx context.Context, tenantID, projectID int64) ([]domain.Client, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT `+clientColumns+` FROM clients WHERE tenant_id = ? AND project_id = ? ORDER BY id`, tenantID, projectID)
+func (r *MySQLClientRepository) FindByID(ctx context.Context, tenantID, id int64) (*domain.Client, error) {
+	row := r.db.QueryRowContext(ctx, `SELECT `+clientColumns+` FROM clients WHERE tenant_id = ? AND id = ? LIMIT 1`, tenantID, id)
+	return scanClient(row.Scan)
+}
+
+// FindByIDs memuat satu halaman client sekaligus untuk CoupleNamesBatch —
+// SATU query, bukan satu per id. Daftar Penawaran memanggilnya sekali per
+// halaman, dan bentuk inilah yang PLAN §11 minta untuk mencegah N+1.
+func (r *MySQLClientRepository) FindByIDs(ctx context.Context, tenantID int64, ids []int64) ([]domain.Client, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := append([]interface{}{tenantID}, utils.Int64Args(ids)...)
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+clientColumns+` FROM clients WHERE tenant_id = ? AND id IN (`+utils.Placeholders(len(ids))+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -57,35 +63,17 @@ func (r *MySQLClientRepository) ListByProject(ctx context.Context, tenantID, pro
 	return list, rows.Err()
 }
 
-func (r *MySQLClientRepository) ListByTenant(ctx context.Context, tenantID int64) ([]domain.Client, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT `+clientColumns+` FROM clients WHERE tenant_id = ? ORDER BY id`, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var list []domain.Client
-	for rows.Next() {
-		c, err := scanClient(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		list = append(list, *c)
-	}
-	return list, rows.Err()
-}
-
-// ListByTenantPaginated backs the real `GET /clients` list page (no
-// projectId filter) — ListByTenant above stays as-is for global search.
-func (r *MySQLClientRepository) ListByTenantPaginated(ctx context.Context, tenantID int64, params pagination.Params, search string) ([]domain.Client, int64, error) {
+// ListPaginated menopang halaman Client (daftar pasangan). Pencarian mencakup
+// kedua nama + telepon — cara WO menemukan pasangan dari nomor yang menelepon.
+func (r *MySQLClientRepository) ListPaginated(ctx context.Context, tenantID int64, params pagination.Params, search string) ([]domain.Client, int64, error) {
 	countQuery := `SELECT COUNT(*) FROM clients WHERE tenant_id = ?`
 	listQuery := `SELECT ` + clientColumns + ` FROM clients WHERE tenant_id = ?`
 	args := []interface{}{tenantID}
 	if search != "" {
-		countQuery += ` AND (name LIKE ? OR email LIKE ?)`
-		listQuery += ` AND (name LIKE ? OR email LIKE ?)`
+		countQuery += ` AND (bride_name LIKE ? OR groom_name LIKE ? OR phone LIKE ?)`
+		listQuery += ` AND (bride_name LIKE ? OR groom_name LIKE ? OR phone LIKE ?)`
 		like := "%" + search + "%"
-		args = append(args, like, like)
+		args = append(args, like, like, like)
 	}
 
 	var total int64
@@ -93,7 +81,7 @@ func (r *MySQLClientRepository) ListByTenantPaginated(ctx context.Context, tenan
 		return nil, 0, err
 	}
 
-	listQuery += ` ORDER BY id LIMIT ? OFFSET ?`
+	listQuery += ` ORDER BY id DESC LIMIT ? OFFSET ?`
 	rows, err := r.db.QueryContext(ctx, listQuery, append(args, params.Limit, params.Offset())...)
 	if err != nil {
 		return nil, 0, err
@@ -111,16 +99,11 @@ func (r *MySQLClientRepository) ListByTenantPaginated(ctx context.Context, tenan
 	return list, total, rows.Err()
 }
 
-func (r *MySQLClientRepository) FindByID(ctx context.Context, tenantID, id int64) (*domain.Client, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT `+clientColumns+` FROM clients WHERE tenant_id = ? AND id = ? LIMIT 1`, tenantID, id)
-	return scanClient(row.Scan)
-}
-
 func (r *MySQLClientRepository) Create(ctx context.Context, c *domain.Client) error {
 	result, err := r.db.ExecContext(ctx,
-		`INSERT INTO clients (tenant_id, project_id, role, username, relation_note, name, phone, email, is_active)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.TenantID, c.ProjectID, string(c.Role), c.Username, c.RelationNote, c.Name, c.Phone, c.Email, c.IsActive,
+		`INSERT INTO clients (tenant_id, bride_name, groom_name, phone, email, notes)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		c.TenantID, c.BrideName, c.GroomName, c.Phone, c.Email, c.Notes,
 	)
 	if err != nil {
 		return err
@@ -135,26 +118,12 @@ func (r *MySQLClientRepository) Create(ctx context.Context, c *domain.Client) er
 
 func (r *MySQLClientRepository) Update(ctx context.Context, c *domain.Client) error {
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE clients SET name = ?, phone = ?, email = ?, relation_note = ? WHERE tenant_id = ? AND id = ?`,
-		c.Name, c.Phone, c.Email, c.RelationNote, c.TenantID, c.ID,
+		`UPDATE clients SET bride_name = ?, groom_name = ?, phone = ?, email = ?, notes = ? WHERE tenant_id = ? AND id = ?`,
+		c.BrideName, c.GroomName, c.Phone, c.Email, c.Notes, c.TenantID, c.ID,
 	)
 	return err
 }
 
-func (r *MySQLClientRepository) SetActive(ctx context.Context, tenantID, id int64, isActive bool) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE clients SET is_active = ? WHERE tenant_id = ? AND id = ?`, isActive, tenantID, id)
-	return err
-}
-
-func (r *MySQLClientRepository) SetCredentialResetAt(ctx context.Context, tenantID, id int64, when time.Time) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE clients SET last_credential_reset_at = ? WHERE tenant_id = ? AND id = ?`, when, tenantID, id)
-	return err
-}
-
-// Delete is only ever called by ClientService.Create as a compensating
-// rollback when identity.CreateCredential fails after this row already
-// committed — clients are otherwise never hard-deleted (SetActive is the
-// normal deactivation path).
 func (r *MySQLClientRepository) Delete(ctx context.Context, tenantID, id int64) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM clients WHERE tenant_id = ? AND id = ?`, tenantID, id)
 	return err

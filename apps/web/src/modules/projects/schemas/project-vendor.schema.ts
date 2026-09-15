@@ -42,6 +42,12 @@ export const projectVendorSchema = z.object({
   dueDate: z.string().optional().default(""),
   picStaffId: z.string().min(1, "PIC internal WO wajib dipilih"),
   notes: z.string().optional().default(""),
+  // Alasan menyetujui komitmen yang membuat total biaya melampaui Nilai
+  // Kontrak. Kosong di jalur normal; wajib HANYA saat pelampauan terjadi —
+  // syarat itu ditegakkan form (agar orangnya tahu sebelum mengirim) dan
+  // ditegakkan ulang backend (guardBudget), karena gerbang yang hanya ada di
+  // layar bukan gerbang.
+  overBudgetReason: z.string().optional().default(""),
 });
 
 export type ProjectVendorFormValues = z.infer<typeof projectVendorSchema>;
