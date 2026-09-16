@@ -407,14 +407,15 @@ func (r *MySQLProjectRepository) CountByClients(ctx context.Context, tenantID in
 	return out, rows.Err()
 }
 
-// ProjectIDsForQuotations memetakan penawaran ke project-nya untuk satu
-// halaman daftar Penawaran — satu query atas UNIQUE(quotation_id), bukan N+1.
-func (r *MySQLProjectRepository) ProjectIDsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]int64, error) {
-	out := make(map[int64]int64, len(quotationIDs))
+// ProjectRefsForQuotations memetakan penawaran ke project-nya beserta PIC
+// Wedding Planner-nya untuk satu halaman daftar Penawaran — satu query atas
+// UNIQUE(quotation_id), bukan N+1 (PLAN wording-role-dan-filter-sales-wp §5.3).
+func (r *MySQLProjectRepository) ProjectRefsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]domain.QuotationProjectRef, error) {
+	out := make(map[int64]domain.QuotationProjectRef, len(quotationIDs))
 	if len(quotationIDs) == 0 {
 		return out, nil
 	}
-	query := `SELECT quotation_id, id FROM projects WHERE tenant_id = ? AND quotation_id IN (`
+	query := `SELECT quotation_id, id, pic_staff_id FROM projects WHERE tenant_id = ? AND quotation_id IN (`
 	args := []interface{}{tenantID}
 	for i, id := range quotationIDs {
 		if i > 0 {
@@ -430,11 +431,114 @@ func (r *MySQLProjectRepository) ProjectIDsForQuotations(ctx context.Context, te
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var qid, pid int64
-		if err := rows.Scan(&qid, &pid); err != nil {
+		var qid, pid, pic int64
+		if err := rows.Scan(&qid, &pid, &pic); err != nil {
 			return nil, err
 		}
-		out[qid] = pid
+		out[qid] = domain.QuotationProjectRef{ProjectID: pid, PICStaffID: pic}
+	}
+	return out, rows.Err()
+}
+
+// QuotationIDsForPICStaff menjawab penawaran mana yang sudah melahirkan
+// project yang dipegang satu Wedding Planner — dasar filter WP di daftar
+// Penawaran (PLAN wording-role-dan-filter-sales-wp §5.3). quotation_id
+// NULLABLE sehingga baris tanpa penawaran wajib dikecualikan eksplisit.
+func (r *MySQLProjectRepository) QuotationIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT quotation_id FROM projects WHERE tenant_id = ? AND pic_staff_id = ? AND quotation_id IS NOT NULL`, tenantID, picStaffID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var qid int64
+		if err := rows.Scan(&qid); err != nil {
+			return nil, err
+		}
+		out = append(out, qid)
+	}
+	return out, rows.Err()
+}
+
+// ClientIDsForPIC menjawab client mana yang punya project yang dipegang PIC
+// tertentu — dasar filter Sales/WP di daftar Client (PLAN
+// wording-role-dan-filter-sales-wp §5.3). 0 berarti "tidak memfilter" untuk
+// slot itu; keduanya terisi berarti AND.
+func (r *MySQLProjectRepository) ClientIDsForPIC(ctx context.Context, tenantID, picStaffID, picSalesStaffID int64) ([]int64, error) {
+	query := `SELECT DISTINCT client_id FROM projects WHERE tenant_id = ?`
+	args := []interface{}{tenantID}
+	if picStaffID != 0 {
+		query += ` AND pic_staff_id = ?`
+		args = append(args, picStaffID)
+	}
+	if picSalesStaffID != 0 {
+		query += ` AND pic_sales_staff_id = ?`
+		args = append(args, picSalesStaffID)
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// PICsForClients menjawab himpunan PIC berbeda dari seluruh project milik
+// tiap client pada satu halaman daftar Client — satu query, bukan N+1 (PLAN
+// wording-role-dan-filter-sales-wp §5.3, pola yang sama dengan
+// CountByClients di atas).
+func (r *MySQLProjectRepository) PICsForClients(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64]domain.ClientPICs, error) {
+	out := make(map[int64]domain.ClientPICs, len(clientIDs))
+	if len(clientIDs) == 0 {
+		return out, nil
+	}
+	query := `SELECT DISTINCT client_id, pic_staff_id, pic_sales_staff_id FROM projects WHERE tenant_id = ? AND client_id IN (`
+	args := []interface{}{tenantID}
+	for i, id := range clientIDs {
+		if i > 0 {
+			query += `,`
+		}
+		query += `?`
+		args = append(args, id)
+	}
+	query += `)`
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seenWP := make(map[int64]map[int64]bool, len(clientIDs))
+	seenSales := make(map[int64]map[int64]bool, len(clientIDs))
+	for rows.Next() {
+		var clientID, pic, picSales int64
+		if err := rows.Scan(&clientID, &pic, &picSales); err != nil {
+			return nil, err
+		}
+		entry := out[clientID]
+		if seenWP[clientID] == nil {
+			seenWP[clientID] = make(map[int64]bool)
+		}
+		if seenSales[clientID] == nil {
+			seenSales[clientID] = make(map[int64]bool)
+		}
+		if !seenWP[clientID][pic] {
+			seenWP[clientID][pic] = true
+			entry.PICStaffIDs = append(entry.PICStaffIDs, pic)
+		}
+		if !seenSales[clientID][picSales] {
+			seenSales[clientID][picSales] = true
+			entry.PICSalesStaffIDs = append(entry.PICSalesStaffIDs, picSales)
+		}
+		out[clientID] = entry
 	}
 	return out, rows.Err()
 }

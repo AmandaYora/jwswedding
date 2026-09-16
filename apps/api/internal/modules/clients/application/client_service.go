@@ -18,7 +18,7 @@ type ClientRepository interface {
 	// FindByIDs memuat sekumpulan client dalam satu query — dipakai
 	// CoupleNamesBatch supaya daftar Penawaran tidak jadi N+1 (§11).
 	FindByIDs(ctx context.Context, tenantID int64, ids []int64) ([]domain.Client, error)
-	ListPaginated(ctx context.Context, tenantID int64, params pagination.Params, search string) ([]domain.Client, int64, error)
+	ListPaginated(ctx context.Context, tenantID int64, params pagination.Params, filter ClientListFilter) ([]domain.Client, int64, error)
 	Create(ctx context.Context, c *domain.Client) error
 	Update(ctx context.Context, c *domain.Client) error
 	Delete(ctx context.Context, tenantID, id int64) error
@@ -105,6 +105,20 @@ func (s *ClientService) Get(ctx context.Context, tenantID, id int64) (*domain.Cl
 	return c, nil
 }
 
+// ClientListFilter adalah saringan daftar Client dalam satu struct (pola
+// yang sama persis dengan QuotationListFilter di modul quotations — PLAN
+// wording-role-dan-filter-sales-wp §5.5).
+type ClientListFilter struct {
+	Search string
+	// RestrictIDs membatasi hasil ke ID ini saja. RestrictActive memisahkan
+	// "tanpa filter" dari "filter aktif tapi tidak ada yang cocok" — slice
+	// kosong TANPA flag ini akan diperlakukan sebagai "tanpa filter" dan
+	// mengembalikan seluruh client; itu bug filter-bocor yang wajib
+	// dicegah (lihat juga QuotationListFilter).
+	RestrictIDs    []int64
+	RestrictActive bool
+}
+
 // ClientListItem adalah satu baris daftar Client: pasangan + hitungannya.
 // ContactCount dari subquery agregat satu halaman (§11); ProjectCount dari
 // satu panggilan batch ke projects (tanpa join lintas modul).
@@ -112,10 +126,24 @@ type ClientListItem struct {
 	Client       domain.Client
 	ContactCount int
 	ProjectCount int
+	// PICStaffIDs/PICSalesStaffIDs adalah himpunan PIC berbeda dari seluruh
+	// project milik client ini — dasar tampilan nama WP & Sales di kartu
+	// (D7). Diresolusi batch satu halaman via PICsForClients, bukan N+1.
+	PICStaffIDs      []int64
+	PICSalesStaffIDs []int64
 }
 
-func (s *ClientService) ListPaginated(ctx context.Context, tenantID int64, params pagination.Params, search string) ([]ClientListItem, int64, error) {
-	list, total, err := s.repo.ListPaginated(ctx, tenantID, params, search)
+func (s *ClientService) ListPaginated(ctx context.Context, tenantID int64, params pagination.Params, search string, picStaffID, picSalesStaffID int64) ([]ClientListItem, int64, error) {
+	filter := ClientListFilter{Search: search}
+	if picStaffID != 0 || picSalesStaffID != 0 {
+		clientIDs, err := s.projects.ClientIDsForPIC(ctx, tenantID, picStaffID, picSalesStaffID)
+		if err != nil {
+			return nil, 0, err
+		}
+		filter.RestrictIDs = clientIDs
+		filter.RestrictActive = true
+	}
+	list, total, err := s.repo.ListPaginated(ctx, tenantID, params, filter)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -131,10 +159,16 @@ func (s *ClientService) ListPaginated(ctx context.Context, tenantID int64, param
 	if err != nil {
 		return nil, 0, err
 	}
+	picMap, err := s.projects.PICsForClients(ctx, tenantID, ids)
+	if err != nil {
+		return nil, 0, err
+	}
 	items := make([]ClientListItem, 0, len(list))
 	for _, c := range list {
+		pics := picMap[c.ID]
 		items = append(items, ClientListItem{
 			Client: c, ContactCount: contactCounts[c.ID], ProjectCount: projectCounts[c.ID],
+			PICStaffIDs: pics.PICStaffIDs, PICSalesStaffIDs: pics.PICSalesStaffIDs,
 		})
 	}
 	return items, total, nil

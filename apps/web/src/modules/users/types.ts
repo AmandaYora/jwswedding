@@ -27,10 +27,12 @@ export interface StaffMember {
 }
 
 // Public-safe subset (any staff role, unlike StaffMember's Owner-only
-// endpoint) — {id, name, title} only, powers PIC pickers/labels throughout
-// the `projects` module.
+// endpoint) — {id, name, title, role}, powers PIC pickers/labels throughout
+// the `projects` module. `role` backs per-role filtering of assignment
+// dropdowns (PLAN wording-role-dan-filter-sales-wp, D6).
 export interface StaffSummary {
   id: string;
   name: string;
   title: string;
+  role: StaffRole;
 }

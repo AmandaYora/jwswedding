@@ -26,6 +26,8 @@ interface RawClient {
   notes: string;
   contactCount: number;
   projectCount: number;
+  picStaffIds: number[] | null;
+  picSalesStaffIds: number[] | null;
 }
 
 interface RawContact {
@@ -52,6 +54,8 @@ function toClient(raw: RawClient): Client {
     notes: raw.notes,
     contactCount: raw.contactCount ?? 0,
     projectCount: raw.projectCount ?? 0,
+    picStaffIds: (raw.picStaffIds ?? []).map((id) => String(id)),
+    picSalesStaffIds: (raw.picSalesStaffIds ?? []).map((id) => String(id)),
   };
 }
 
@@ -77,7 +81,7 @@ interface ClientState {
   contacts: ClientContact[];
   clientSignature: ClientSignature | null;
 
-  fetchClients: (page?: number, search?: string, limit?: number) => Promise<void>;
+  fetchClients: (page?: number, search?: string, limit?: number, picStaffId?: string, picSalesStaffId?: string) => Promise<void>;
   fetchClient: (clientId: string) => Promise<void>;
   createClient: (values: ClientMasterFormValues) => Promise<Client>;
   updateClient: (clientId: string, values: ClientMasterFormValues) => Promise<void>;
@@ -106,8 +110,16 @@ export const useClientStore = create<ClientState>((set, get) => ({
   contacts: [],
   clientSignature: null,
 
-  fetchClients: async (page = 1, search = "", limit) => {
-    const res = await httpClient.get(API.clients.base, { params: { page, search: search || undefined, limit } });
+  fetchClients: async (page = 1, search = "", limit, picStaffId, picSalesStaffId) => {
+    const res = await httpClient.get(API.clients.base, {
+      params: {
+        page,
+        search: search || undefined,
+        limit,
+        picStaffId: picStaffId || undefined,
+        picSalesStaffId: picSalesStaffId || undefined,
+      },
+    });
     set({
       clients: (res.data.data as RawClient[]).map(toClient),
       clientsMeta: toPaginationMeta(res.data.meta as RawPaginationMeta),

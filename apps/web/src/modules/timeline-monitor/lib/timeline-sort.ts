@@ -5,7 +5,7 @@ import type { ClientTimeline } from "@/modules/timeline-monitor/types";
 // shared/ (D10): the comparator needs to know ClientTimeline's own shape
 // (which column is a date, which is a resolved-elsewhere PIC name), which
 // makes it a timeline-monitor concept, not a domain-agnostic one.
-export type TimelineSortKey = "name" | "pic" | "project" | "status" | "targetDate" | "eventDate";
+export type TimelineSortKey = "name" | "pic" | "picSales" | "project" | "status" | "targetDate" | "eventDate";
 export type SortDir = "asc" | "desc";
 
 // nextSortDir cycles a column's direction on repeated clicks: unsorted -> asc
@@ -21,7 +21,8 @@ export function nextSortDir(current: SortDir | null): SortDir {
 // function the page also has -- resolving inside the comparator would run an
 // O(n) Array.find on every one of the O(n log n) comparisons sort() makes
 // (§8: ~19,000 linear scans at this screen's realistic volume). The map is
-// built once by the caller before this runs.
+// built once by the caller before this runs. The same map serves the "pic"
+// and "picSales" keys — both resolve staff IDs through it.
 export function sortTimelines(
   rows: ClientTimeline[],
   key: TimelineSortKey | null,
@@ -39,6 +40,8 @@ export function sortTimelines(
         return t.name;
       case "pic":
         return picName(t.picStaffId);
+      case "picSales":
+        return picName(t.picSalesStaffId);
       case "project":
         return t.projectName;
       case "status":

@@ -21,7 +21,7 @@ import (
 
 type QuotationRepository interface {
 	FindByID(ctx context.Context, tenantID, id int64) (*domain.Quotation, error)
-	ListByTenant(ctx context.Context, tenantID int64, status string, params pagination.Params, search string, clientID int64) ([]domain.Quotation, int64, error)
+	ListByTenant(ctx context.Context, tenantID int64, filter QuotationListFilter, params pagination.Params) ([]domain.Quotation, int64, error)
 	ListIDsByClient(ctx context.Context, tenantID, clientID int64, statuses ...string) ([]domain.Quotation, error)
 	Create(ctx context.Context, o *domain.Quotation) error
 	Update(ctx context.Context, o *domain.Quotation) error
@@ -98,6 +98,26 @@ func (s *QuotationService) Get(ctx context.Context, tenantID, id int64) (*Quotat
 	return s.loadView(ctx, tenantID, o)
 }
 
+// QuotationListFilter adalah seluruh saringan daftar Penawaran dalam satu
+// struct (PLAN wording-role-dan-filter-sales-wp §5.4) — menggantikan deretan
+// parameter ListByTenant agar penambahan filter tidak mengubah signature
+// berulang kali.
+type QuotationListFilter struct {
+	Status   string
+	Search   string
+	ClientID int64
+	// SalesStaffID menyaring pembuat penawaran (quotations.created_by_staff_id,
+	// D3). 0 = tanpa filter.
+	SalesStaffID int64
+	// RestrictIDs membatasi hasil ke ID ini saja. RestrictActive memisahkan
+	// "tanpa filter" dari "filter aktif tapi tidak ada yang cocok" — slice
+	// kosong TANPA flag ini akan diperlakukan sebagai "tanpa filter" dan
+	// mengembalikan seluruh penawaran; itu bug yang paling mudah terjadi di
+	// sini, jadi dipisahkan secara eksplisit.
+	RestrictIDs    []int64
+	RestrictActive bool
+}
+
 // QuotationListItem adalah satu baris daftar Penawaran — ringan tanpa
 // komposisi (dropdown Tambah Project memakai filter status + tenant yang
 // sama). Nama pasangan diisi batch satu halaman (§11); ProjectID dipetakan
@@ -107,6 +127,12 @@ type QuotationListItem struct {
 	ClientBride string
 	ClientGroom string
 	ProjectID   int64
+	// SalesStaffID adalah pembuat penawaran (CreatedByStaffID) — dasar filter
+	// Sales dan tampilan nama Sales di kartu (D3/D7).
+	SalesStaffID int64
+	// PICStaffID adalah Wedding Planner dari project hasil Accept (0 = belum
+	// ada project / belum ditugaskan) — dasar tampilan nama WP di kartu (D7).
+	PICStaffID int64
 	// Total = BasePrice + penyesuaian. Inilah nilai kontrak yang akan dibuat
 	// Accept, jadi daftar dan dropdown harus menampilkan angka ini — bukan
 	// BasePrice, yang berbeda begitu ada additional/takeout.
@@ -116,8 +142,17 @@ type QuotationListItem struct {
 	Signed bool
 }
 
-func (s *QuotationService) ListPaginated(ctx context.Context, tenantID int64, status, search string, clientID int64, params pagination.Params) ([]QuotationListItem, int64, error) {
-	list, total, err := s.repo.ListByTenant(ctx, tenantID, status, params, search, clientID)
+func (s *QuotationService) ListPaginated(ctx context.Context, tenantID int64, status, search string, clientID, salesStaffID, picStaffID int64, params pagination.Params) ([]QuotationListItem, int64, error) {
+	filter := QuotationListFilter{Status: status, Search: search, ClientID: clientID, SalesStaffID: salesStaffID}
+	if picStaffID != 0 {
+		quotationIDs, err := s.projects.QuotationIDsForPICStaff(ctx, tenantID, picStaffID)
+		if err != nil {
+			return nil, 0, err
+		}
+		filter.RestrictIDs = quotationIDs
+		filter.RestrictActive = true
+	}
+	list, total, err := s.repo.ListByTenant(ctx, tenantID, filter, params)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -133,7 +168,7 @@ func (s *QuotationService) ListPaginated(ctx context.Context, tenantID int64, st
 			return nil, 0, err
 		}
 	}
-	projectIDs, err := s.projects.ProjectIDsForQuotations(ctx, tenantID, quotationIDs)
+	projectRefs, err := s.projects.ProjectRefsForQuotations(ctx, tenantID, quotationIDs)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -143,8 +178,10 @@ func (s *QuotationService) ListPaginated(ctx context.Context, tenantID int64, st
 	}
 	items := make([]QuotationListItem, 0, len(list))
 	for _, o := range list {
+		ref := projectRefs[o.ID]
 		item := QuotationListItem{
-			Quotation: o, ProjectID: projectIDs[o.ID],
+			Quotation: o, ProjectID: ref.ProjectID,
+			SalesStaffID: o.CreatedByStaffID, PICStaffID: ref.PICStaffID,
 			Total: o.BasePrice + adjustmentTotals[o.ID],
 		}
 		if o.Snapshot != nil && o.Snapshot.Current.Signature != nil {

@@ -83,6 +83,7 @@ type staffSummaryResponse struct {
 	ID    int64  `json:"id"`
 	Name  string `json:"name"`
 	Title string `json:"title"`
+	Role  string `json:"role"`
 }
 
 // Summary backs every PIC picker/label across the `projects` module —
@@ -105,7 +106,7 @@ func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
 	}
 	result := make([]staffSummaryResponse, 0, len(members))
 	for _, m := range members {
-		result = append(result, staffSummaryResponse{ID: m.ID, Name: m.Name, Title: m.Title})
+		result = append(result, staffSummaryResponse{ID: m.ID, Name: m.Name, Title: m.Title, Role: string(m.Role)})
 	}
 	response.OK(w, "ok", result)
 }

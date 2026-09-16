@@ -178,6 +178,10 @@ type clientTimelineResponse struct {
 	// backs the PIC column and WP filter on Monitoring Timeline (Blok D). The
 	// name is resolved client-side via /staff/summary, per MODULE_MAP.md.
 	PICStaffID int64 `json:"picStaffId"`
+	// PICSalesStaffID is the project's Sales PIC (0 = belum ditugaskan) --
+	// backs the Sales column and Sales filter on Monitoring Timeline. The
+	// name is resolved client-side via /staff/summary, per MODULE_MAP.md.
+	PICSalesStaffID int64 `json:"picSalesStaffId"`
 }
 
 func toClientTimelineResponse(row domain.ClientTimelineRow) clientTimelineResponse {
@@ -187,6 +191,7 @@ func toClientTimelineResponse(row domain.ClientTimelineRow) clientTimelineRespon
 		ProjectID: row.ProjectID, ProjectName: row.ProjectName, BrideName: row.BrideName, GroomName: row.GroomName,
 		EventDate:  row.EventDate.Format(dateLayout),
 		PICStaffID: row.PICStaffID,
+		PICSalesStaffID: row.PICSalesStaffID,
 	}
 }
 

@@ -448,10 +448,30 @@ func (s *ProjectService) ProjectDeleteImpact(ctx context.Context, tenantID, proj
 	return out, nil
 }
 
-// ProjectIDsForQuotations memetakan penawaran Diterima ke project-nya untuk
-// satu halaman daftar — satu query, bukan N+1.
-func (s *ProjectService) ProjectIDsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]int64, error) {
-	return s.repo.ProjectIDsForQuotations(ctx, tenantID, quotationIDs)
+// ProjectRefsForQuotations memetakan penawaran Diterima ke project-nya
+// beserta PIC Wedding Planner-nya untuk satu halaman daftar — satu query,
+// bukan N+1 (PLAN wording-role-dan-filter-sales-wp §5.3).
+func (s *ProjectService) ProjectRefsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]domain.QuotationProjectRef, error) {
+	return s.repo.ProjectRefsForQuotations(ctx, tenantID, quotationIDs)
+}
+
+// QuotationIDsForPICStaff menjawab penawaran mana yang sudah melahirkan
+// project yang dipegang satu Wedding Planner — dasar filter WP di daftar
+// Penawaran.
+func (s *ProjectService) QuotationIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error) {
+	return s.repo.QuotationIDsForPICStaff(ctx, tenantID, picStaffID)
+}
+
+// ClientIDsForPIC menjawab client mana yang punya project yang dipegang PIC
+// tertentu — dasar filter Sales/WP di daftar Client.
+func (s *ProjectService) ClientIDsForPIC(ctx context.Context, tenantID, picStaffID, picSalesStaffID int64) ([]int64, error) {
+	return s.repo.ClientIDsForPIC(ctx, tenantID, picStaffID, picSalesStaffID)
+}
+
+// PICsForClients menjawab himpunan PIC berbeda dari seluruh project milik
+// tiap client pada satu halaman daftar Client — satu query, bukan N+1.
+func (s *ProjectService) PICsForClients(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64]domain.ClientPICs, error) {
+	return s.repo.PICsForClients(ctx, tenantID, clientIDs)
 }
 
 // ProjectIDForQuotation mengembalikan project yang lahir dari penawaran —

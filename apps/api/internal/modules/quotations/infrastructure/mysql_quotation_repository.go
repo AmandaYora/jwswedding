@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 
+	"jwswedding/internal/modules/quotations/application"
 	"jwswedding/internal/modules/quotations/domain"
 	"jwswedding/internal/shared/pagination"
 	"jwswedding/internal/shared/utils"
@@ -78,27 +79,55 @@ func (r *MySQLQuotationRepository) FindByID(ctx context.Context, tenantID, id in
 }
 
 // ListByTenant menopang halaman daftar Penawaran: filter status + cari nomor
-// + saring client (dropdown Tambah Project: client + Ditawarkan). Pencarian
-// nama client TIDAK di sini — frontend memakainya dari CoupleNamesBatch satu
-// halaman (§11). Paginasi via shared/pagination.
-func (r *MySQLQuotationRepository) ListByTenant(ctx context.Context, tenantID int64, status string, params pagination.Params, search string, clientID int64) ([]domain.Quotation, int64, error) {
+// + saring client (dropdown Tambah Project: client + Ditawarkan) + saring
+// Sales (pembuat penawaran) + pembatas ID hasil filter WP lintas modul (PLAN
+// wording-role-dan-filter-sales-wp §5.4). Pencarian nama client TIDAK di
+// sini — frontend memakainya dari CoupleNamesBatch satu halaman (§11).
+// Paginasi via shared/pagination.
+func (r *MySQLQuotationRepository) ListByTenant(ctx context.Context, tenantID int64, filter application.QuotationListFilter, params pagination.Params) ([]domain.Quotation, int64, error) {
+	// Hubung singkat: filter WP aktif tapi tidak ada penawaran yang cocok —
+	// kembalikan kosong TANPA menyentuh DB. Merakit `IN ()` adalah galat
+	// sintaks MySQL, dan melewatkan klausanya justru mengembalikan seluruh
+	// data (bug filter-bocor).
+	if filter.RestrictActive && len(filter.RestrictIDs) == 0 {
+		return []domain.Quotation{}, 0, nil
+	}
 	countQuery := `SELECT COUNT(*) FROM quotations WHERE tenant_id = ?`
 	listQuery := `SELECT ` + quotationColumns + ` FROM quotations WHERE tenant_id = ?`
 	args := []interface{}{tenantID}
-	if status != "" {
+	if filter.Status != "" {
 		countQuery += ` AND status = ?`
 		listQuery += ` AND status = ?`
-		args = append(args, status)
+		args = append(args, filter.Status)
 	}
-	if clientID != 0 {
+	if filter.ClientID != 0 {
 		countQuery += ` AND client_id = ?`
 		listQuery += ` AND client_id = ?`
-		args = append(args, clientID)
+		args = append(args, filter.ClientID)
 	}
-	if search != "" {
+	if filter.SalesStaffID != 0 {
+		countQuery += ` AND created_by_staff_id = ?`
+		listQuery += ` AND created_by_staff_id = ?`
+		args = append(args, filter.SalesStaffID)
+	}
+	if filter.RestrictActive {
+		placeholders := ``
+		for i := range filter.RestrictIDs {
+			if i > 0 {
+				placeholders += `,`
+			}
+			placeholders += `?`
+		}
+		countQuery += ` AND id IN (` + placeholders + `)`
+		listQuery += ` AND id IN (` + placeholders + `)`
+		for _, id := range filter.RestrictIDs {
+			args = append(args, id)
+		}
+	}
+	if filter.Search != "" {
 		countQuery += ` AND po_number LIKE ?`
 		listQuery += ` AND po_number LIKE ?`
-		args = append(args, "%"+search+"%")
+		args = append(args, "%"+filter.Search+"%")
 	}
 
 	var total int64

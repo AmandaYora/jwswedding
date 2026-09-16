@@ -36,7 +36,7 @@ func (f *fakeMasterRepo) FindByIDs(_ context.Context, _ int64, ids []int64) ([]d
 	}
 	return out, nil
 }
-func (f *fakeMasterRepo) ListPaginated(_ context.Context, _ int64, _ pagination.Params, _ string) ([]domain.Client, int64, error) {
+func (f *fakeMasterRepo) ListPaginated(_ context.Context, _ int64, _ pagination.Params, _ ClientListFilter) ([]domain.Client, int64, error) {
 	panic("not implemented")
 }
 func (f *fakeMasterRepo) Create(_ context.Context, _ *domain.Client) error {
@@ -153,7 +153,16 @@ func (f *fakeProjectsForSync) PONumberForQuotation(_ context.Context, _ int64, _
 func (f *fakeProjectsForSync) ProjectDeleteImpact(_ context.Context, _, _ int64) (projectscontracts.ProjectDeleteImpact, error) {
 	panic("not implemented")
 }
-func (f *fakeProjectsForSync) ProjectIDsForQuotations(_ context.Context, _ int64, _ []int64) (map[int64]int64, error) {
+func (f *fakeProjectsForSync) ProjectRefsForQuotations(_ context.Context, _ int64, _ []int64) (map[int64]projectscontracts.QuotationProjectRef, error) {
+	panic("not implemented")
+}
+func (f *fakeProjectsForSync) QuotationIDsForPICStaff(_ context.Context, _ int64, _ int64) ([]int64, error) {
+	panic("not implemented")
+}
+func (f *fakeProjectsForSync) ClientIDsForPIC(_ context.Context, _ int64, _, _ int64) ([]int64, error) {
+	panic("not implemented")
+}
+func (f *fakeProjectsForSync) PICsForClients(_ context.Context, _ int64, _ []int64) (map[int64]projectscontracts.ClientPICs, error) {
 	panic("not implemented")
 }
 

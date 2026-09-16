@@ -26,10 +26,11 @@ interface RawStaffSummary {
   id: number;
   name: string;
   title: string;
+  role: StaffMember["role"];
 }
 
 function toStaffSummary(raw: RawStaffSummary): StaffSummary {
-  return { id: String(raw.id), name: raw.name, title: raw.title };
+  return { id: String(raw.id), name: raw.name, title: raw.title, role: raw.role };
 }
 
 export interface CreateStaffResult {

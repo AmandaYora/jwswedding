@@ -12,6 +12,9 @@ import { Modal } from "@/shared/components/ui/Modal";
 import { Field, Input } from "@/shared/components/ui/Input";
 import { useQuotationStore } from "@/modules/quotations/stores/useQuotationStore";
 import { useClientStore } from "@/modules/clients/stores/useClientStore";
+import { useStaffStore } from "@/modules/users/stores/useStaffStore";
+import { ROLE_LABELS } from "@/modules/users/types";
+import { staffOptionLabel, staffOptionsForRole } from "@/modules/users/lib/staff-label";
 import { usePackageTemplateStore } from "@/modules/package-templates/stores/usePackageTemplateStore";
 import { QUOTATION_STATUS_OPTIONS } from "@/modules/quotations/schemas/quotation.schema";
 import type { QuotationStatus } from "@/modules/quotations/types";
@@ -37,12 +40,16 @@ export default function QuotationListPage() {
   const createQuotation = useQuotationStore((s) => s.createQuotation);
   const clients = useClientStore((s) => s.clients);
   const fetchClients = useClientStore((s) => s.fetchClients);
+  const staffSummaries = useStaffStore((s) => s.staffSummaries);
+  const fetchStaffSummaries = useStaffStore((s) => s.fetchStaffSummaries);
   const templates = usePackageTemplateStore((s) => s.templates);
   const fetchTemplates = usePackageTemplateStore((s) => s.fetchTemplates);
 
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query);
   const [statusFilter, setStatusFilter] = useState("Semua");
+  const [salesFilter, setSalesFilter] = useState("");
+  const [picFilter, setPicFilter] = useState("");
   const [pageNum, setPageNum] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [clientChoice, setClientChoice] = useState("");
@@ -52,13 +59,22 @@ export default function QuotationListPage() {
   const [error, setError] = useState<string | null>(null);
 
   const filters = useMemo(
-    () => ({ status: statusFilter === "Semua" ? "" : statusFilter, search: debouncedQuery }),
-    [statusFilter, debouncedQuery]
+    () => ({
+      status: statusFilter === "Semua" ? "" : statusFilter,
+      search: debouncedQuery,
+      salesStaffId: salesFilter || undefined,
+      picStaffId: picFilter || undefined,
+    }),
+    [statusFilter, debouncedQuery, salesFilter, picFilter]
   );
 
   useEffect(() => {
     setPageNum(1);
-  }, [debouncedQuery, statusFilter]);
+  }, [debouncedQuery, statusFilter, salesFilter, picFilter]);
+
+  useEffect(() => {
+    void fetchStaffSummaries();
+  }, [fetchStaffSummaries]);
 
   useEffect(() => {
     void fetchQuotationPage(pageNum, filters);
@@ -70,6 +86,15 @@ export default function QuotationListPage() {
       void fetchTemplates(true);
     }
   }, [createOpen, fetchClients, fetchTemplates]);
+
+  // Nama Sales & Wedding Planner per kartu (D7) — ID "0"/"" berarti belum
+  // ditugaskan (belum ada project untuk WP), ID yang tidak ada di
+  // staffSummaries berarti staff-nya sudah dihapus.
+  function staffName(id: string): string {
+    if (!id || id === "0") return "Belum ditugaskan";
+    const found = staffSummaries.find((s) => s.id === id);
+    return found ? staffOptionLabel(found) : "—";
+  }
 
   // Mengganti template mengisi Nama Paket, TAPI hanya bila field-nya masih
   // persis sama dengan nama template sebelumnya — artinya pengguna belum
@@ -138,6 +163,18 @@ export default function QuotationListPage() {
             <option key={s} value={s}>{s}</option>
           ))}
         </Select>
+        <Select className="w-48" value={salesFilter} onChange={(e) => setSalesFilter(e.target.value)}>
+          <option value="">Semua {ROLE_LABELS.Sales}</option>
+          {staffOptionsForRole(staffSummaries, "Sales").map((s) => (
+            <option key={s.id} value={s.id}>{staffOptionLabel(s)}</option>
+          ))}
+        </Select>
+        <Select className="w-48" value={picFilter} onChange={(e) => setPicFilter(e.target.value)}>
+          <option value="">Semua {ROLE_LABELS.Staff}</option>
+          {staffOptionsForRole(staffSummaries, "Staff").map((s) => (
+            <option key={s.id} value={s.id}>{staffOptionLabel(s)}</option>
+          ))}
+        </Select>
       </div>
 
       {page.length === 0 ? (
@@ -178,6 +215,10 @@ export default function QuotationListPage() {
                       {item.eventDate ? formatDate(item.eventDate) : "Tanggal menyusul"}
                     </span>
                     <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(item.basePrice)}</span>
+                  </div>
+                  <div className="flex flex-col gap-0.5 text-[12.5px] text-text-secondary">
+                    <span>{ROLE_LABELS.Sales}: <span className="font-medium text-text-primary">{staffName(item.salesStaffId)}</span></span>
+                    <span>{ROLE_LABELS.Staff}: <span className="font-medium text-text-primary">{staffName(item.picStaffId)}</span></span>
                   </div>
                   <div className="flex gap-2 pt-1">
                     <Button size="sm" variant="secondary" onClick={() => navigate(ROUTE_PATHS.quotationDetail(item.id))} className="flex-1">

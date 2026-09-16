@@ -10,6 +10,10 @@ import { Pagination } from "@/shared/components/ui/Pagination";
 import { EmptyState } from "@/shared/components/feedback/EmptyState";
 import { Card, CardContent } from "@/shared/components/ui/Card";
 import { useClientStore } from "@/modules/clients/stores/useClientStore";
+import { useStaffStore } from "@/modules/users/stores/useStaffStore";
+import { ROLE_LABELS } from "@/modules/users/types";
+import { staffOptionLabel, staffOptionsForRole } from "@/modules/users/lib/staff-label";
+import { Select } from "@/shared/components/ui/Input";
 import type { ClientMasterFormValues } from "@/modules/clients/schemas/client.schema";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
@@ -21,10 +25,14 @@ export default function ClientListPage() {
   const meta = useClientStore((s) => s.clientsMeta);
   const fetchClients = useClientStore((s) => s.fetchClients);
   const createClient = useClientStore((s) => s.createClient);
+  const staffSummaries = useStaffStore((s) => s.staffSummaries);
+  const fetchStaffSummaries = useStaffStore((s) => s.fetchStaffSummaries);
 
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query);
   const [page, setPage] = useState(1);
+  const [salesFilter, setSalesFilter] = useState("");
+  const [picFilter, setPicFilter] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [values, setValues] = useState<ClientMasterFormValues>({
     brideName: "",
@@ -40,11 +48,41 @@ export default function ClientListPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [search]);
+  }, [search, salesFilter, picFilter]);
 
   useEffect(() => {
-    void fetchClients(page, search);
-  }, [fetchClients, page, search]);
+    void fetchClients(page, search, undefined, picFilter || undefined, salesFilter || undefined);
+  }, [fetchClients, page, search, picFilter, salesFilter]);
+
+  useEffect(() => {
+    void fetchStaffSummaries();
+  }, [fetchStaffSummaries]);
+
+  // Nama WP & Sales per kartu (D7) — di-dedup, maksimal 2 nama lalu "+N",
+  // dan "—" bila client belum punya project sama sekali. Per-ID: "0" →
+  // "Belum ditugaskan", ID tak dikenal (staff dihapus) dilewati, selebihnya
+  // staffOptionLabel.
+  function picNames(ids: string[]): string {
+    if (ids.length === 0) return "—";
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const id of ids) {
+      if (!id || id === "0") {
+        if (!seen.has("0")) {
+          seen.add("0");
+          names.push("Belum ditugaskan");
+        }
+        continue;
+      }
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const found = staffSummaries.find((s) => s.id === id);
+      if (found) names.push(staffOptionLabel(found));
+    }
+    if (names.length === 0) return "—";
+    if (names.length <= 2) return names.join(", ");
+    return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+  }
 
   async function handleCreate() {
     if (!values.brideName.trim() || !values.groomName.trim()) {
@@ -86,6 +124,18 @@ export default function ClientListPage() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        <Select className="w-48" value={salesFilter} onChange={(e) => setSalesFilter(e.target.value)}>
+          <option value="">Semua {ROLE_LABELS.Sales}</option>
+          {staffOptionsForRole(staffSummaries, "Sales").map((s) => (
+            <option key={s.id} value={s.id}>{staffOptionLabel(s)}</option>
+          ))}
+        </Select>
+        <Select className="w-48" value={picFilter} onChange={(e) => setPicFilter(e.target.value)}>
+          <option value="">Semua {ROLE_LABELS.Staff}</option>
+          {staffOptionsForRole(staffSummaries, "Staff").map((s) => (
+            <option key={s.id} value={s.id}>{staffOptionLabel(s)}</option>
+          ))}
+        </Select>
       </div>
 
       {clients.length === 0 ? (
@@ -109,6 +159,9 @@ export default function ClientListPage() {
                     </button>
                     <p className="truncate text-[12.5px] text-text-secondary">
                       {c.phone || "Tanpa telepon"} · {c.contactCount} kontak · {c.projectCount} project
+                    </p>
+                    <p className="truncate text-[12.5px] text-text-secondary">
+                      {ROLE_LABELS.Staff}: {picNames(c.picStaffIds)} · {ROLE_LABELS.Sales}: {picNames(c.picSalesStaffIds)}
                     </p>
                   </div>
                 </CardContent>

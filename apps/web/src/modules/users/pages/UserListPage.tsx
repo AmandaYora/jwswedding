@@ -335,8 +335,8 @@ export default function UserListPage() {
         details={
           impactLoading ? undefined : deleteImpact && deleteImpact.length > 0 ? (
             <>
-              Pengguna ini masih ditugaskan sebagai PIC pada project berikut:{" "}
-              <strong className="text-text-primary">{deleteImpact.map((p) => p.name).join(", ")}</strong>. Penugasan PIC pada project tersebut akan kehilangan sumber datanya dan tidak dapat ditelusuri lagi.
+              Pengguna ini masih ditugaskan sebagai penanggung jawab pada project berikut:{" "}
+              <strong className="text-text-primary">{deleteImpact.map((p) => p.name).join(", ")}</strong>. Penugasan tersebut akan kehilangan sumber datanya dan tidak dapat ditelusuri lagi.
             </>
           ) : (
             "Data ini dihapus permanen dan tidak dapat dikembalikan."

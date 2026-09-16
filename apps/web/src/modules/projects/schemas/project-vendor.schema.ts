@@ -12,7 +12,17 @@ export const ENGAGEMENT_STATUS_OPTIONS = [
   "Cancelled",
 ] as const;
 
-export const PRICING_TIER_OPTIONS = ["Akad", "AkadResepsi", "Resepsi"] as const;
+export const PRICING_TIER_OPTIONS = ["Akad", "AkadResepsi", "Resepsi", "Custom"] as const;
+
+// Urutan tampilan + label paket kerja sama vendor (ADR-0034, D3). Nilainya
+// TIDAK diganti nama (A2) — hanya labelnya. "Custom" berarti di luar ketiga
+// preset harga vendor: tidak ada harga yang di-prefill untuknya (D1).
+export const PRICING_TIER_CHOICES = [
+  { value: "AkadResepsi", label: "Akad/Pemberkatan + Resepsi" },
+  { value: "Resepsi",     label: "Resepsi Only" },
+  { value: "Akad",        label: "Akad/Pemberkatan Only" },
+  { value: "Custom",      label: "Custom" },
+] as const;
 
 // Fixed presets for "Jam Acara" (PLAN.md revisi-timeline-vendor-role-sales) —
 // selecting one fills both time fields; "Custom" leaves them for manual
@@ -40,7 +50,7 @@ export const projectVendorSchema = z.object({
   eventEndTime: z.string().optional().default(""),
   dpAmount: z.coerce.number().min(0, "Jumlah DP tidak valid"),
   dueDate: z.string().optional().default(""),
-  picStaffId: z.string().min(1, "PIC internal WO wajib dipilih"),
+  picStaffId: z.string().min(1, "Penanggung jawab wajib dipilih"),
   notes: z.string().optional().default(""),
   // Alasan menyetujui komitmen yang membuat total biaya melampaui Nilai
   // Kontrak. Kosong di jalur normal; wajib HANYA saat pelampauan terjadi —

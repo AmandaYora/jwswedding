@@ -20,4 +20,7 @@ export interface ClientTimeline {
   // The project's PIC Wedding Planner (Blok D) — "0" = "Belum ditugaskan".
   // Name resolved client-side via useStaffStore.
   picStaffId: string;
+  // The project's PIC Sales — "0" = belum ditugaskan. Name resolved
+  // client-side via useStaffStore (PLAN wording-role-dan-filter-sales-wp).
+  picSalesStaffId: string;
 }

@@ -34,6 +34,12 @@ type clientResponse struct {
 	Notes        string `json:"notes"`
 	ContactCount int    `json:"contactCount"`
 	ProjectCount int    `json:"projectCount"`
+	// PICStaffIDs adalah himpunan Wedding Planner dari seluruh project milik
+	// client ini — dasar tampilan nama WP di kartu (D7).
+	PICStaffIDs []int64 `json:"picStaffIds"`
+	// PICSalesStaffIDs adalah himpunan Sales dari seluruh project milik
+	// client ini — dasar tampilan nama Sales di kartu (D7).
+	PICSalesStaffIDs []int64 `json:"picSalesStaffIds"`
 }
 
 func toClientResponse(item application.ClientListItem) clientResponse {
@@ -41,6 +47,7 @@ func toClientResponse(item application.ClientListItem) clientResponse {
 		ID: item.Client.ID, BrideName: item.Client.BrideName, GroomName: item.Client.GroomName,
 		DisplayName: item.Client.DisplayName(), Phone: item.Client.Phone, Email: item.Client.Email,
 		Notes: item.Client.Notes, ContactCount: item.ContactCount, ProjectCount: item.ProjectCount,
+		PICStaffIDs: item.PICStaffIDs, PICSalesStaffIDs: item.PICSalesStaffIDs,
 	}
 }
 
@@ -144,7 +151,25 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, tenantID int64) {
 	}
 	params := pagination.FromRequest(r)
 	search := r.URL.Query().Get("search")
-	items, total, err := h.clients.ListPaginated(r.Context(), tenantID, params, search)
+	var picStaffID int64
+	if raw := r.URL.Query().Get("picStaffId"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, "picStaffId tidak valid", nil)
+			return
+		}
+		picStaffID = parsed
+	}
+	var picSalesStaffID int64
+	if raw := r.URL.Query().Get("picSalesStaffId"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, "picSalesStaffId tidak valid", nil)
+			return
+		}
+		picSalesStaffID = parsed
+	}
+	items, total, err := h.clients.ListPaginated(r.Context(), tenantID, params, search, picStaffID, picSalesStaffID)
 	if err != nil {
 		writeAppError(w, err)
 		return

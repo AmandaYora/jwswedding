@@ -61,6 +61,22 @@ type CreateFromQuotationInput struct {
 	ActorStaffID     int64
 }
 
+// QuotationProjectRef is the project born from an accepted quotation plus
+// its Wedding Planner PIC — one row of the batch map backing the quotation
+// list's WP filter and WP-name display (PLAN
+// wording-role-dan-filter-sales-wp §5.3).
+type QuotationProjectRef struct {
+	ProjectID  int64
+	PICStaffID int64 // 0 = belum ditugaskan
+}
+
+// ClientPICs is the set of distinct PICs across all projects of one client —
+// one row of the batch map backing the client list's WP/Sales name display
+// (PLAN wording-role-dan-filter-sales-wp §5.3).
+type ClientPICs struct {
+	PICStaffIDs      []int64
+	PICSalesStaffIDs []int64
+}
 // ProjectImpact backs the hard-delete "impact" dialog for a Client
 // (D14 — informed consent, never a block): how many projects would go with
 // it, and — the number that hurts most if deleted by mistake — how many of
@@ -156,9 +172,21 @@ type Contracts interface {
 	// accepted quotation (T3.5): the project that would go with it, and the
 	// paid-invoice figure that hurts most if deleted by mistake.
 	ProjectDeleteImpact(ctx context.Context, tenantID, projectID int64) (ProjectDeleteImpact, error)
-	// ProjectIDsForQuotations maps accepted quotations to their projects for
-	// ONE page of the quotation list — one query, not N+1 (§11).
-	ProjectIDsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]int64, error)
+	// ProjectRefsForQuotations maps accepted quotations to their projects
+	// plus their WP PICs for ONE page of the quotation list — one query, not
+	// N+1 (PLAN wording-role-dan-filter-sales-wp §5.3).
+	ProjectRefsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]QuotationProjectRef, error)
+	// QuotationIDsForPICStaff answers which quotations already birthed a
+	// project held by one Wedding Planner — the WP filter on the quotation
+	// list.
+	QuotationIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error)
+	// ClientIDsForPIC answers which clients own a project held by the given
+	// PIC(s) — the Sales/WP filter on the client list. 0 = no filter for
+	// that slot.
+	ClientIDsForPIC(ctx context.Context, tenantID, picStaffID, picSalesStaffID int64) ([]int64, error)
+	// PICsForClients answers the distinct PIC sets across all projects of
+	// each client on ONE client-list page — one query, not N+1.
+	PICsForClients(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64]ClientPICs, error)
 }
 
 type impl struct {
@@ -353,6 +381,34 @@ func (c *impl) ProjectDeleteImpact(ctx context.Context, tenantID, projectID int6
 	}, nil
 }
 
-func (c *impl) ProjectIDsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]int64, error) {
-	return c.projects.ProjectIDsForQuotations(ctx, tenantID, quotationIDs)
+func (c *impl) ProjectRefsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]QuotationProjectRef, error) {
+	refs, err := c.projects.ProjectRefsForQuotations(ctx, tenantID, quotationIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]QuotationProjectRef, len(refs))
+	for qid, ref := range refs {
+		out[qid] = QuotationProjectRef{ProjectID: ref.ProjectID, PICStaffID: ref.PICStaffID}
+	}
+	return out, nil
+}
+
+func (c *impl) QuotationIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error) {
+	return c.projects.QuotationIDsForPICStaff(ctx, tenantID, picStaffID)
+}
+
+func (c *impl) ClientIDsForPIC(ctx context.Context, tenantID, picStaffID, picSalesStaffID int64) ([]int64, error) {
+	return c.projects.ClientIDsForPIC(ctx, tenantID, picStaffID, picSalesStaffID)
+}
+
+func (c *impl) PICsForClients(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64]ClientPICs, error) {
+	rows, err := c.projects.PICsForClients(ctx, tenantID, clientIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]ClientPICs, len(rows))
+	for clientID, row := range rows {
+		out[clientID] = ClientPICs{PICStaffIDs: row.PICStaffIDs, PICSalesStaffIDs: row.PICSalesStaffIDs}
+	}
+	return out, nil
 }

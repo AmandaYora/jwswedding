@@ -136,6 +136,11 @@ type quotationListItemResponse struct {
 	Total      int64   `json:"total"`
 	EventDate  *string `json:"eventDate"`
 	ProjectID  int64   `json:"projectId"`
+	// SalesStaffID adalah pembuat penawaran — dasar filter Sales (D3).
+	SalesStaffID int64 `json:"salesStaffId"`
+	// PICStaffID adalah Wedding Planner dari project hasil Accept (0 = belum
+	// ada project / belum ditugaskan) — dasar tampilan nama WP di kartu (D7).
+	PICStaffID int64   `json:"picStaffId"`
 	IssuedAt   *string `json:"issuedAt"`
 	AcceptedAt *string `json:"acceptedAt"`
 	// Signed = revisi yang berlaku sudah bertanda tangan (T9, D13a).
@@ -229,8 +234,26 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, claims staffClaim
 		}
 		clientID = parsed
 	}
+	var salesStaffID int64
+	if raw := r.URL.Query().Get("salesStaffId"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, "salesStaffId tidak valid", nil)
+			return
+		}
+		salesStaffID = parsed
+	}
+	var picStaffID int64
+	if raw := r.URL.Query().Get("picStaffId"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, "picStaffId tidak valid", nil)
+			return
+		}
+		picStaffID = parsed
+	}
 	params := pagination.FromRequest(r)
-	items, total, err := h.quotations.ListPaginated(r.Context(), claims.tenantID, status, search, clientID, params)
+	items, total, err := h.quotations.ListPaginated(r.Context(), claims.tenantID, status, search, clientID, salesStaffID, picStaffID, params)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -245,6 +268,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, claims staffClaim
 			Total:     item.Total,
 			EventDate: formatDatePtr(item.Quotation.EventDate),
 			ProjectID: item.ProjectID,
+			SalesStaffID: item.SalesStaffID, PICStaffID: item.PICStaffID,
 			IssuedAt:  formatDatePtr(item.Quotation.IssuedAt), AcceptedAt: formatDatePtr(item.Quotation.AcceptedAt),
 			Signed: item.Signed,
 		})

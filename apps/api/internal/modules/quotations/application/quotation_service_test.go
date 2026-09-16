@@ -52,7 +52,7 @@ func (f *fakeQuotationRepo) FindByID(_ context.Context, _ int64, id int64) (*dom
 	return nil, nil
 }
 
-func (f *fakeQuotationRepo) ListByTenant(_ context.Context, _ int64, _ string, _ pagination.Params, _ string, _ int64) ([]domain.Quotation, int64, error) {
+func (f *fakeQuotationRepo) ListByTenant(_ context.Context, _ int64, _ QuotationListFilter, _ pagination.Params) ([]domain.Quotation, int64, error) {
 	list := make([]domain.Quotation, 0, len(f.rows))
 	for _, o := range f.rows {
 		list = append(list, *o)
@@ -217,12 +217,21 @@ func (f *fakeProjectsContracts) PONumberForQuotation(_ context.Context, _ int64,
 func (f *fakeProjectsContracts) ProjectDeleteImpact(_ context.Context, _, _ int64) (projectscontracts.ProjectDeleteImpact, error) {
 	panic("not implemented")
 }
-func (f *fakeProjectsContracts) ProjectIDsForQuotations(_ context.Context, _ int64, ids []int64) (map[int64]int64, error) {
-	out := make(map[int64]int64, len(ids))
+func (f *fakeProjectsContracts) ProjectRefsForQuotations(_ context.Context, _ int64, ids []int64) (map[int64]projectscontracts.QuotationProjectRef, error) {
+	out := make(map[int64]projectscontracts.QuotationProjectRef, len(ids))
 	for _, id := range ids {
-		out[id] = f.projectID
+		out[id] = projectscontracts.QuotationProjectRef{ProjectID: f.projectID}
 	}
 	return out, nil
+}
+func (f *fakeProjectsContracts) QuotationIDsForPICStaff(_ context.Context, _ int64, _ int64) ([]int64, error) {
+	panic("not implemented")
+}
+func (f *fakeProjectsContracts) ClientIDsForPIC(_ context.Context, _ int64, _, _ int64) ([]int64, error) {
+	panic("not implemented")
+}
+func (f *fakeProjectsContracts) PICsForClients(_ context.Context, _ int64, _ []int64) (map[int64]projectscontracts.ClientPICs, error) {
+	panic("not implemented")
 }
 
 type fakeClientDirectory struct{}

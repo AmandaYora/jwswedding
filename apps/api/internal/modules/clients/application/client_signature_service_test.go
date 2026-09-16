@@ -47,7 +47,7 @@ func (f *fakeClientRepo) FindByIDs(_ context.Context, _ int64, ids []int64) ([]d
 	return out, nil
 }
 
-func (f *fakeClientRepo) ListPaginated(_ context.Context, _ int64, _ pagination.Params, _ string) ([]domain.Client, int64, error) {
+func (f *fakeClientRepo) ListPaginated(_ context.Context, _ int64, _ pagination.Params, _ ClientListFilter) ([]domain.Client, int64, error) {
 	panic("not implemented")
 }
 

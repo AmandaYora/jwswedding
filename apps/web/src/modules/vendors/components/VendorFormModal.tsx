@@ -164,10 +164,10 @@ export function VendorFormModal({ open, onClose, onSubmitCreate, onSubmitEdit, i
             ))}
           </Combobox>
         </Field>
-        <Field label="Harga Akad (Rp)" required={!isEditing} hint={errors.priceAkad}>
+        <Field label="Harga Akad/Pemberkatan Only (Rp)" required={!isEditing} hint={errors.priceAkad}>
           <CurrencyInput value={values.priceAkad} onChange={(n) => set("priceAkad", n)} />
         </Field>
-        <Field label="Harga Akad+Resepsi (Rp)" required={!isEditing} hint={errors.priceAkadResepsi}>
+        <Field label="Harga Akad/Pemberkatan + Resepsi (Rp)" required={!isEditing} hint={errors.priceAkadResepsi}>
           <CurrencyInput value={values.priceAkadResepsi} onChange={(n) => set("priceAkadResepsi", n)} />
         </Field>
         <Field label="Harga Resepsi Only (Rp)" hint={errors.priceResepsi}>

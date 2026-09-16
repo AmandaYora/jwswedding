@@ -16,6 +16,7 @@ interface RawClientTimeline {
   groomName: string;
   eventDate: string;
   picStaffId: number;
+  picSalesStaffId: number;
 }
 
 function toClientTimeline(raw: RawClientTimeline): ClientTimeline {
@@ -25,6 +26,7 @@ function toClientTimeline(raw: RawClientTimeline): ClientTimeline {
     projectId: String(raw.projectId), projectName: raw.projectName,
     brideName: raw.brideName, groomName: raw.groomName, eventDate: raw.eventDate,
     picStaffId: String(raw.picStaffId),
+    picSalesStaffId: String(raw.picSalesStaffId ?? 0),
   };
 }
 

@@ -37,9 +37,21 @@ type ProjectRepository interface {
 	// CountByClients menjawab hitungan project per client untuk satu halaman
 	// daftar Client — satu query agregat, bukan N+1 (§11 PLAN).
 	CountByClients(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64]int, error)
-	// ProjectIDsForQuotations memetakan penawaran ke project-nya untuk satu
-	// halaman daftar Penawaran — satu query, bukan N+1.
-	ProjectIDsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]int64, error)
+	// ProjectRefsForQuotations memetakan penawaran ke project-nya beserta PIC
+	// Wedding Planner-nya untuk satu halaman daftar Penawaran — satu query,
+	// bukan N+1 (PLAN wording-role-dan-filter-sales-wp §5.3).
+	ProjectRefsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]domain.QuotationProjectRef, error)
+	// QuotationIDsForPICStaff menjawab penawaran mana yang sudah melahirkan
+	// project yang dipegang satu Wedding Planner — dasar filter WP di daftar
+	// Penawaran.
+	QuotationIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error)
+	// ClientIDsForPIC menjawab client mana yang punya project yang dipegang
+	// PIC tertentu — dasar filter Sales/WP di daftar Client. 0 = tidak
+	// memfilter untuk slot itu.
+	ClientIDsForPIC(ctx context.Context, tenantID, picStaffID, picSalesStaffID int64) ([]int64, error)
+	// PICsForClients menjawab himpunan PIC berbeda dari seluruh project
+	// milik tiap client pada satu halaman daftar Client — satu query.
+	PICsForClients(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64]domain.ClientPICs, error)
 	Update(ctx context.Context, p *domain.Project) error
 	SetStatus(ctx context.Context, tenantID, id int64, status domain.ProjectStatus) error
 	SetArchived(ctx context.Context, tenantID, id int64, archived bool) error
@@ -357,10 +369,10 @@ func (s *ProjectService) Update(ctx context.Context, tenantID, id int64, actorSt
 		return nil, err
 	}
 	if callerRole == "Staff" && input.PICStaffID != p.PICStaffID {
-		return nil, apperror.Forbidden("Hanya Owner atau Admin yang dapat menugaskan ulang PIC project")
+		return nil, apperror.Forbidden("Hanya Owner atau Admin yang dapat menugaskan ulang Wedding Planner project")
 	}
 	if callerRole == "Sales" && input.PICSalesStaffID != p.PICSalesStaffID {
-		return nil, apperror.Forbidden("Sales tidak dapat memindahkan PIC Sales project ini")
+		return nil, apperror.Forbidden("Sales tidak dapat memindahkan penanggung jawab Sales project ini")
 	}
 	if err := guardKonteksUmum(callerRole, p, input); err != nil {
 		return nil, err

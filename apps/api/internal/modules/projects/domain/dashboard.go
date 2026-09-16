@@ -43,6 +43,10 @@ type ClientTimelineRow struct {
 	// ditugaskan"), surfaced so Monitoring Timeline can show a PIC column and
 	// filter by PIC (Blok D). Name resolution is client-side, per MODULE_MAP.md.
 	PICStaffID int64
+	// PICSalesStaffID is the project's Sales PIC (sentinel 0 = belum
+	// ditugaskan), surfaced so Monitoring Timeline can show a Sales column
+	// and filter by Sales. Name resolution is client-side, per MODULE_MAP.md.
+	PICSalesStaffID int64
 }
 
 // DashboardVenuePaymentRow deliberately stays a separate slice/type from

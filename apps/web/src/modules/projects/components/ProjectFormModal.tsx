@@ -6,6 +6,8 @@ import { CurrencyInput } from "@/shared/components/ui/CurrencyInput";
 import { projectSchema, PROJECT_STATUS_OPTIONS, EVENT_SESSION_PRESETS, type ProjectFormValues } from "@/modules/projects/schemas/project.schema";
 import type { Project } from "@/modules/projects/types";
 import { useStaffStore } from "@/modules/users/stores/useStaffStore";
+import { ROLE_LABELS } from "@/modules/users/types";
+import { staffOptionLabel, staffOptionsForRole } from "@/modules/users/lib/staff-label";
 import { useAuthStore } from "@/shared/stores/useAuthStore";
 
 interface ProjectFormModalProps {
@@ -259,23 +261,23 @@ export function ProjectFormModal({
             </Field>
           </>
         )}
-        <Field label="Penanggung Jawab WO (PIC Wedding Planner)" hint={errors.picStaffId}>
+        <Field label={ROLE_LABELS.Staff} hint={errors.picStaffId}>
           {picLocked ? (
-            <Input value={staffList.find((s) => s.id === values.picStaffId)?.name ?? "..."} disabled />
+            <Input value={(() => { const s = staffList.find((s) => s.id === values.picStaffId); return s ? staffOptionLabel(s) : "..."; })()} disabled />
           ) : (
             <Select value={values.picStaffId} onChange={(e) => set("picStaffId", e.target.value)}>
               <option value="">Belum ditugaskan</option>
-              {staffList.map((s) => (
-                <option key={s.id} value={s.id}>{s.name} — {s.title}</option>
+              {staffOptionsForRole(staffList, "Staff", values.picStaffId).map((s) => (
+                <option key={s.id} value={s.id}>{staffOptionLabel(s)}</option>
               ))}
             </Select>
           )}
         </Field>
-        <Field label="PIC Sales" hint={errors.picSalesStaffId}>
+        <Field label={ROLE_LABELS.Sales} hint={errors.picSalesStaffId}>
           <Select value={values.picSalesStaffId} onChange={(e) => set("picSalesStaffId", e.target.value)}>
             <option value="">Belum ditugaskan</option>
-            {staffList.map((s) => (
-              <option key={s.id} value={s.id}>{s.name} — {s.title}</option>
+            {staffOptionsForRole(staffList, "Sales", values.picSalesStaffId).map((s) => (
+              <option key={s.id} value={s.id}>{staffOptionLabel(s)}</option>
             ))}
           </Select>
         </Field>

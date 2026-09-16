@@ -3,6 +3,7 @@ import { Modal } from "@/shared/components/ui/Modal";
 import { Button } from "@/shared/components/ui/Button";
 import { Input, Textarea, Select, Field } from "@/shared/components/ui/Input";
 import { issueSchema, ISSUE_IMPACT_OPTIONS, ISSUE_STATUS_OPTIONS, type IssueFormValues } from "@/modules/projects/schemas/issue.schema";
+import { staffOptionLabel } from "@/modules/users/lib/staff-label";
 import type { IssueImpact, IssueStatus, ProjectVendor, VendorMilestone } from "@/modules/projects/types";
 
 interface VendorLookup {
@@ -170,10 +171,10 @@ export function IssueFormModal({
             onChange={(e) => set("targetResolutionDate", e.target.value)}
           />
         </Field>
-        <Field label="PIC" required hint={errors.picStaffId}>
+        <Field label="Penanggung Jawab" required hint={errors.picStaffId}>
           <Select value={values.picStaffId} onChange={(e) => set("picStaffId", e.target.value)}>
             {staff.map((s) => (
-              <option key={s.id} value={s.id}>{s.name} — {s.title}</option>
+              <option key={s.id} value={s.id}>{staffOptionLabel(s)}</option>
             ))}
           </Select>
         </Field>

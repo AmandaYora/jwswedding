@@ -326,7 +326,8 @@ func validateEngagementInput(status domain.EngagementStatus, tier domain.VendorP
 		})
 	}
 	switch tier {
-	case domain.PricingTierAkad, domain.PricingTierAkadResepsi, domain.PricingTierResepsi:
+	case domain.PricingTierAkad, domain.PricingTierAkadResepsi,
+		domain.PricingTierResepsi, domain.PricingTierCustom:
 	default:
 		return apperror.Validation("Tier harga vendor tidak valid", map[string][]string{
 			"pricingTier": {"Tier harga vendor tidak valid"},

@@ -76,7 +76,16 @@ func (f *fakeProjectRepo) FindByQuotationID(ctx context.Context, tenantID, quota
 func (f *fakeProjectRepo) CountByClients(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64]int, error) {
 	panic("not implemented")
 }
-func (f *fakeProjectRepo) ProjectIDsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]int64, error) {
+func (f *fakeProjectRepo) ProjectRefsForQuotations(ctx context.Context, tenantID int64, quotationIDs []int64) (map[int64]domain.QuotationProjectRef, error) {
+	panic("not implemented")
+}
+func (f *fakeProjectRepo) QuotationIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error) {
+	panic("not implemented")
+}
+func (f *fakeProjectRepo) ClientIDsForPIC(ctx context.Context, tenantID, picStaffID, picSalesStaffID int64) ([]int64, error) {
+	panic("not implemented")
+}
+func (f *fakeProjectRepo) PICsForClients(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64]domain.ClientPICs, error) {
 	panic("not implemented")
 }
 

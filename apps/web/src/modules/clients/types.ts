@@ -11,6 +11,10 @@ export interface Client {
   notes: string;
   contactCount: number;
   projectCount: number;
+  /** Himpunan Wedding Planner dari seluruh project milik client ini — dasar tampilan nama WP di kartu (D7). */
+  picStaffIds: string[];
+  /** Himpunan Sales dari seluruh project milik client ini — dasar tampilan nama Sales di kartu (D7). */
+  picSalesStaffIds: string[];
 }
 
 // Kontak/akun portal milik satu Client.

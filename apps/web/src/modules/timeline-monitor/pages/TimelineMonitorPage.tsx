@@ -12,6 +12,8 @@ import { EmptyState } from "@/shared/components/feedback/EmptyState";
 import { MilestoneStatusBadge } from "@/modules/projects/components/StatusBadges";
 import { useTimelineMonitorStore } from "@/modules/timeline-monitor/stores/useTimelineMonitorStore";
 import { useStaffStore } from "@/modules/users/stores/useStaffStore";
+import { ROLE_LABELS } from "@/modules/users/types";
+import { staffOptionLabel } from "@/modules/users/lib/staff-label";
 import type { ClientTimeline } from "@/modules/timeline-monitor/types";
 import type { MilestoneStatus } from "@/modules/projects/types";
 import { isMilestoneOverdue } from "@/modules/projects/lib/dates";
@@ -23,12 +25,14 @@ import { CalendarClock, ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-re
 
 const STATUS_OPTIONS: MilestoneStatus[] = ["Not Started", "In Progress", "Completed", "Blocked", "Cancelled"];
 
-// The 6 sortable columns (gambar 5, docs/plan/revisi-putri-lanjutan/PLAN.md
-// Blok H), in table order — backs both the clickable TH headers (D11's
-// desktop path) and the "Urutkan" dropdown (D11's HP path, T-8).
+// The 7 sortable columns (gambar 5, docs/plan/revisi-putri-lanjutan/PLAN.md
+// Blok H, plus kolom Sales dari PLAN wording-role-dan-filter-sales-wp A2),
+// in table order — backs both the clickable TH headers (D11's desktop path)
+// and the "Urutkan" dropdown (D11's HP path, T-8).
 const SORT_COLUMNS: { key: TimelineSortKey; label: string; ascLabel: string; descLabel: string }[] = [
   { key: "name", label: "Timeline", ascLabel: "Timeline (A–Z)", descLabel: "Timeline (Z–A)" },
-  { key: "pic", label: "PIC", ascLabel: "PIC (A–Z)", descLabel: "PIC (Z–A)" },
+  { key: "pic", label: ROLE_LABELS.Staff, ascLabel: `${ROLE_LABELS.Staff} (A–Z)`, descLabel: `${ROLE_LABELS.Staff} (Z–A)` },
+  { key: "picSales", label: ROLE_LABELS.Sales, ascLabel: `${ROLE_LABELS.Sales} (A–Z)`, descLabel: `${ROLE_LABELS.Sales} (Z–A)` },
   { key: "project", label: "Project", ascLabel: "Project (A–Z)", descLabel: "Project (Z–A)" },
   { key: "status", label: "Status", ascLabel: "Status (A–Z)", descLabel: "Status (Z–A)" },
   { key: "targetDate", label: "Target Tanggal", ascLabel: "Target Tanggal (Terlama)", descLabel: "Target Tanggal (Terbaru)" },
@@ -51,6 +55,7 @@ export default function TimelineMonitorPage() {
   const [eventMonthFilter, setEventMonthFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"Semua" | MilestoneStatus>("Semua");
   const [picFilter, setPicFilter] = useState("");
+  const [picSalesFilter, setPicSalesFilter] = useState("");
   const [sortKey, setSortKey] = useState<TimelineSortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
@@ -60,21 +65,32 @@ export default function TimelineMonitorPage() {
   }, [fetchTimelines, fetchStaffSummaries]);
 
   // Staff display names are resolved client-side (MODULE_MAP.md) — the backend
-  // returns only picStaffId. "0" and unknown ids render "Belum ditugaskan".
-  const picNameFor = (id: string) => staffSummaries.find((s) => s.id === id)?.name ?? "Belum ditugaskan";
+  // returns only picStaffId/picSalesStaffId, rendered as "Nama (Jabatan)".
+  // "0" and unknown ids render "Belum ditugaskan".
+  const picNameFor = (id: string) => {
+    const found = staffSummaries.find((s) => s.id === id);
+    return found ? staffOptionLabel(found) : "Belum ditugaskan";
+  };
 
   // A Map, not picNameFor itself — sortTimelines' comparator runs O(n log n)
   // times, and resolving via Array.find inside it would turn into thousands
   // of linear scans at this screen's realistic volume (§8). Built once here.
-  const picNameByStaffId = useMemo(() => new Map(staffSummaries.map((s) => [s.id, s.name])), [staffSummaries]);
+  // Satu peta melayani kunci sort "pic" maupun "picSales" — keduanya
+  // me-resolve ID staff yang sama (PLAN wording-role-dan-filter-sales-wp T39).
+  const picNameByStaffId = useMemo(
+    () => new Map(staffSummaries.map((s) => [s.id, staffOptionLabel(s)])),
+    [staffSummaries]
+  );
 
   const monthOptions = monthOptionsFromDates(timelines.map((t) => t.targetDate));
   const eventMonthOptions = monthOptionsFromDates(timelines.map((t) => t.eventDate));
 
   // Unique PICs actually present in the loaded rows. The filter is only shown
   // when there's more than one (D8): a Wedding Planner only ever sees their own
-  // projects, so a single-PIC dropdown would be pure noise.
+  // projects, so a single-PIC dropdown would be pure noise. Berlaku sama
+  // untuk kedua dropdown (PLAN wording-role-dan-filter-sales-wp T40).
   const picOptions = useMemo(() => [...new Set(timelines.map((t) => t.picStaffId))], [timelines]);
+  const picSalesOptions = useMemo(() => [...new Set(timelines.map((t) => t.picSalesStaffId))], [timelines]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -89,9 +105,10 @@ export default function TimelineMonitorPage() {
       const matchesEventMonth = eventMonthFilter.length === 0 || t.eventDate.slice(0, 7) === eventMonthFilter;
       const matchesStatus = statusFilter === "Semua" || t.status === statusFilter;
       const matchesPic = picFilter.length === 0 || t.picStaffId === picFilter;
-      return matchesQuery && matchesMonth && matchesEventMonth && matchesStatus && matchesPic;
+      const matchesPicSales = picSalesFilter.length === 0 || t.picSalesStaffId === picSalesFilter;
+      return matchesQuery && matchesMonth && matchesEventMonth && matchesStatus && matchesPic && matchesPicSales;
     });
-  }, [timelines, query, monthFilter, eventMonthFilter, statusFilter, picFilter]);
+  }, [timelines, query, monthFilter, eventMonthFilter, statusFilter, picFilter, picSalesFilter]);
 
   // Sort is applied AFTER filtering and BEFORE pagination — sorting only
   // pageItems would sort a single page in isolation, correct-looking on page
@@ -164,8 +181,16 @@ export default function TimelineMonitorPage() {
         </Select>
         {picOptions.length > 1 && (
           <Select className="w-48" value={picFilter} onChange={(e) => setPicFilter(e.target.value)}>
-            <option value="">Semua PIC</option>
+            <option value="">Semua {ROLE_LABELS.Staff}</option>
             {picOptions.map((id) => (
+              <option key={id} value={id}>{picNameFor(id)}</option>
+            ))}
+          </Select>
+        )}
+        {picSalesOptions.length > 1 && (
+          <Select className="w-48" value={picSalesFilter} onChange={(e) => setPicSalesFilter(e.target.value)}>
+            <option value="">Semua {ROLE_LABELS.Sales}</option>
+            {picSalesOptions.map((id) => (
               <option key={id} value={id}>{picNameFor(id)}</option>
             ))}
           </Select>
@@ -211,7 +236,13 @@ export default function TimelineMonitorPage() {
               className="sm:hidden"
               items={pageItems}
               keyFor={(t) => t.id}
-              renderItem={(t) => <TimelineCardContent timeline={t} picName={picNameFor(t.picStaffId)} />}
+              renderItem={(t) => (
+                <TimelineCardContent
+                  timeline={t}
+                  picName={picNameFor(t.picStaffId)}
+                  picSalesName={picNameFor(t.picSalesStaffId)}
+                />
+              )}
             />
             <div className="hidden sm:block">
               <Table>
@@ -238,6 +269,7 @@ export default function TimelineMonitorPage() {
                       <TR key={t.id}>
                         <TD className="font-medium">{t.order}. {t.name}</TD>
                         <TD className="text-text-secondary">{picNameFor(t.picStaffId)}</TD>
+                        <TD className="text-text-secondary">{picNameFor(t.picSalesStaffId)}</TD>
                         <TD>
                           <Link
                             to={ROUTE_PATHS.projectDetail(t.projectId, "milestone")}
@@ -267,7 +299,7 @@ export default function TimelineMonitorPage() {
   );
 }
 
-function TimelineCardContent({ timeline: t, picName }: { timeline: ClientTimeline; picName: string }) {
+function TimelineCardContent({ timeline: t, picName, picSalesName }: { timeline: ClientTimeline; picName: string; picSalesName: string }) {
   const overdue = isMilestoneOverdue(t.status, t.targetDate);
   return (
     <>
@@ -278,7 +310,8 @@ function TimelineCardContent({ timeline: t, picName }: { timeline: ClientTimelin
         <MilestoneStatusBadge status={t.status} />
       </div>
       <div className="flex flex-col gap-1.5">
-        <CardListField label="PIC" value={picName} />
+        <CardListField label={ROLE_LABELS.Staff} value={picName} />
+        <CardListField label={ROLE_LABELS.Sales} value={picSalesName} />
         <CardListField label="Project" value={`${t.brideName} & ${t.groomName} — ${t.projectName}`} />
         <CardListField
           label="Target Tanggal"

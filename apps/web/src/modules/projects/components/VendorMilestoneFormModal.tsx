@@ -4,6 +4,7 @@ import { Button } from "@/shared/components/ui/Button";
 import { Input, Textarea, Select, Field } from "@/shared/components/ui/Input";
 import { vendorMilestoneSchema, type VendorMilestoneFormValues } from "@/modules/projects/schemas/vendor-milestone.schema";
 import { useStaffStore } from "@/modules/users/stores/useStaffStore";
+import { staffOptionLabel } from "@/modules/users/lib/staff-label";
 
 interface VendorMilestoneFormModalProps {
   open: boolean;
@@ -74,10 +75,10 @@ export function VendorMilestoneFormModal({ open, onClose, onSubmit, vendorName }
         <Field label="Target Tanggal" required hint={errors.targetDate}>
           <Input type="date" value={values.targetDate} onChange={(e) => set("targetDate", e.target.value)} />
         </Field>
-        <Field label="PIC" required hint={errors.picStaffId}>
+        <Field label="Penanggung Jawab" required hint={errors.picStaffId}>
           <Select value={values.picStaffId} onChange={(e) => set("picStaffId", e.target.value)}>
             {staff.map((s) => (
-              <option key={s.id} value={s.id}>{s.name} — {s.title}</option>
+              <option key={s.id} value={s.id}>{staffOptionLabel(s)}</option>
             ))}
           </Select>
         </Field>

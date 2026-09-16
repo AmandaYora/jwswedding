@@ -5,6 +5,8 @@ import { Button } from "@/shared/components/ui/Button";
 import { Input, Textarea, Select, Field } from "@/shared/components/ui/Input";
 import { useQuotationStore } from "@/modules/quotations/stores/useQuotationStore";
 import { useStaffStore } from "@/modules/users/stores/useStaffStore";
+import { ROLE_LABELS } from "@/modules/users/types";
+import { staffOptionLabel, staffOptionsForRole } from "@/modules/users/lib/staff-label";
 import { useVenueStore } from "@/modules/venues/stores/useVenueStore";
 import type { ClientSpecimen, SignerOption } from "@/modules/quotations/types";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
@@ -425,12 +427,12 @@ export function AcceptProjectDialog({ quotationId: presetId, signOnly, onClose, 
               <Field label="Tanggal Booking" htmlFor="accept-booking" required>
                 <Input id="accept-booking" type="date" value={prepStartDate} onChange={(e) => setPrepStartDate(e.target.value)} />
               </Field>
-              <Field label="PIC Wedding Planner" htmlFor="accept-pic" hint="Opsional">
+              <Field label={ROLE_LABELS.Staff} htmlFor="accept-pic" hint="Opsional">
                 <Select value={picStaffId} onChange={(e) => setPicStaffId(e.target.value)}>
                   <option value="">Belum ditugaskan</option>
-                  {staffSummaries.map((s) => (
+                  {staffOptionsForRole(staffSummaries, "Staff").map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.name}
+                      {staffOptionLabel(s)}
                     </option>
                   ))}
                 </Select>

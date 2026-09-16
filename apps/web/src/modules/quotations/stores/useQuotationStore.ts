@@ -82,6 +82,8 @@ interface RawQuotationListItem {
   total: number;
   eventDate: string | null;
   projectId: number;
+  salesStaffId: number;
+  picStaffId: number;
   issuedAt: string | null;
   acceptedAt: string | null;
   signed: boolean;
@@ -126,6 +128,8 @@ function toListItem(raw: RawQuotationListItem): QuotationListItem {
     total: raw.total ?? raw.basePrice,
     eventDate: raw.eventDate,
     projectId: raw.projectId ? String(raw.projectId) : "",
+    salesStaffId: raw.salesStaffId ? String(raw.salesStaffId) : "",
+    picStaffId: raw.picStaffId ? String(raw.picStaffId) : "",
     issuedAt: raw.issuedAt,
     acceptedAt: raw.acceptedAt,
     signed: raw.signed ?? false,
@@ -150,6 +154,8 @@ export interface QuotationListFilters {
   status?: string;
   search?: string;
   clientId?: string;
+  salesStaffId?: string;
+  picStaffId?: string;
   /** Untuk pemilih (dropdown Tambah Project): ambil sampai 100 baris. */
   limit?: number;
 }
@@ -219,6 +225,8 @@ export const useQuotationStore = create<QuotationState>((set, get) => {
           status: filters.status || undefined,
           search: filters.search || undefined,
           clientId: filters.clientId || undefined,
+          salesStaffId: filters.salesStaffId || undefined,
+          picStaffId: filters.picStaffId || undefined,
           limit: filters.limit,
         },
       });

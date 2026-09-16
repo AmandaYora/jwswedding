@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 
+	"jwswedding/internal/modules/clients/application"
 	"jwswedding/internal/modules/clients/domain"
 	"jwswedding/internal/shared/pagination"
 	"jwswedding/internal/shared/utils"
@@ -65,14 +66,29 @@ func (r *MySQLClientRepository) FindByIDs(ctx context.Context, tenantID int64, i
 
 // ListPaginated menopang halaman Client (daftar pasangan). Pencarian mencakup
 // kedua nama + telepon — cara WO menemukan pasangan dari nomor yang menelepon.
-func (r *MySQLClientRepository) ListPaginated(ctx context.Context, tenantID int64, params pagination.Params, search string) ([]domain.Client, int64, error) {
+// Pembatas ID (hasil filter Sales/WP lintas modul) memakai aturan identik
+// ListByTenant di modul quotations (PLAN wording-role-dan-filter-sales-wp
+// §5.5): hubung-singkat saat pembatas aktif tapi kosong, dan klausa dipasang
+// pada countQuery DAN listQuery agar meta.total konsisten.
+func (r *MySQLClientRepository) ListPaginated(ctx context.Context, tenantID int64, params pagination.Params, filter application.ClientListFilter) ([]domain.Client, int64, error) {
+	// Hubung singkat: filter aktif tapi tidak ada client yang cocok —
+	// kembalikan kosong TANPA menyentuh DB (`IN ()` galat sintaks MySQL,
+	// melewatkan klausanya berarti filter-bocor ke seluruh data).
+	if filter.RestrictActive && len(filter.RestrictIDs) == 0 {
+		return nil, 0, nil
+	}
 	countQuery := `SELECT COUNT(*) FROM clients WHERE tenant_id = ?`
 	listQuery := `SELECT ` + clientColumns + ` FROM clients WHERE tenant_id = ?`
 	args := []interface{}{tenantID}
-	if search != "" {
+	if filter.RestrictActive {
+		countQuery += ` AND id IN (` + utils.Placeholders(len(filter.RestrictIDs)) + `)`
+		listQuery += ` AND id IN (` + utils.Placeholders(len(filter.RestrictIDs)) + `)`
+		args = append(args, utils.Int64Args(filter.RestrictIDs)...)
+	}
+	if filter.Search != "" {
 		countQuery += ` AND (bride_name LIKE ? OR groom_name LIKE ? OR phone LIKE ?)`
 		listQuery += ` AND (bride_name LIKE ? OR groom_name LIKE ? OR phone LIKE ?)`
-		like := "%" + search + "%"
+		like := "%" + filter.Search + "%"
 		args = append(args, like, like, like)
 	}
 

@@ -74,6 +74,10 @@ export interface QuotationListItem {
   total: number;
   eventDate: string | null;
   projectId: string;
+  /** ID pembuat penawaran — dasar filter Sales (D3). "0"/"" bila tak diketahui. */
+  salesStaffId: string;
+  /** ID Wedding Planner dari project hasil Accept — dasar tampilan nama WP di kartu (D7). "0"/"" bila belum ada project. */
+  picStaffId: string;
   issuedAt: string | null;
   acceptedAt: string | null;
   /** Revisi yang berlaku sudah bertanda tangan (T9, D13a). */

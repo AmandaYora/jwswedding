@@ -11,6 +11,7 @@ import {
   projectVendorSchema,
   ENGAGEMENT_STATUS_OPTIONS,
   EVENT_HOURS_PRESETS,
+  PRICING_TIER_CHOICES,
   type ProjectVendorFormValues,
 } from "@/modules/projects/schemas/project-vendor.schema";
 import type { EvidenceUploadFormValues } from "@/modules/projects/schemas/evidence.schema";
@@ -19,6 +20,7 @@ import { useProjectStore } from "@/modules/projects/stores/useProjectStore";
 import { useVendorStore } from "@/modules/vendors/stores/useVendorStore";
 import { useVendorCategoryStore } from "@/modules/vendor-categories/stores/useVendorCategoryStore";
 import { useStaffStore } from "@/modules/users/stores/useStaffStore";
+import { staffOptionLabel } from "@/modules/users/lib/staff-label";
 import { useAuthStore } from "@/shared/stores/useAuthStore";
 import { compressFileForUpload } from "@/shared/lib/image-compression";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
@@ -50,7 +52,7 @@ function toFormValues(pv?: ProjectVendor, defaults?: { vendorId: string; staffId
       categoryId: "",
       scope: "",
       contractValue: 0,
-      pricingTier: "Akad",
+      pricingTier: "AkadResepsi",
       engagementStatus: "Planned",
       bookingDate: "",
       eventStartTime: "",
@@ -205,6 +207,10 @@ export function ProjectVendorFormModal({ projectId, open, onClose, onSubmit, ini
   // hasn't set for that tier.
   useEffect(() => {
     if (contractValueTouched || !selectedVendor) return;
+    // Custom = di luar ketiga preset harga vendor (D1): tidak ada harga yang
+    // diisikan, dan nilai yang sudah ada tidak ditimpa. Tanpa cabang ini
+    // Custom jatuh ke else di bawah dan mengisi Harga Resepsi Only.
+    if (values.pricingTier === "Custom") return;
     const price =
       values.pricingTier === "Akad"
         ? selectedVendor.priceAkad
@@ -320,17 +326,19 @@ export function ProjectVendorFormModal({ projectId, open, onClose, onSubmit, ini
           </Select>
           {selectedVendor && (
             <p className="mt-1 text-[12px] text-text-secondary">
-              Harga Pemberkatan: {selectedVendor.priceAkad != null ? formatCurrency(selectedVendor.priceAkad) : "belum diisi"} · Harga
-              Pemberkatan+Resepsi: {selectedVendor.priceAkadResepsi != null ? formatCurrency(selectedVendor.priceAkadResepsi) : "belum diisi"} · Harga
+              Harga Akad/Pemberkatan Only: {selectedVendor.priceAkad != null ? formatCurrency(selectedVendor.priceAkad) : "belum diisi"} · Harga
+              Akad/Pemberkatan + Resepsi: {selectedVendor.priceAkadResepsi != null ? formatCurrency(selectedVendor.priceAkadResepsi) : "belum diisi"} · Harga
               Resepsi Only: {selectedVendor.priceResepsi != null ? formatCurrency(selectedVendor.priceResepsi) : "belum diisi"}
             </p>
           )}
         </Field>
         <Field label="Paket" required>
           <Select value={values.pricingTier} onChange={(e) => set("pricingTier", e.target.value as ProjectVendorFormValues["pricingTier"])}>
-            <option value="Akad">Pemberkatan</option>
-            <option value="AkadResepsi">Pemberkatan + Resepsi</option>
-            <option value="Resepsi">Resepsi Only</option>
+            {PRICING_TIER_CHOICES.filter(
+              (c) => c.value !== "Custom" || canEditMoney || values.pricingTier === "Custom"
+            ).map((c) => (
+              <option key={c.value} value={c.value}>{c.label}</option>
+            ))}
           </Select>
         </Field>
         <Field label="Status Keterlibatan" required>
@@ -377,10 +385,10 @@ export function ProjectVendorFormModal({ projectId, open, onClose, onSubmit, ini
             )}
           </div>
         )}
-        <Field label="PIC Internal WO" required hint={errors.picStaffId}>
+        <Field label="Penanggung Jawab" required hint={errors.picStaffId}>
           <Select value={values.picStaffId} onChange={(e) => set("picStaffId", e.target.value)}>
             {staff.map((s) => (
-              <option key={s.id} value={s.id}>{s.name} — {s.title}</option>
+              <option key={s.id} value={s.id}>{staffOptionLabel(s)}</option>
             ))}
           </Select>
         </Field>

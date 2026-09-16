@@ -779,7 +779,7 @@ func TestQuotationList_MembawaSigned(t *testing.T) {
 		t.Fatalf("SignQuotation: %v", err)
 	}
 
-	items, _, err := f.svc.ListPaginated(context.Background(), 1, "", "", 0, pagination.Params{})
+	items, _, err := f.svc.ListPaginated(context.Background(), 1, "", "", 0, 0, 0, pagination.Params{})
 	if err != nil {
 		t.Fatalf("ListPaginated: %v", err)
 	}

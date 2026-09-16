@@ -14,11 +14,13 @@ import (
 // fakeVendorEngagementRepo is a minimal in-memory stand-in for
 // VendorEngagementRepository -- good enough to exercise Update's control
 // flow (PLAN.md mom-25082026-item-sebagian §7.1, item 12) without a real
-// database. Every method beyond FindByID/Update is left unimplemented since
-// Update is the only one under test here.
+// database. Create records instead of panicking: validation happens before
+// any repo call, so reaching it with a bad tier still surfaces as err == nil
+// (and assertValidation then fails the test for the right reason).
 type fakeVendorEngagementRepo struct {
 	engagement *domain.ProjectVendor
 	updated    *domain.ProjectVendor
+	created    *domain.ProjectVendor
 }
 
 func (f *fakeVendorEngagementRepo) ListByProject(ctx context.Context, projectID int64) ([]domain.ProjectVendor, error) {
@@ -31,7 +33,8 @@ func (f *fakeVendorEngagementRepo) FindByID(ctx context.Context, projectID, id i
 	return f.engagement, nil
 }
 func (f *fakeVendorEngagementRepo) Create(ctx context.Context, pv *domain.ProjectVendor) error {
-	panic("not implemented")
+	f.created = pv
+	return nil
 }
 func (f *fakeVendorEngagementRepo) Update(ctx context.Context, pv *domain.ProjectVendor) error {
 	f.updated = pv
@@ -136,7 +139,8 @@ func assertValidation(t *testing.T, err error, field string) {
 // Regression: engagement_status is a MySQL ENUM — an unknown status used to
 // sail through to the INSERT/UPDATE and come back as a bare 500. The service
 // must reject it with a field-keyed 422 before touching the repository
-// (fake Create panics on purpose: reaching it means validation was skipped).
+// (a skipped validation would surface here as err == nil, which
+// assertValidation rejects).
 func TestVendorEngagementCreate_StatusInvalid_Ditolak422(t *testing.T) {
 	pv := baseEngagement()
 	svc := newVendorEngagementServiceForTest(pv)
@@ -155,6 +159,43 @@ func TestVendorEngagementUpdate_TierInvalid_Ditolak422(t *testing.T) {
 
 	_, err := svc.Update(context.Background(), 1, pv.ProjectID, pv.ID, 99, "Owner", input)
 	assertValidation(t, err, "pricingTier")
+}
+
+// Custom (ADR-0034, D1) adalah paket di luar ketiga preset harga vendor —
+// server wajib menerimanya pada Create maupun Update, dengan nilai tersimpan
+// apa adanya.
+func TestVendorEngagementCreate_TierCustom_Diterima(t *testing.T) {
+	pv := baseEngagement()
+	svc := newVendorEngagementServiceForTest(pv)
+	input := baseEngagementInputFor(pv)
+	input.PricingTier = domain.PricingTierCustom
+	input.ContractValue = 12_500_000
+
+	got, err := svc.Create(context.Background(), 1, pv.ProjectID, 99, input)
+	if err != nil {
+		t.Fatalf("Create() error = %v, want success untuk tier Custom", err)
+	}
+	if got.PricingTier != domain.PricingTierCustom {
+		t.Errorf("PricingTier = %q, want %q", got.PricingTier, domain.PricingTierCustom)
+	}
+	if got.ContractValue != 12_500_000 {
+		t.Errorf("ContractValue = %d, want 12500000 (nilai manual Custom wajib tersimpan)", got.ContractValue)
+	}
+}
+
+func TestVendorEngagementUpdate_TierCustom_Diterima(t *testing.T) {
+	pv := baseEngagement()
+	svc := newVendorEngagementServiceForTest(pv)
+	input := baseEngagementInputFor(pv)
+	input.PricingTier = domain.PricingTierCustom
+
+	got, err := svc.Update(context.Background(), 1, pv.ProjectID, pv.ID, 99, "Owner", input)
+	if err != nil {
+		t.Fatalf("Update() error = %v, want success untuk tier Custom", err)
+	}
+	if got.PricingTier != domain.PricingTierCustom {
+		t.Errorf("PricingTier = %q, want %q", got.PricingTier, domain.PricingTierCustom)
+	}
 }
 
 func TestVendorEngagementUpdateMilestone_StatusInvalid_Ditolak422(t *testing.T) {

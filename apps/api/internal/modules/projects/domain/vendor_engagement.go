@@ -17,9 +17,12 @@ const (
 )
 
 // VendorPricingTier records which of a vendor's own preset prices
-// (PriceAkad / PriceAkadResepsi) an engagement's ContractValue started from --
-// purely an informational label: ContractValue stays freely negotiable and
-// is never re-derived from this tier after the fact.
+// (PriceAkad / PriceAkadResepsi / PriceResepsi) an engagement's
+// ContractValue started from -- purely an informational label:
+// ContractValue stays freely negotiable and is never re-derived from this
+// tier after the fact. PricingTierCustom is the exception: it means the
+// engagement sits OUTSIDE every preset (no price is ever derived from a
+// vendor master row for it).
 type VendorPricingTier string
 
 const (
@@ -29,6 +32,10 @@ const (
 	// revisi-timeline-vendor-role-sales) -- pairs with Vendor.PriceResepsi
 	// the same way the two tiers above pair with PriceAkad/PriceAkadResepsi.
 	PricingTierResepsi VendorPricingTier = "Resepsi"
+	// PricingTierCustom adalah paket di luar ketiga preset harga vendor
+	// (ADR-0034, D1): ContractValue diisi manual, tidak pernah diturunkan dari
+	// Vendor.PriceAkad/PriceAkadResepsi/PriceResepsi.
+	PricingTierCustom VendorPricingTier = "Custom"
 )
 
 type ProjectVendor struct {

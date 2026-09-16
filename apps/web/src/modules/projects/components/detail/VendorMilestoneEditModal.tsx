@@ -8,6 +8,7 @@ import { Input, Textarea, Select, Field } from "@/shared/components/ui/Input";
 import { EmptyState } from "@/shared/components/feedback/EmptyState";
 import { EVIDENCE_TYPE_OPTIONS } from "@/modules/projects/schemas/evidence.schema";
 import { useStaffStore } from "@/modules/users/stores/useStaffStore";
+import { staffOptionLabel } from "@/modules/users/lib/staff-label";
 import type { Evidence, EvidenceType, MilestoneStatus, VendorMilestone } from "@/modules/projects/types";
 import { todayISO } from "@/modules/projects/lib/dates";
 import { formatDate, formatDateTime } from "@/shared/lib/formatters";
@@ -135,10 +136,10 @@ export function VendorMilestoneEditModal({
                 ))}
               </Select>
             </Field>
-            <Field label="PIC">
+            <Field label="Penanggung Jawab">
               <Select value={fields.picStaffId} onChange={(e) => set("picStaffId", e.target.value)}>
                 {staff.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name} — {s.title}</option>
+                  <option key={s.id} value={s.id}>{staffOptionLabel(s)}</option>
                 ))}
               </Select>
             </Field>

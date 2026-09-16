@@ -12,7 +12,7 @@ export const issueSchema = z.object({
   impact: z.enum(ISSUE_IMPACT_OPTIONS),
   foundDate: z.string().min(1, "Tanggal ditemukan wajib diisi"),
   resolutionPlan: z.string().optional().default(""),
-  picStaffId: z.string().min(1, "PIC wajib dipilih"),
+  picStaffId: z.string().min(1, "Penanggung jawab wajib dipilih"),
   targetResolutionDate: z.string().optional().default(""),
   // Not shown on the create form (always starts "Open" server-side) --
   // editable only from the edit form.

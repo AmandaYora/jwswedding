@@ -553,7 +553,7 @@ function VendorAccordionRow({
       {isOpen && (
         <div className="bg-surface-muted/50 px-5 pb-5 pt-1">
           <div className="grid grid-cols-1 gap-3 pb-3 text-[12.5px] text-text-secondary sm:grid-cols-4">
-            <span>PIC: <span className="font-medium text-text-primary">{picName}</span></span>
+            <span>Penanggung Jawab: <span className="font-medium text-text-primary">{picName}</span></span>
             <span>DP: <span className="font-medium text-text-primary">{formatCurrency(pv.dpAmount)}</span></span>
             <span>Sudah Dibayar: <span className="font-medium text-text-primary">{formatCurrency(pv.paidAmount)}</span></span>
             <span>Sisa: <span className="font-medium text-text-primary">{formatCurrency(remaining)}</span></span>

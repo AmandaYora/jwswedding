@@ -171,7 +171,7 @@ export interface ProjectMilestone {
   completedDate: string | null;
 }
 
-export type VendorPricingTier = "Akad" | "AkadResepsi" | "Resepsi";
+export type VendorPricingTier = "Akad" | "AkadResepsi" | "Resepsi" | "Custom";
 
 export interface ProjectVendor {
   id: string;

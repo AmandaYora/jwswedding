@@ -12,6 +12,8 @@ import { ProjectCard } from "@/modules/projects/components/ProjectCard";
 import { PROJECT_STATUS_OPTIONS } from "@/modules/projects/schemas/project.schema";
 import { useProjectStore, type ProjectListFilters } from "@/modules/projects/stores/useProjectStore";
 import { useStaffStore } from "@/modules/users/stores/useStaffStore";
+import { ROLE_LABELS } from "@/modules/users/types";
+import { staffOptionLabel, staffOptionsForRole } from "@/modules/users/lib/staff-label";
 import { useAuthStore } from "@/shared/stores/useAuthStore";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
@@ -82,12 +84,14 @@ export default function ProjectListPage() {
     if (debouncedQuery) chips.push({ key: "query", label: `Cari: "${debouncedQuery}"`, onRemove: () => setQuery("") });
     if (statusFilter !== "Semua") chips.push({ key: "status", label: `Status: ${statusFilter}`, onRemove: () => setStatusFilter("Semua") });
     if (picFilter) {
-      const label = picFilter === "0" ? "Belum ditugaskan" : staffSummaries.find((s) => s.id === picFilter)?.name ?? picFilter;
-      chips.push({ key: "pic", label: `PIC: ${label}`, onRemove: () => setPicFilter("") });
+      const found = staffSummaries.find((s) => s.id === picFilter);
+      const label = picFilter === "0" ? "Belum ditugaskan" : found ? staffOptionLabel(found) : picFilter;
+      chips.push({ key: "pic", label: `${ROLE_LABELS.Staff}: ${label}`, onRemove: () => setPicFilter("") });
     }
     if (picSalesFilter) {
-      const label = picSalesFilter === "0" ? "Belum ditugaskan" : staffSummaries.find((s) => s.id === picSalesFilter)?.name ?? picSalesFilter;
-      chips.push({ key: "picSales", label: `Sales: ${label}`, onRemove: () => setPicSalesFilter("") });
+      const found = staffSummaries.find((s) => s.id === picSalesFilter);
+      const label = picSalesFilter === "0" ? "Belum ditugaskan" : found ? staffOptionLabel(found) : picSalesFilter;
+      chips.push({ key: "picSales", label: `${ROLE_LABELS.Sales}: ${label}`, onRemove: () => setPicSalesFilter("") });
     }
     if (eventMonthFilter) chips.push({ key: "eventMonth", label: `Bulan Event: ${formatMonth(eventMonthFilter)}`, onRemove: () => setEventMonthFilter("") });
     if (showArchived) chips.push({ key: "archived", label: "Diarsipkan", onRemove: () => setShowArchived(false) });
@@ -132,19 +136,19 @@ export default function ProjectListPage() {
         </Select>
         {canFilterByPIC && (
           <Select className="w-48" value={picFilter} onChange={(e) => setPicFilter(e.target.value)}>
-            <option value="">Semua PIC</option>
+            <option value="">Semua {ROLE_LABELS.Staff}</option>
             <option value="0">Belum ditugaskan</option>
-            {staffSummaries.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
+            {staffOptionsForRole(staffSummaries, "Staff").map((s) => (
+              <option key={s.id} value={s.id}>{staffOptionLabel(s)}</option>
             ))}
           </Select>
         )}
         {canFilterByPIC && (
           <Select className="w-48" value={picSalesFilter} onChange={(e) => setPicSalesFilter(e.target.value)}>
-            <option value="">Semua Sales</option>
+            <option value="">Semua {ROLE_LABELS.Sales}</option>
             <option value="0">Belum ditugaskan</option>
-            {staffSummaries.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
+            {staffOptionsForRole(staffSummaries, "Sales").map((s) => (
+              <option key={s.id} value={s.id}>{staffOptionLabel(s)}</option>
             ))}
           </Select>
         )}

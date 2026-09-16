@@ -89,6 +89,22 @@ type ProjectRef struct {
 	Name string
 }
 
+// QuotationProjectRef is the project born from an accepted quotation plus its
+// Wedding Planner PIC — one row of the batch map backing the quotation list's
+// WP filter and WP-name display (PLAN wording-role-dan-filter-sales-wp §5.3).
+type QuotationProjectRef struct {
+	ProjectID  int64
+	PICStaffID int64 // 0 = belum ditugaskan
+}
+
+// ClientPICs is the set of distinct PICs across all projects of one client —
+// one row of the batch map backing the client list's WP/Sales name display
+// (PLAN wording-role-dan-filter-sales-wp §5.3).
+type ClientPICs struct {
+	PICStaffIDs      []int64
+	PICSalesStaffIDs []int64
+}
+
 type MilestoneStatus string
 
 const (

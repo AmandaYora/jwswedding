@@ -85,11 +85,29 @@ func columnExists(t *testing.T, url, table, column string) bool {
 	return n > 0
 }
 
+func indexExists(t *testing.T, url, table, index string) bool {
+	t.Helper()
+	db, err := sql.Open("mysql", roundTripAdminDSN+roundTripDB)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	var n int
+	err = db.QueryRow(
+		`SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND INDEX_NAME = ?`,
+		roundTripDB, table, index).Scan(&n)
+	if err != nil {
+		t.Fatalf("cek index %s.%s: %v", table, index, err)
+	}
+	return n > 0
+}
+
 // TestMigrations_UpDownUp rolls the PO Paket migrations (000052-000055), the
 // penawaran-client-master migrations (000056-000063), 000064 (drop of the
-// payment-schedule feature), 000065 (quotations.package_name), and the TTD
+// payment-schedule feature), 000065 (quotations.package_name), the TTD
 // Penawaran migrations (000066 client_signatures, 000067
-// quotation_signature_links) back one step at a time and then forward again.
+// quotation_signature_links), and 000068 (tiga index filter Sales/WP,
+// ADR-0033) back one step at a time and then forward again.
 //
 // The rollback order matters and is the part most likely to break: the three
 // project_package_* tables carry FKs to `projects`, the quotation_* tables
@@ -127,6 +145,16 @@ func TestMigrations_UpDownUp(t *testing.T) {
 			t.Fatalf("setelah up, tabel %s tidak ada", table)
 		}
 	}
+	// 000068 (ADR-0033): tiga index filter Sales/WP.
+	for _, idx := range [][2]string{
+		{"quotations", "idx_quotations_tenant_created_by"},
+		{"projects", "idx_projects_tenant_pic_sales"},
+		{"projects", "idx_projects_tenant_client"},
+	} {
+		if !indexExists(t, url, idx[0], idx[1]) {
+			t.Fatalf("setelah up, index %s.%s tidak ada", idx[0], idx[1])
+		}
+	}
 	// 000062 dropped the old composition tables at the end of the chain.
 	for _, table := range []string{
 		"project_package_blocks", "project_package_adjustments", "project_package_orders",
@@ -149,10 +177,21 @@ func TestMigrations_UpDownUp(t *testing.T) {
 		t.Fatal("setelah up, kolom client_contacts.project_id masih ada")
 	}
 
-	// Roll back the sixteen steps: 000067 down to 000052.
-	for i := 0; i < 16; i++ {
+	// Roll back the seventeen steps: 000068 down to 000052.
+	for i := 0; i < 17; i++ {
 		if err := migrator.Down(url); err != nil {
 			t.Fatalf("migrate down langkah ke-%d: %v", i+1, err)
+		}
+	}
+
+	// 000068 ikut turun pertama: ketiga index-nya wajib hilang.
+	for _, idx := range [][2]string{
+		{"quotations", "idx_quotations_tenant_created_by"},
+		{"projects", "idx_projects_tenant_pic_sales"},
+		{"projects", "idx_projects_tenant_client"},
+	} {
+		if indexExists(t, url, idx[0], idx[1]) {
+			t.Errorf("setelah down, index %s.%s masih ada", idx[0], idx[1])
 		}
 	}
 
@@ -197,6 +236,16 @@ func TestMigrations_UpDownUp(t *testing.T) {
 
 	if err := migrator.Up(url); err != nil {
 		t.Fatalf("migrate up ulang setelah down: %v", err)
+	}
+	// 000068 ikut naik lagi: ketiga index-nya wajib kembali.
+	for _, idx := range [][2]string{
+		{"quotations", "idx_quotations_tenant_created_by"},
+		{"projects", "idx_projects_tenant_pic_sales"},
+		{"projects", "idx_projects_tenant_client"},
+	} {
+		if !indexExists(t, url, idx[0], idx[1]) {
+			t.Errorf("setelah up ulang, index %s.%s tidak kembali", idx[0], idx[1])
+		}
 	}
 	if !columnExists(t, url, "projects", "pax") {
 		t.Error("setelah up ulang, kolom projects.pax tidak kembali")

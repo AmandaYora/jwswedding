@@ -10,6 +10,7 @@ import { ProjectFormModal } from "@/modules/projects/components/ProjectFormModal
 import type { ProjectFormValues } from "@/modules/projects/schemas/project.schema";
 import { useProjectStore, type ProjectDeleteImpact } from "@/modules/projects/stores/useProjectStore";
 import { useStaffStore } from "@/modules/users/stores/useStaffStore";
+import { ROLE_LABELS } from "@/modules/users/types";
 import { useAuthStore } from "@/shared/stores/useAuthStore";
 import { daysUntil } from "@/modules/projects/lib/dates";
 import { formatCurrency, formatDate } from "@/shared/lib/formatters";
@@ -245,8 +246,8 @@ export function ProjectHeaderCard({ projectId }: { projectId: string }) {
             />
           )}
           <InfoField label="Sisa Tagihan Client" value={formatCurrency(outstanding)} />
-          <InfoField label="PIC Wedding Planner" value={pic?.name ?? "Belum ditugaskan"} />
-          <InfoField label="PIC Sales" value={picSales?.name ?? "Belum ditugaskan"} />
+          <InfoField label={ROLE_LABELS.Staff} value={pic?.name ?? "Belum ditugaskan"} />
+          <InfoField label={ROLE_LABELS.Sales} value={picSales?.name ?? "Belum ditugaskan"} />
         </div>
 
         {/* Menggantikan field "Margin/Keuntungan" yang dulu berdiri sebagai
