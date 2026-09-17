@@ -286,7 +286,11 @@ func serve(cfg config.Config) {
 		Handler: handler,
 		// WriteTimeout is looser than ReadTimeout so it doesn't clip legitimate
 		// large evidence-upload responses.
-		ReadTimeout:       15 * time.Second,
+		// ReadTimeout covers reading the ENTIRE request body, so it must fit
+		// the slowest legitimate upload: a 15 MB PDF becomes ~20 MB of base64
+		// JSON (PLAN revisi-vendor-venue-portal §8/E1). ReadHeaderTimeout stays
+		// at 5s as the slowloris guard on the header phase.
+		ReadTimeout:       120 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,

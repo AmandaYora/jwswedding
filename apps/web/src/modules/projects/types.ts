@@ -95,17 +95,18 @@ export interface Project {
   clientId: string;
   /** Penawaran yang melahirkan project ini ("" = project lama). */
   quotationId: string;
-  // Nomor PO penawaran di atas, HANYA diisi oleh GET /projects/{id} dan hanya
-  // untuk pemanggil staff ber-peran Owner/Admin/Sales (lihat getProject di
-  // backend) — memberi nama pada tautan "Penawaran" di header detail project.
+  // Nomor PO penawaran di atas, HANYA diisi oleh GET /projects/{id}: untuk
+  // pemanggil staff ber-peran Owner/Admin/Sales (tautan "Penawaran" di header
+  // detail project), dan untuk portal client (nama berkas kartu "Purchase
+  // Order" — lihat quotationPdfAvailable di bawah).
   //
   // null = tidak ada penawaran yang bisa dituju: project pra-penawaran,
   // quotation_id yang tidak lagi resolve, pemanggil yang tidak berhak, atau
-  // baris daftar/portal klien yang memang tidak pernah mengisinya. "" =
-  // penawarannya ADA tapi belum bernomor (PO lama hasil migrasi) — tetap
-  // layak ditautkan. Jadi gerbang tautannya `poNumber !== null`, BUKAN
-  // `quotationId`: quotationId tetap terisi meski barisnya sudah hilang, dan
-  // menautkannya akan membawa pengguna ke halaman 404.
+  // baris daftar yang memang tidak pernah mengisinya. "" = penawarannya ADA
+  // tapi belum bernomor (PO lama hasil migrasi) — tetap layak ditautkan.
+  // Jadi gerbang tautannya `poNumber !== null`, BUKAN `quotationId`:
+  // quotationId tetap terisi meski barisnya sudah hilang, dan menautkannya
+  // akan membawa pengguna ke halaman 404.
   poNumber: string | null;
   // true berarti "Paket / Layanan" diatur penawarannya: nilainya didorong tiap
   // kali penawaran diedit, jadi mengetiknya di sini hanya akan tertimpa.
@@ -117,6 +118,13 @@ export interface Project {
   // Sama seperti poNumber, hanya GET /projects/{id} untuk pemanggil staff
   // berwenang yang pernah mengisinya — false di mana pun selain itu.
   quotationUnderRevision: boolean;
+  // true bila PO penawaran project ini boleh diunduh dari portal client (PLAN
+  // revisi-vendor-venue-portal §1.1 poin 11): hanya GET /projects/{id} untuk
+  // prinsipal client yang project-nya punya penawaran berstatus Diterima yang
+  // pernah mengisinya — false di mana pun selain itu, termasuk seluruh WO
+  // Console. Portal memakai ini untuk menampilkan/menyembunyikan kartu
+  // "Purchase Order" di tab Dokumen.
+  quotationPdfAvailable: boolean;
   name: string;
   brideName: string;
   groomName: string;

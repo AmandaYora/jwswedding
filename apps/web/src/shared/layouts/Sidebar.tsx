@@ -46,7 +46,10 @@ const NAV_ITEMS: NavEntry[] = [
   // pasangan); Wedding Planner tetap tidak membuka menu ini.
   { kind: "link", to: ROUTE_PATHS.clients, label: "Client", icon: Users, allowedRoles: ["Owner", "Admin", "Sales"] },
   { kind: "link", to: ROUTE_PATHS.vendors, label: "Vendor", icon: Store, allowedRoles: ["Owner", "Admin"] },
-  { kind: "link", to: ROUTE_PATHS.venues, label: "Venue", icon: Building2, allowedRoles: ["Owner", "Admin"] },
+  // Venue terbuka juga untuk Sales (PLAN revisi-vendor-venue-portal §1.1 poin
+  // 7 — baca saja, tombol tulis disembunyikan di halamannya); Wedding Planner
+  // tetap tidak membuka menu ini.
+  { kind: "link", to: ROUTE_PATHS.venues, label: "Venue", icon: Building2, allowedRoles: ["Owner", "Admin", "Sales"] },
   {
     kind: "group",
     label: "Pengaturan",

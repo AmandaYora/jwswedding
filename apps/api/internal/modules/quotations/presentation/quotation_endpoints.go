@@ -14,6 +14,7 @@ import (
 	"jwswedding/internal/modules/quotations/domain"
 	"jwswedding/internal/shared/apperror"
 	"jwswedding/internal/shared/httpx"
+	"jwswedding/internal/shared/middleware"
 	"jwswedding/internal/shared/pagination"
 	"jwswedding/internal/shared/response"
 )
@@ -320,7 +321,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, claims staffCla
 // Item melayani /api/v1/quotations/... — baca, sunting Draft, alur fase
 // (kirim/tarik/revisi/terima/tolak/kedaluwarsa/batal), duplikat, PDF, dan
 // dampak hapus (T2.7, T3.1).
+//
+// Satu celah sempit untuk prinsipal `client` (portal) dibuka SEBELUM gerbang
+// staff — preseden: venue_handler.downloadAttachment (PLAN
+// revisi-vendor-venue-portal §4.5/F3). Selain celah itu, modul ini tetap
+// staff-only.
 func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
+	if c, ok := middleware.FromContext(r.Context()); ok && c.PrincipalType == "client" {
+		h.clientItem(w, r)
+		return
+	}
 	claims, ok := requireStaff(w, r)
 	if !ok {
 		return
@@ -396,7 +406,7 @@ func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 		}
 		response.Created(w, "Penawaran berhasil diduplikasi", toQuotationResponse(view))
 	case len(rest) == 1 && rest[0] == "pdf" && r.Method == http.MethodGet:
-		h.downloadPDF(w, r, claims, id)
+		h.downloadPDF(w, r, claims.tenantID, id)
 	case len(rest) == 1 && rest[0] == "signature-link" && r.Method == http.MethodPost:
 		h.createSignatureLink(w, r, claims, id)
 	case len(rest) == 1 && rest[0] == "signature-options" && r.Method == http.MethodGet:
@@ -683,19 +693,74 @@ func (h *Handler) quotationLedger(w http.ResponseWriter, r *http.Request, tenant
 	return ledger, total, nil
 }
 
-// downloadPDF mengunduh dokumen "PURCHASE ORDER" (D6) — blok pembayaran hidup
-// hanya bila penawaran sudah punya project (pra-Accept: kosong, bukan error).
-func (h *Handler) downloadPDF(w http.ResponseWriter, r *http.Request, claims staffClaims, id int64) {
-	view, err := h.quotations.Get(r.Context(), claims.tenantID, id)
+// clientItem melayani satu-satunya jalur portal client ke modul ini: GET
+// /api/v1/quotations/{id}/pdf — unduh PO milik project-nya sendiri yang sudah
+// Diterima (PLAN revisi-vendor-venue-portal §1.1 poin 11, PLAN revisi-vendor-
+// venue-portal §4.5/F3). Selain kombinasi itu — termasuk GET dokumennya
+// sendiri — menjawab 404, agar permukaan modul bagi client tidak lebih dari
+// satu endpoint unduh. Otorisasi penuh ada di GetForClientContact (setiap
+// kegagalan = NotFound, agar keberadaan dokumen orang lain tidak bocor).
+func (h *Handler) clientItem(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.FromContext(r.Context())
+	if !ok || claims.PrincipalType != "client" {
+		response.Error(w, http.StatusForbidden, "Tidak terautentikasi", nil)
+		return
+	}
+	tenantID, ok := claims.TenantIDInt()
+	if !ok {
+		response.Error(w, http.StatusForbidden, "Akun ini tidak terikat ke tenant manapun", nil)
+		return
+	}
+	contactID, err := strconv.ParseInt(claims.PrincipalID, 10, 64)
+	if err != nil {
+		response.Error(w, http.StatusForbidden, "Identitas client tidak valid", nil)
+		return
+	}
+	segments := httpx.Segments(r.URL.Path, "/api/v1/quotations/")
+	if len(segments) == 0 {
+		response.Error(w, http.StatusNotFound, "Penawaran tidak ditemukan", nil)
+		return
+	}
+	id, err := strconv.ParseInt(segments[0], 10, 64)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "ID penawaran tidak valid", nil)
+		return
+	}
+	rest := segments[1:]
+	if len(rest) != 1 || rest[0] != "pdf" || r.Method != http.MethodGet {
+		response.Error(w, http.StatusNotFound, "Endpoint tidak ditemukan", nil)
+		return
+	}
+	view, err := h.quotations.GetForClientContact(r.Context(), tenantID, contactID, id)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	profile, ok := requireCompleteProfile(h, w, r, claims.tenantID)
+	h.serveQuotationPDF(w, r, tenantID, id, view, true)
+}
+
+// downloadPDF mengunduh dokumen "PURCHASE ORDER" (D6) — blok pembayaran hidup
+// hanya bila penawaran sudah punya project (pra-Accept: kosong, bukan error).
+func (h *Handler) downloadPDF(w http.ResponseWriter, r *http.Request, tenantID, id int64) {
+	view, err := h.quotations.Get(r.Context(), tenantID, id)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	h.serveQuotationPDF(w, r, tenantID, id, view, false)
+}
+
+// serveQuotationPDF adalah satu badan render PDF yang dipakai jalur staff
+// (downloadPDF) dan jalur klien (clientItem): gerbang profil usaha,
+// logo/tanda tangan tenant, ledger hidup, snapshot revisi yang berlaku, dan
+// penamaan berkas. forClient=true memilih pesan netral saat profil usaha
+// belum lengkap (lihat requireCompleteProfile).
+func (h *Handler) serveQuotationPDF(w http.ResponseWriter, r *http.Request, tenantID, id int64, view *application.QuotationView, forClient bool) {
+	profile, ok := requireCompleteProfile(h, w, r, tenantID, forClient)
 	if !ok {
 		return
 	}
-	logo, _, hasLogo, err := h.platform.GetTenantLogo(r.Context(), claims.tenantID)
+	logo, _, hasLogo, err := h.platform.GetTenantLogo(r.Context(), tenantID)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -703,7 +768,7 @@ func (h *Handler) downloadPDF(w http.ResponseWriter, r *http.Request, claims sta
 	if !hasLogo {
 		logo = nil
 	}
-	signature, _, hasSignature, err := h.platform.GetTenantSignature(r.Context(), claims.tenantID)
+	signature, _, hasSignature, err := h.platform.GetTenantSignature(r.Context(), tenantID)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -712,7 +777,7 @@ func (h *Handler) downloadPDF(w http.ResponseWriter, r *http.Request, claims sta
 		signature = nil
 	}
 	clientName := strings.TrimSpace(view.ClientBride + " & " + view.ClientGroom)
-	payments, totalPaid, err := h.quotationLedger(w, r, claims.tenantID, view.ProjectID)
+	payments, totalPaid, err := h.quotationLedger(w, r, tenantID, view.ProjectID)
 	if err != nil {
 		return
 	}
@@ -727,7 +792,7 @@ func (h *Handler) downloadPDF(w http.ResponseWriter, r *http.Request, claims sta
 	// mengembalikan nil dan kotaknya tercetak kosong.
 	if view.Quotation.Snapshot != nil && view.Quotation.Snapshot.Current.Signature != nil {
 		data.ClientSignerName = view.Quotation.Snapshot.Current.Signature.SignerName
-		data.ClientSignature = h.quotations.DocumentSignatureImage(r.Context(), claims.tenantID, id)
+		data.ClientSignature = h.quotations.DocumentSignatureImage(r.Context(), tenantID, id)
 	}
 
 	pdf, err := buildQuotationPDF(data, eventDate, profile, logo, signature)

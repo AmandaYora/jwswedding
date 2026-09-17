@@ -73,7 +73,12 @@ type projectResponse struct {
 	PackageNameFromQuotation bool `json:"packageNameFromQuotation"`
 	// QuotationUnderRevision: penawarannya sedang direvisi dan belum dikirim
 	// ulang — nilai kontrak yang tampil belum disepakati klien.
-	QuotationUnderRevision bool              `json:"quotationUnderRevision"`
+	QuotationUnderRevision bool `json:"quotationUnderRevision"`
+	// QuotationPDFAvailable: PO penawaran ini boleh diunduh dari portal client
+	// (PLAN revisi-vendor-venue-portal §1.1 poin 11 / §4.5/F5) — true
+	// hanya bila project punya penawaran berstatus Diterima. Portal memakai
+	// ini untuk menampilkan/menyembunyikan kartu "Purchase Order".
+	QuotationPDFAvailable bool              `json:"quotationPdfAvailable"`
 	Description            string            `json:"description"`
 	IsArchived             bool              `json:"isArchived"`
 	Progress               *progressResponse `json:"progress,omitempty"`

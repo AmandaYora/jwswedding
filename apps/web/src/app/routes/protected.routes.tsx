@@ -75,8 +75,16 @@ export const protectedRoutes: RouteObject = {
           children: [
             { path: ROUTE_PATHS.dashboard, element: <DashboardPage /> },
             { path: ROUTE_PATHS.vendors, element: <VendorListPage /> },
-            { path: ROUTE_PATHS.venues, element: <VenueListPage /> },
           ],
+        },
+        {
+          // Venue terbuka untuk Sales juga (PLAN revisi-vendor-venue-portal
+          // §1.1 poin 7 / §4.6/I6) — baca saja: backend sudah membedakan baca
+          // (requireStaffTenant) dan tulis (requireManagerRole), dan
+          // halamannya menyembunyikan tombol tulis untuk Sales. Dashboard dan
+          // Vendor tetap Owner/Admin.
+          element: <RequireRole allow={["Owner", "Admin", "Sales"]} />,
+          children: [{ path: ROUTE_PATHS.venues, element: <VenueListPage /> }],
         },
         {
           // Client + Penawaran terbuka untuk Sales (menyusun penawaran butuh

@@ -57,6 +57,26 @@ func (s *ProjectService) QuotationUnderRevision(ctx context.Context, tenantID, q
 	return status == "Draft"
 }
 
+// QuotationAccepted menjawab: apakah penawaran project ini dalam status
+// Diterima — satu-satunya status yang boleh diunduh klien dari portal (PLAN
+// revisi-vendor-venue-portal §4.3/F4, gerbang D-2: selama staff merevisi,
+// status kembali Draft dan tombol unduh di portal hilang sementara).
+//
+// Display-only seperti QuotationUnderRevision di atas: memakai
+// StatusForQuotation yang sudah ada (interface tidak berubah), menelan error
+// menjadi false — kartu yang tidak muncul jauh lebih ringan akibatnya
+// daripada detail project yang gagal dibuka.
+func (s *ProjectService) QuotationAccepted(ctx context.Context, tenantID, quotationID int64) bool {
+	if quotationID == 0 || s.quotations == nil {
+		return false
+	}
+	status, err := s.quotations.StatusForQuotation(ctx, tenantID, quotationID)
+	if err != nil {
+		return false
+	}
+	return status == "Diterima"
+}
+
 // PackageNameFromQuotation menjawab: apakah "Paket / Layanan" project ini
 // diatur oleh penawarannya?
 //

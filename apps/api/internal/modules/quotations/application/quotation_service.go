@@ -98,6 +98,44 @@ func (s *QuotationService) Get(ctx context.Context, tenantID, id int64) (*Quotat
 	return s.loadView(ctx, tenantID, o)
 }
 
+// GetForClientContact membaca satu penawaran untuk prinsipal portal `client`
+// (PLAN revisi-vendor-venue-portal §4.3/F2) — hanya PO asal project yang
+// sudah Diterima. Setiap kegagalan berarti NotFound (bukan Forbidden), agar
+// keberadaan dokumen milik orang lain tidak bocor.
+func (s *QuotationService) GetForClientContact(ctx context.Context, tenantID, contactID, quotationID int64) (*QuotationView, error) {
+	deny := apperror.NotFound("Penawaran tidak ditemukan")
+	// 0. Direktori belum terpasang — tanpa penjagaan ini, pemanggilan
+	// ClientIDForContact di bawah adalah nil-panic (loadView menjaga
+	// s.clients yang sama dengan `if s.clients != nil`).
+	if s.clients == nil {
+		return nil, deny
+	}
+	// 1. Kontak harus milik seorang client.
+	clientID, err := s.clients.ClientIDForContact(ctx, tenantID, contactID)
+	if err != nil || clientID == 0 {
+		return nil, deny
+	}
+	// 2. Penawaran harus milik client itu.
+	view, err := s.Get(ctx, tenantID, quotationID)
+	if err != nil {
+		return nil, deny
+	}
+	if view.Quotation.ClientID != clientID {
+		return nil, deny
+	}
+	// 3. Penawaran harus sudah punya project (syarat eksplisit poin 11).
+	if view.ProjectID == 0 {
+		return nil, deny
+	}
+	// 4. Status harus Diterima — tanpa gerbang ini, klien bisa mengunduh PO
+	// yang sedang direvisi (Revise mengembalikan status ke Draft) dan
+	// membaca angka yang belum disepakati (D-2).
+	if view.Quotation.Status != domain.QuotationAccepted {
+		return nil, deny
+	}
+	return view, nil
+}
+
 // QuotationListFilter adalah seluruh saringan daftar Penawaran dalam satu
 // struct (PLAN wording-role-dan-filter-sales-wp §5.4) — menggantikan deretan
 // parameter ListByTenant agar penambahan filter tidak mengubah signature

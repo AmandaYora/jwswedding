@@ -194,6 +194,8 @@ var truncateTables = []string{
 	"client_invoices",
 	"venue_payments",
 	"venues",
+	// Label kategori venue (migration 000069, PLAN revisi-vendor-venue-portal).
+	"venue_categories",
 	"project_milestone_templates",
 	// Penawaran-client-master (migrations 000056-000062): komposisi PO lama
 	// dibuang; penawaran + anak-anaknya dan kontak terpisah dari master.

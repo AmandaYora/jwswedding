@@ -113,6 +113,10 @@ func (s *stubDirectory) SignerOptions(_ context.Context, _, _ int64) ([][2]strin
 	return [][2]string{{"Bride", s.bride}, {"Groom", s.groom}}, nil
 }
 
+func (s *stubDirectory) ClientIDForContact(_ context.Context, _, contactID int64) (int64, error) {
+	return contactID, nil
+}
+
 // --- Fake repo link dengan semantik MarkUsed bersyarat ---
 
 type fakeLinkRepo struct {

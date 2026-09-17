@@ -105,6 +105,7 @@ export interface RawProject {
   poNumber?: string | null;
   packageNameFromQuotation?: boolean;
   quotationUnderRevision?: boolean;
+  quotationPdfAvailable?: boolean;
   name: string;
   brideName: string;
   groomName: string;
@@ -149,6 +150,7 @@ export function toProject(raw: RawProject): Project {
     poNumber: raw.poNumber ?? null,
     packageNameFromQuotation: raw.packageNameFromQuotation ?? false,
     quotationUnderRevision: raw.quotationUnderRevision ?? false,
+    quotationPdfAvailable: raw.quotationPdfAvailable ?? false,
     name: raw.name,
     brideName: raw.brideName,
     groomName: raw.groomName,
@@ -189,6 +191,7 @@ function withDetailOnlyFields(fresh: Project, previous: Project): Project {
     poNumber: previous.poNumber,
     packageNameFromQuotation: previous.packageNameFromQuotation,
     quotationUnderRevision: previous.quotationUnderRevision,
+    quotationPdfAvailable: previous.quotationPdfAvailable,
   };
 }
 

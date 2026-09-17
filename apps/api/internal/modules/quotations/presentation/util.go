@@ -75,7 +75,13 @@ func writeAppError(w http.ResponseWriter, err error) {
 // requireCompleteProfile enforces the letterhead completeness gate shared by
 // every document PDF — a document carrying the WO's letterhead must not
 // print without the profile behind that letterhead being filled in.
-func requireCompleteProfile(h *Handler, w http.ResponseWriter, r *http.Request, tenantID int64) (platformcontracts.TenantProfile, bool) {
+//
+// forClient selects the failure message (PLAN revisi-vendor-venue-portal
+// §4.5/F3): the staff wording ("Lengkapi Profil Usaha…") both leaks
+// WO-internal state to the portal and instructs the client to do something
+// impossible for them — so the client path gets a neutral message instead.
+// The staff path keeps its original wording.
+func requireCompleteProfile(h *Handler, w http.ResponseWriter, r *http.Request, tenantID int64, forClient bool) (platformcontracts.TenantProfile, bool) {
 	profile, err := h.platform.GetTenantProfile(r.Context(), tenantID)
 	if err != nil {
 		writeAppError(w, err)
@@ -87,6 +93,12 @@ func requireCompleteProfile(h *Handler, w http.ResponseWriter, r *http.Request, 
 		return platformcontracts.TenantProfile{}, false
 	}
 	if len(missing) > 0 {
+		if forClient {
+			response.Error(w, http.StatusUnprocessableEntity,
+				"Dokumen belum dapat diunduh saat ini. Silakan hubungi tim kami.",
+				nil)
+			return platformcontracts.TenantProfile{}, false
+		}
 		response.Error(w, http.StatusUnprocessableEntity,
 			"Profil usaha belum lengkap. Lengkapi Profil Usaha sebelum mencetak dokumen.",
 			map[string][]string{"profile": missing})

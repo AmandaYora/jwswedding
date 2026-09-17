@@ -14,6 +14,8 @@ import { httpClient } from "@/shared/services/http-client";
 import { API } from "@/shared/services/api-endpoints";
 import { compressFileForUpload } from "@/shared/lib/image-compression";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
+import { formatFileSizeMB } from "@/shared/lib/formatters";
+import { instagramUrlFrom } from "@/shared/lib/instagram";
 
 function toFormValues(vendor?: Vendor, defaultCategoryId = ""): VendorFormValues {
   if (!vendor) {
@@ -74,6 +76,14 @@ export function VendorFormModal({ open, onClose, onSubmitCreate, onSubmitEdit, i
 
   async function handleAttachmentChange(file: File | undefined) {
     if (!file || !initialVendor) return;
+    // Pre-upload guard (PLAN revisi-vendor-venue-portal E3): the backend cap
+    // (maxVendorAttachmentDecodedSize = 15 MB) applies to the decoded bytes,
+    // and a PDF passes compression through unchanged — so a >15 MB file is
+    // certain to be rejected after a ~20 MB base64 upload. Reject here.
+    if (file.size > 15 * 1024 * 1024) {
+      setAttachmentError(`Ukuran berkas ${formatFileSizeMB(file.size)} melebihi batas 15 MB.`);
+      return;
+    }
     setAttachmentError(null);
     setAttachmentUploading(true);
     try {
@@ -188,6 +198,17 @@ export function VendorFormModal({ open, onClose, onSubmitCreate, onSubmitEdit, i
               placeholder="cth. Instagram @grandballroom, grandballroom.com"
             />
           </Field>
+          {instagramUrlFrom(values.socialMedia) && (
+            <a
+              href={instagramUrlFrom(values.socialMedia)!}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1.5 inline-flex items-center gap-1 text-[12.5px] font-medium text-info hover:underline"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Buka Instagram
+            </a>
+          )}
         </div>
 
         <div className="sm:col-span-2">

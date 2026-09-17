@@ -71,3 +71,12 @@ export function initialsFromName(name: string): string {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
+
+// formatFileSizeMB turns a byte count into an Indonesian MB label, e.g.
+// 16777216 -> "16 MB". Used by pre-upload size guards (PLAN
+// revisi-vendor-venue-portal E3) so the rejection message names the file's
+// actual size instead of only the limit.
+export function formatFileSizeMB(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  return `${mb.toLocaleString("id-ID", { maximumFractionDigits: 1 })} MB`;
+}

@@ -68,35 +68,74 @@ func NewVenueHandler(venues *application.VenueService, projects projectscontract
 }
 
 type venueResponse struct {
-	ID                int64   `json:"id"`
-	Name              string  `json:"name"`
-	PICName           string  `json:"picName"`
-	PhonePIC          string  `json:"phonePic"`
-	PhoneVenue        *string `json:"phoneVenue"`
-	Email             *string `json:"email"`
-	Address           *string `json:"address"`
-	City              *string `json:"city"`
-	RentalPrice       *int64  `json:"rentalPrice"`
-	Charge            *int64  `json:"charge"`
-	Capacity          *int    `json:"capacity"`
-	Facilities        *string `json:"facilities"`
-	SocialMedia       *string `json:"socialMedia"`
-	Notes             string  `json:"notes"`
-	HasAttachment     bool    `json:"hasAttachment"`
-	AttachmentIsImage bool    `json:"attachmentIsImage"`
-	IsActive          bool    `json:"isActive"`
-	CreatedAt         string  `json:"createdAt"`
+	ID                int64    `json:"id"`
+	Name              string   `json:"name"`
+	PICName           string   `json:"picName"`
+	PhonePIC          string   `json:"phonePic"`
+	PhoneVenue        *string  `json:"phoneVenue"`
+	Email             *string  `json:"email"`
+	Address           *string  `json:"address"`
+	City              *string  `json:"city"`
+	Categories        []string `json:"categories"`
+	PriceTier         string   `json:"priceTier"`
+	RentalPrice       *int64   `json:"rentalPrice"`
+	Charge            *int64   `json:"charge"`
+	Capacity          *int     `json:"capacity"`
+	Facilities        *string  `json:"facilities"`
+	SocialMedia       *string  `json:"socialMedia"`
+	Notes             string   `json:"notes"`
+	HasAttachment     bool     `json:"hasAttachment"`
+	AttachmentIsImage bool     `json:"attachmentIsImage"`
+	IsActive          bool     `json:"isActive"`
+	CreatedAt         string   `json:"createdAt"`
 }
 
 func toVenueResponse(v domain.Venue) venueResponse {
 	attachmentIsImage := v.AttachmentMimeType != nil && strings.HasPrefix(*v.AttachmentMimeType, "image/")
+	categories := v.Categories
+	if categories == nil {
+		categories = []string{}
+	}
 	return venueResponse{
 		ID: v.ID, Name: v.Name, PICName: v.PICName, PhonePIC: v.PhonePIC, PhoneVenue: v.PhoneVenue,
-		Email: v.Email, Address: v.Address, City: v.City, RentalPrice: v.RentalPrice, Charge: v.Charge,
+		Email: v.Email, Address: v.Address, City: v.City, Categories: categories,
+		PriceTier: domain.VenuePriceTierFor(v.RentalPrice),
+		RentalPrice: v.RentalPrice, Charge: v.Charge,
 		Capacity: v.Capacity, Facilities: v.Facilities, SocialMedia: v.SocialMedia, Notes: v.Notes,
 		HasAttachment: v.AttachmentPath != nil, AttachmentIsImage: attachmentIsImage, IsActive: v.IsActive,
 		CreatedAt: v.CreatedAt.Format("2006-01-02"),
 	}
+}
+
+// parseVenueListFilter reads the GET /venues list filters (search, city,
+// category, priceTier, capacityMin) into one VenueListFilter. Unknown
+// category/tier or a non-integer capacityMin → 400; empty means "no filter"
+// and is never an error. A mistyped param is never silently ignored: that
+// would display the full list as if it were the filtered result.
+func parseVenueListFilter(w http.ResponseWriter, r *http.Request) (application.VenueListFilter, bool) {
+	filter := application.VenueListFilter{
+		Search:   r.URL.Query().Get("search"),
+		City:     r.URL.Query().Get("city"),
+		Category: r.URL.Query().Get("category"),
+		PriceTier: r.URL.Query().Get("priceTier"),
+	}
+	if filter.Category != "" && !domain.IsValidVenueCategory(filter.Category) {
+		response.Error(w, http.StatusBadRequest, "category tidak valid", nil)
+		return filter, false
+	}
+	if filter.PriceTier != "" && !domain.IsValidVenuePriceTier(filter.PriceTier) {
+		response.Error(w, http.StatusBadRequest, "priceTier tidak valid", nil)
+		return filter, false
+	}
+	if raw := r.URL.Query().Get("capacityMin"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			response.Error(w, http.StatusBadRequest, "capacityMin tidak valid", nil)
+			return filter, false
+		}
+		filter.CapacityMin = &n
+	}
+	return filter, true
 }
 
 func (h *VenueHandler) Collection(w http.ResponseWriter, r *http.Request) {
@@ -120,9 +159,11 @@ func (h *VenueHandler) Collection(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		params := pagination.FromRequest(r)
-		search := r.URL.Query().Get("search")
-		city := r.URL.Query().Get("city")
-		venues, total, err := h.venues.ListPaginated(r.Context(), tenantID, params, search, city)
+		filter, ok := parseVenueListFilter(w, r)
+		if !ok {
+			return
+		}
+		venues, total, err := h.venues.ListPaginated(r.Context(), tenantID, filter, params)
 		if err != nil {
 			writeAppError(w, err)
 			return
@@ -143,9 +184,10 @@ func (h *VenueHandler) Collection(w http.ResponseWriter, r *http.Request) {
 }
 
 // Export streams every venue matching the same filters Collection's list view
-// accepts (search/city) as an .xlsx workbook, unpaginated -- mirrors Vendor's
-// Export exactly. Column order matches venueTemplateHeaders plus an appended
-// Status column, so the file round-trips through Import unmodified.
+// accepts (search/city/category/priceTier/capacityMin) as an .xlsx workbook,
+// unpaginated -- mirrors Vendor's Export exactly. Column order matches
+// venueTemplateHeaders plus an appended Status column, so the file
+// round-trips through Import unmodified.
 func (h *VenueHandler) Export(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := requireStaffTenant(w, r)
 	if !ok {
@@ -159,9 +201,11 @@ func (h *VenueHandler) Export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	search := r.URL.Query().Get("search")
-	city := r.URL.Query().Get("city")
-	venues, err := h.venues.Export(r.Context(), tenantID, search, city)
+	filter, ok := parseVenueListFilter(w, r)
+	if !ok {
+		return
+	}
+	venues, err := h.venues.Export(r.Context(), tenantID, filter)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -195,7 +239,8 @@ func buildVenueExportWorkbook(venues []domain.Venue) *excelize.File {
 		row := rowIdx + 2
 		values := []interface{}{
 			v.Name, v.PICName, v.PhonePIC, stringPtrValue(v.PhoneVenue), stringPtrValue(v.Email),
-			stringPtrValue(v.Address), stringPtrValue(v.City), int64PtrValue(v.RentalPrice),
+			stringPtrValue(v.Address), stringPtrValue(v.City), strings.Join(v.Categories, ", "),
+			int64PtrValue(v.RentalPrice),
 			int64PtrValue(v.Charge), intPtrValue(v.Capacity), stringPtrValue(v.Facilities),
 			stringPtrValue(v.SocialMedia), v.Notes, activeStatusLabel(v.IsActive),
 		}
@@ -208,25 +253,27 @@ func buildVenueExportWorkbook(venues []domain.Venue) *excelize.File {
 }
 
 type venueInputBody struct {
-	Name        string `json:"name"`
-	PICName     string `json:"picName"`
-	PhonePIC    string `json:"phonePic"`
-	PhoneVenue  string `json:"phoneVenue"`
-	Email       string `json:"email"`
-	Address     string `json:"address"`
-	City        string `json:"city"`
-	RentalPrice *int64 `json:"rentalPrice"`
-	Charge      *int64 `json:"charge"`
-	Capacity    *int   `json:"capacity"`
-	Facilities  string `json:"facilities"`
-	SocialMedia string `json:"socialMedia"`
-	Notes       string `json:"notes"`
+	Name        string   `json:"name"`
+	PICName     string   `json:"picName"`
+	PhonePIC    string   `json:"phonePic"`
+	PhoneVenue  string   `json:"phoneVenue"`
+	Email       string   `json:"email"`
+	Address     string   `json:"address"`
+	City        string   `json:"city"`
+	Categories  []string `json:"categories"`
+	RentalPrice *int64   `json:"rentalPrice"`
+	Charge      *int64   `json:"charge"`
+	Capacity    *int     `json:"capacity"`
+	Facilities  string   `json:"facilities"`
+	SocialMedia string   `json:"socialMedia"`
+	Notes       string   `json:"notes"`
 }
 
 func toVenueInput(body venueInputBody) application.VenueInput {
 	return application.VenueInput{
 		Name: body.Name, PICName: body.PICName, PhonePIC: body.PhonePIC, PhoneVenue: body.PhoneVenue,
-		Email: body.Email, Address: body.Address, City: body.City, RentalPrice: body.RentalPrice,
+		Email: body.Email, Address: body.Address, City: body.City, Categories: body.Categories,
+		RentalPrice: body.RentalPrice,
 		Charge: body.Charge, Capacity: body.Capacity, Facilities: body.Facilities, SocialMedia: body.SocialMedia,
 		Notes: body.Notes,
 	}
@@ -425,7 +472,7 @@ func (h *VenueHandler) downloadAttachment(w http.ResponseWriter, r *http.Request
 // marker separately when writing the printed header cell.
 var venueTemplateHeaders = []string{
 	"Nama Venue", "Nama PIC", "No Tlp PIC", "No Tlp Venue", "Email",
-	"Alamat", "Kota", "Harga Sewa", "Charge", "Kapasitas", "Fasilitas", "Sosial Media", "Catatan",
+	"Alamat", "Kota", "Kategori", "Harga Sewa", "Charge", "Kapasitas", "Fasilitas", "Sosial Media", "Catatan",
 }
 
 // venueRequiredImportHeaders/venueTextImportHeaders feed styleTemplateSheet's
@@ -464,9 +511,13 @@ func (h *VenueHandler) Template(w http.ResponseWriter, r *http.Request) {
 	}
 	// Kota must be one of domain.AllowedCities (same rule Create/Update
 	// enforce via domain.IsValidCity) -- a dropdown here catches that in
-	// Excel itself, not just after uploading.
+	// Excel itself, not just after uploading. Kategori is reference-only
+	// (D-4): its values are multi-select comma-separated, which an Excel
+	// dropdown cannot validate, so the list is written to "Referensi" purely
+	// as a lookup and the backend validates per row.
 	if err := addTemplateDropdowns(f, sheet, venueTemplateHeaders, []templateDropdown{
 		{header: "Kota", values: domain.AllowedCities},
+		{header: "Kategori", values: domain.AllowedVenueCategories, referenceOnly: true},
 	}); err != nil {
 		response.Error(w, http.StatusInternalServerError, "Gagal membuat berkas template", nil)
 		return
@@ -554,14 +605,25 @@ func parseVenueImportRow(cells []string) application.VenueImportRow {
 		return &capacity
 	}
 
-	rentalPrice := parsePrice("Harga Sewa", 7)
-	charge := parsePrice("Charge", 8)
-	capacity := parseCapacity(9)
+	rentalPrice := parsePrice("Harga Sewa", 8)
+	charge := parsePrice("Charge", 9)
+	capacity := parseCapacity(10)
+
+	// "Kategori" (column 7) holds comma-separated fixed values; the service
+	// layer normalizes and rejects unknown ones per row. Empty clears (D-5).
+	var categories []string
+	if raw := get(7); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			if trimmed := strings.TrimSpace(part); trimmed != "" {
+				categories = append(categories, trimmed)
+			}
+		}
+	}
 
 	return application.VenueImportRow{
 		Name: get(0), PICName: get(1), PhonePIC: normalizePhoneCell(get(2)), PhoneVenue: normalizePhoneCell(get(3)), Email: get(4),
-		Address: get(5), City: get(6), RentalPrice: rentalPrice, Charge: charge,
-		Capacity: capacity, Facilities: get(10), SocialMedia: get(11), Notes: get(12), ParseIssues: issues,
+		Address: get(5), City: get(6), Categories: categories, RentalPrice: rentalPrice, Charge: charge,
+		Capacity: capacity, Facilities: get(11), SocialMedia: get(12), Notes: get(13), ParseIssues: issues,
 	}
 }
 
@@ -605,7 +667,24 @@ func (h *VenueHandler) Import(w http.ResponseWriter, r *http.Request) {
 	defer rowIter.Close()
 
 	var rows []application.VenueImportRow
-	rowIter.Next() // header row -- skip, position and meaning are fixed (venueTemplateHeaders)
+	// Baris header divalidasi, bukan dilewati: parser di bawah membaca sel
+	// berdasarkan INDEKS, jadi berkas dari template versi lama (sebelum kolom
+	// "Kategori" disisipkan) akan menggeser setiap kolom sesudahnya — dan
+	// sebagian barisnya tersimpan diam-diam dengan data salah kolom. Lihat
+	// validateImportHeaderRow.
+	if !rowIter.Next() {
+		response.Error(w, http.StatusBadRequest, "Berkas kosong — gunakan berkas hasil unduh Template", nil)
+		return
+	}
+	headerCells, err := rowIter.Columns()
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "Gagal membaca baris header pada berkas Excel", nil)
+		return
+	}
+	if err := validateImportHeaderRow(headerCells, venueTemplateHeaders); err != nil {
+		response.Error(w, http.StatusUnprocessableEntity, "Format berkas tidak sesuai: "+err.Error(), nil)
+		return
+	}
 	for rowIter.Next() {
 		cells, err := rowIter.Columns()
 		if err != nil {

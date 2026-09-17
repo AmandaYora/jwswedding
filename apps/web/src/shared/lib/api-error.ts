@@ -7,6 +7,16 @@ export function getApiErrorMessage(err: unknown, fallback: string): string {
   if (axios.isAxiosError(err)) {
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;
+    // No message body: the rejection likely came from a proxy in front of
+    // the app (e.g. nginx 413 on an over-limit upload answers HTML, not the
+    // Go envelope — PLAN revisi-vendor-venue-portal §4.6/E2). Name the cause
+    // instead of falling back silently.
+    if (err.response?.status === 413) {
+      return "Berkas terlalu besar untuk diunggah ke server.";
+    }
+    if (err.response) {
+      return `${fallback} (server menjawab ${err.response.status})`;
+    }
   }
   return fallback;
 }

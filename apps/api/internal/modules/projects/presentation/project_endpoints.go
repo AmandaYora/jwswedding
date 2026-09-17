@@ -301,19 +301,25 @@ func (h *Handler) getProject(w http.ResponseWriter, r *http.Request, claims staf
 	progressResp := toProgressResponse(*progress)
 	resp.Progress = &progressResp
 	resp.PICName = h.projects.ResolvePICName(r.Context(), tenantID, p.PICStaffID)
-	// Satu lookup primary key ke `quotations`, hanya untuk pemanggil yang
-	// memang boleh membuka penawarannya: yang memakai field ini adalah tautan
-	// "Penawaran" di header detail project (WO Console). Portal klien memanggil
-	// endpoint yang sama saat memilih di antara beberapa project dan tidak
-	// menampilkan nomor PO di mana pun, dan Wedding Planner tidak melihat
-	// tautannya sama sekali — keduanya tidak perlu membayar query itu, apalagi
-	// menerima medannya. Server yang memutuskan, bukan UI. Daftar project dan
-	// /projects/me tidak pernah mengisinya sama sekali (itu akan jadi satu
-	// query per baris).
+	// PONumber dkk. diisi hanya untuk pemanggil yang memang boleh membuka
+	// penawarannya: tautan "Penawaran" di header detail project (WO Console)
+	// memakai PONumber/PackageNameFromQuotation/QuotationUnderRevision, dan kartu
+	// "Purchase Order" di portal client memakai PONumber (nama berkas) +
+	// QuotationPDFAvailable (tampil/sembunyi) — PLAN revisi-vendor-venue-portal
+	// §1.1 poin 11 (PLAN revisi-vendor-venue-portal §4.5/F5) sengaja membalik
+	// keputusan lama yang menyatakan portal tidak butuh query ini. Sekali per
+	// pembukaan portal (ClientPortalLayout memanggil fetchProjectDetail sekali
+	// per sesi), bukan per baris daftar: daftar project dan /projects/me tetap
+	// tidak pernah mengisinya (itu akan jadi satu query per baris). Server yang
+	// memutuskan, bukan UI.
 	if claims.principalType == "staff" && canReadQuotation(claims.role) {
 		resp.PONumber = h.projects.ResolvePONumber(r.Context(), tenantID, p.QuotationID)
 		resp.PackageNameFromQuotation = h.projects.PackageNameFromQuotation(r.Context(), tenantID, p.QuotationID)
 		resp.QuotationUnderRevision = h.projects.QuotationUnderRevision(r.Context(), tenantID, p.QuotationID)
+	}
+	if claims.principalType == "client" && p.QuotationID != 0 {
+		resp.PONumber = h.projects.ResolvePONumber(r.Context(), tenantID, p.QuotationID)
+		resp.QuotationPDFAvailable = h.projects.QuotationAccepted(r.Context(), tenantID, p.QuotationID)
 	}
 	response.OK(w, "ok", resp)
 }

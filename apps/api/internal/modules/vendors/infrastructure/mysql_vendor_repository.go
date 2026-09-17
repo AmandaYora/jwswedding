@@ -3,8 +3,10 @@ package infrastructure
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 
+	"jwswedding/internal/modules/vendors/application"
 	"jwswedding/internal/modules/vendors/domain"
 	"jwswedding/internal/shared/pagination"
 )
@@ -81,25 +83,49 @@ func (r *MySQLVendorRepository) List(ctx context.Context, tenantID int64, catego
 // ListPaginated backs the real `GET /vendors` list page — List above stays
 // as-is for the vendor-picker dropdowns and the bulk import's prefetch, both
 // of which need the full roster in one call.
-func (r *MySQLVendorRepository) ListPaginated(ctx context.Context, tenantID int64, categoryID *int64, params pagination.Params, search, city string) ([]domain.Vendor, int64, error) {
+func (r *MySQLVendorRepository) ListPaginated(ctx context.Context, tenantID int64, filter application.VendorListFilter, params pagination.Params) ([]domain.Vendor, int64, error) {
 	countQuery := `SELECT COUNT(*) FROM vendors WHERE tenant_id = ?`
 	listQuery := `SELECT ` + vendorColumns + ` FROM vendors WHERE tenant_id = ?`
 	args := []interface{}{tenantID}
-	if categoryID != nil {
+	if filter.CategoryID != nil {
 		countQuery += ` AND category_id = ?`
 		listQuery += ` AND category_id = ?`
-		args = append(args, *categoryID)
+		args = append(args, *filter.CategoryID)
 	}
-	if search != "" {
+	if filter.Search != "" {
 		countQuery += ` AND (name LIKE ? OR pic_name LIKE ? OR email LIKE ?)`
 		listQuery += ` AND (name LIKE ? OR pic_name LIKE ? OR email LIKE ?)`
-		like := "%" + search + "%"
+		like := "%" + filter.Search + "%"
 		args = append(args, like, like, like)
 	}
-	if city != "" {
+	if filter.City != "" {
 		countQuery += ` AND city = ?`
 		listQuery += ` AND city = ?`
-		args = append(args, city)
+		args = append(args, filter.City)
+	}
+	if filter.PriceKind != "" {
+		// Column comes ONLY from the domain whitelist — never the raw param.
+		column, ok := domain.VendorPriceColumn(filter.PriceKind)
+		if !ok {
+			return nil, 0, fmt.Errorf("jenis paket tidak valid: %q", filter.PriceKind)
+		}
+		// NULL means "price not set", which is different from 0 — excluded.
+		// With no bounds at all (kind picked, range left empty), the filter
+		// still means "has a price for this package", so NULLs stay out.
+		if filter.PriceMin == nil && filter.PriceMax == nil {
+			countQuery += ` AND ` + column + ` IS NOT NULL`
+			listQuery += ` AND ` + column + ` IS NOT NULL`
+		}
+		if filter.PriceMin != nil {
+			countQuery += ` AND ` + column + ` IS NOT NULL AND ` + column + ` >= ?`
+			listQuery += ` AND ` + column + ` IS NOT NULL AND ` + column + ` >= ?`
+			args = append(args, *filter.PriceMin)
+		}
+		if filter.PriceMax != nil {
+			countQuery += ` AND ` + column + ` IS NOT NULL AND ` + column + ` <= ?`
+			listQuery += ` AND ` + column + ` IS NOT NULL AND ` + column + ` <= ?`
+			args = append(args, *filter.PriceMax)
+		}
 	}
 
 	var total int64
@@ -125,24 +151,41 @@ func (r *MySQLVendorRepository) ListPaginated(ctx context.Context, tenantID int6
 	return vendors, total, rows.Err()
 }
 
-// ListFiltered backs Export -- the same category/search/city filters as
+// ListFiltered backs Export -- the same category/search/city/price filters as
 // ListPaginated, but unpaginated (Export always returns the whole matching
 // set, per PLAN.md's Export design).
-func (r *MySQLVendorRepository) ListFiltered(ctx context.Context, tenantID int64, categoryID *int64, search, city string) ([]domain.Vendor, error) {
+func (r *MySQLVendorRepository) ListFiltered(ctx context.Context, tenantID int64, filter application.VendorListFilter) ([]domain.Vendor, error) {
 	query := `SELECT ` + vendorColumns + ` FROM vendors WHERE tenant_id = ?`
 	args := []interface{}{tenantID}
-	if categoryID != nil {
+	if filter.CategoryID != nil {
 		query += ` AND category_id = ?`
-		args = append(args, *categoryID)
+		args = append(args, *filter.CategoryID)
 	}
-	if search != "" {
+	if filter.Search != "" {
 		query += ` AND (name LIKE ? OR pic_name LIKE ? OR email LIKE ?)`
-		like := "%" + search + "%"
+		like := "%" + filter.Search + "%"
 		args = append(args, like, like, like)
 	}
-	if city != "" {
+	if filter.City != "" {
 		query += ` AND city = ?`
-		args = append(args, city)
+		args = append(args, filter.City)
+	}
+	if filter.PriceKind != "" {
+		column, ok := domain.VendorPriceColumn(filter.PriceKind)
+		if !ok {
+			return nil, fmt.Errorf("jenis paket tidak valid: %q", filter.PriceKind)
+		}
+		if filter.PriceMin == nil && filter.PriceMax == nil {
+			query += ` AND ` + column + ` IS NOT NULL`
+		}
+		if filter.PriceMin != nil {
+			query += ` AND ` + column + ` IS NOT NULL AND ` + column + ` >= ?`
+			args = append(args, *filter.PriceMin)
+		}
+		if filter.PriceMax != nil {
+			query += ` AND ` + column + ` IS NOT NULL AND ` + column + ` <= ?`
+			args = append(args, *filter.PriceMax)
+		}
 	}
 	query += ` ORDER BY id`
 

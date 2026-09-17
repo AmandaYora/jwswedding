@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"strings"
 
+	"jwswedding/internal/modules/vendors/application"
 	"jwswedding/internal/modules/vendors/domain"
 	"jwswedding/internal/shared/pagination"
 )
@@ -95,27 +96,81 @@ func (r *MySQLVenueRepository) List(ctx context.Context, tenantID int64) ([]doma
 		}
 		venues = append(venues, *v)
 	}
-	return venues, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := r.attachCategories(ctx, tenantID, venues); err != nil {
+		return nil, err
+	}
+	return venues, nil
+}
+
+// venueIDsOf collects IDs for the single IN-query category load below.
+func venueIDsOf(venues []domain.Venue) []int64 {
+	ids := make([]int64, 0, len(venues))
+	for _, v := range venues {
+		ids = append(ids, v.ID)
+	}
+	return ids
+}
+
+// loadCategories fetches categories for a page of venues in ONE query —
+// never one per venue. Empty input returns an empty map without querying.
+// Rows arrive ordered by (venue_id, id); the INSERT order preserves the
+// canonical order NormalizeVenueCategories sorted into.
+func (r *MySQLVenueRepository) loadCategories(ctx context.Context, tenantID int64, venueIDs []int64) (map[int64][]string, error) {
+	out := make(map[int64][]string)
+	if len(venueIDs) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, 0, len(venueIDs))
+	args := make([]interface{}, 0, len(venueIDs)+1)
+	args = append(args, tenantID)
+	for _, id := range venueIDs {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT venue_id, category FROM venue_categories WHERE tenant_id = ? AND venue_id IN (`+strings.Join(placeholders, ", ")+`) ORDER BY venue_id, id`,
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var venueID int64
+		var category string
+		if err := rows.Scan(&venueID, &category); err != nil {
+			return nil, err
+		}
+		out[venueID] = append(out[venueID], category)
+	}
+	return out, rows.Err()
+}
+
+// attachCategories fills Categories on every venue in place via one
+// loadCategories call.
+func (r *MySQLVenueRepository) attachCategories(ctx context.Context, tenantID int64, venues []domain.Venue) error {
+	cats, err := r.loadCategories(ctx, tenantID, venueIDsOf(venues))
+	if err != nil {
+		return err
+	}
+	for i := range venues {
+		if c, ok := cats[venues[i].ID]; ok {
+			venues[i].Categories = c
+		}
+	}
+	return nil
 }
 
 // ListPaginated backs the real `GET /venues` list page -- List above stays
 // as-is for the venue-picker (attach-to-project) dropdown and the bulk
 // import's prefetch, both of which need the full roster in one call.
-func (r *MySQLVenueRepository) ListPaginated(ctx context.Context, tenantID int64, params pagination.Params, search, city string) ([]domain.Venue, int64, error) {
+func (r *MySQLVenueRepository) ListPaginated(ctx context.Context, tenantID int64, filter application.VenueListFilter, params pagination.Params) ([]domain.Venue, int64, error) {
 	countQuery := `SELECT COUNT(*) FROM venues WHERE tenant_id = ?`
 	listQuery := `SELECT ` + venueColumns + ` FROM venues WHERE tenant_id = ?`
 	args := []interface{}{tenantID}
-	if search != "" {
-		countQuery += ` AND (name LIKE ? OR pic_name LIKE ? OR email LIKE ?)`
-		listQuery += ` AND (name LIKE ? OR pic_name LIKE ? OR email LIKE ?)`
-		like := "%" + search + "%"
-		args = append(args, like, like, like)
-	}
-	if city != "" {
-		countQuery += ` AND city = ?`
-		listQuery += ` AND city = ?`
-		args = append(args, city)
-	}
+	r.applyVenueFilters(&countQuery, &listQuery, &args, filter)
 
 	var total int64
 	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
@@ -137,23 +192,63 @@ func (r *MySQLVenueRepository) ListPaginated(ctx context.Context, tenantID int64
 		}
 		venues = append(venues, *v)
 	}
-	return venues, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if err := r.attachCategories(ctx, tenantID, venues); err != nil {
+		return nil, 0, err
+	}
+	return venues, total, nil
 }
 
-// ListFiltered backs Export -- same search/city filters as ListPaginated, but
+// applyVenueFilters appends the shared search/city/category/tier/capacity
+// predicates to both the COUNT and the page query (same args order for both).
+// Category uses EXISTS — not a JOIN — so a multi-category venue is counted
+// and listed exactly once.
+func (r *MySQLVenueRepository) applyVenueFilters(countQuery, listQuery *string, args *[]interface{}, filter application.VenueListFilter) {
+	if filter.Search != "" {
+		*countQuery += ` AND (name LIKE ? OR pic_name LIKE ? OR email LIKE ?)`
+		*listQuery += ` AND (name LIKE ? OR pic_name LIKE ? OR email LIKE ?)`
+		like := "%" + filter.Search + "%"
+		*args = append(*args, like, like, like)
+	}
+	if filter.City != "" {
+		*countQuery += ` AND city = ?`
+		*listQuery += ` AND city = ?`
+		*args = append(*args, filter.City)
+	}
+	if filter.Category != "" {
+		*countQuery += ` AND EXISTS (SELECT 1 FROM venue_categories vc WHERE vc.tenant_id = venues.tenant_id AND vc.venue_id = venues.id AND vc.category = ?)`
+		*listQuery += ` AND EXISTS (SELECT 1 FROM venue_categories vc WHERE vc.tenant_id = venues.tenant_id AND vc.venue_id = venues.id AND vc.category = ?)`
+		*args = append(*args, filter.Category)
+	}
+	if filter.PriceTier != "" {
+		if min, max, ok := domain.VenuePriceTierRange(filter.PriceTier); ok {
+			*countQuery += ` AND rental_price IS NOT NULL AND rental_price >= ?`
+			*listQuery += ` AND rental_price IS NOT NULL AND rental_price >= ?`
+			*args = append(*args, min)
+			if max > 0 {
+				*countQuery += ` AND rental_price <= ?`
+				*listQuery += ` AND rental_price <= ?`
+				*args = append(*args, max)
+			}
+		}
+	}
+	if filter.CapacityMin != nil {
+		*countQuery += ` AND capacity IS NOT NULL AND capacity >= ?`
+		*listQuery += ` AND capacity IS NOT NULL AND capacity >= ?`
+		*args = append(*args, *filter.CapacityMin)
+	}
+}
+
+// ListFiltered backs Export -- same filters as ListPaginated, but
 // unpaginated (Export always returns the whole matching set).
-func (r *MySQLVenueRepository) ListFiltered(ctx context.Context, tenantID int64, search, city string) ([]domain.Venue, error) {
+func (r *MySQLVenueRepository) ListFiltered(ctx context.Context, tenantID int64, filter application.VenueListFilter) ([]domain.Venue, error) {
+	countQuery := `SELECT COUNT(*) FROM venues WHERE tenant_id = ?`
 	query := `SELECT ` + venueColumns + ` FROM venues WHERE tenant_id = ?`
 	args := []interface{}{tenantID}
-	if search != "" {
-		query += ` AND (name LIKE ? OR pic_name LIKE ? OR email LIKE ?)`
-		like := "%" + search + "%"
-		args = append(args, like, like, like)
-	}
-	if city != "" {
-		query += ` AND city = ?`
-		args = append(args, city)
-	}
+	// Reuse the shared predicate builder; the COUNT side is discarded.
+	r.applyVenueFilters(&countQuery, &query, &args, filter)
 	query += ` ORDER BY id`
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -170,16 +265,66 @@ func (r *MySQLVenueRepository) ListFiltered(ctx context.Context, tenantID int64,
 		}
 		venues = append(venues, *v)
 	}
-	return venues, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := r.attachCategories(ctx, tenantID, venues); err != nil {
+		return nil, err
+	}
+	return venues, nil
 }
 
 func (r *MySQLVenueRepository) FindByID(ctx context.Context, tenantID, id int64) (*domain.Venue, error) {
 	row := r.db.QueryRowContext(ctx, `SELECT `+venueColumns+` FROM venues WHERE tenant_id = ? AND id = ? LIMIT 1`, tenantID, id)
-	return scanVenue(row.Scan)
+	venue, err := scanVenue(row.Scan)
+	if err != nil || venue == nil {
+		return venue, err
+	}
+	cats, err := r.loadCategories(ctx, tenantID, []int64{venue.ID})
+	if err != nil {
+		return nil, err
+	}
+	venue.Categories = cats[venue.ID]
+	return venue, nil
+}
+
+// replaceCategoriesTx rewrites one venue's labels: DELETE all, then a single
+// multi-row INSERT. An empty cats stops after the DELETE — assembling
+// `INSERT ... VALUES` with zero rows is a SQL syntax error, not a no-op,
+// and a categoriless venue is legitimate (D-5: empty Import cells land here).
+func replaceCategoriesTx(ctx context.Context, tx *sql.Tx, tenantID, venueID int64, cats []string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM venue_categories WHERE tenant_id = ? AND venue_id = ?`, tenantID, venueID); err != nil {
+		return err
+	}
+	if len(cats) == 0 {
+		return nil
+	}
+	var sb strings.Builder
+	sb.WriteString(`INSERT INTO venue_categories (tenant_id, venue_id, category) VALUES `)
+	args := make([]interface{}, 0, len(cats)*3)
+	for i, c := range cats {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(`(?, ?, ?)`)
+		args = append(args, tenantID, venueID, c)
+	}
+	_, err := tx.ExecContext(ctx, sb.String(), args...)
+	return err
 }
 
 func (r *MySQLVenueRepository) Create(ctx context.Context, venue *domain.Venue) error {
-	result, err := r.db.ExecContext(ctx,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	result, err := tx.ExecContext(ctx,
 		`INSERT INTO venues (tenant_id, name, pic_name, phone_pic, phone_venue, email, address, city,
 		 rental_price, charge, capacity, facilities, social_media, notes, is_active)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -194,6 +339,13 @@ func (r *MySQLVenueRepository) Create(ctx context.Context, venue *domain.Venue) 
 		return err
 	}
 	venue.ID = id
+	if err := replaceCategoriesTx(ctx, tx, venue.TenantID, venue.ID, venue.Categories); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
 	return nil
 }
 
@@ -223,7 +375,17 @@ func (r *MySQLVenueRepository) CreateBatch(ctx context.Context, venues []domain.
 }
 
 func (r *MySQLVenueRepository) Update(ctx context.Context, venue *domain.Venue) error {
-	_, err := r.db.ExecContext(ctx,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	_, err = tx.ExecContext(ctx,
 		`UPDATE venues SET name = ?, pic_name = ?, phone_pic = ?, phone_venue = ?, email = ?, address = ?, city = ?,
 		 rental_price = ?, charge = ?, capacity = ?, facilities = ?, social_media = ?, notes = ?
 		 WHERE tenant_id = ? AND id = ?`,
@@ -231,7 +393,77 @@ func (r *MySQLVenueRepository) Update(ctx context.Context, venue *domain.Venue) 
 		venue.RentalPrice, venue.Charge, venue.Capacity, venue.Facilities, venue.SocialMedia, venue.Notes,
 		venue.TenantID, venue.ID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if err := replaceCategoriesTx(ctx, tx, venue.TenantID, venue.ID, venue.Categories); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+// SetCategoriesBatch writes categories for many venues at once (the import
+// insert path): one DELETE for the venue set, then one multi-row INSERT.
+// Venues mapped to an empty/nil slice are cleared by the DELETE. An empty
+// map is a no-op without querying.
+func (r *MySQLVenueRepository) SetCategoriesBatch(ctx context.Context, tenantID int64, venueCategories map[int64][]string) error {
+	if len(venueCategories) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(venueCategories))
+	for id := range venueCategories {
+		ids = append(ids, id)
+	}
+	placeholders := make([]string, 0, len(ids))
+	args := make([]interface{}, 0, len(ids)+1)
+	args = append(args, tenantID)
+	for _, id := range ids {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM venue_categories WHERE tenant_id = ? AND venue_id IN (`+strings.Join(placeholders, ", ")+`)`, args...); err != nil {
+		return err
+	}
+	var sb strings.Builder
+	sb.WriteString(`INSERT INTO venue_categories (tenant_id, venue_id, category) VALUES `)
+	var vals []interface{}
+	first := true
+	for venueID, cats := range venueCategories {
+		for _, c := range cats {
+			if !first {
+				sb.WriteString(", ")
+			}
+			first = false
+			sb.WriteString(`(?, ?, ?)`)
+			vals = append(vals, tenantID, venueID, c)
+		}
+	}
+	if len(vals) > 0 {
+		if _, err := tx.ExecContext(ctx, sb.String(), vals...); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func (r *MySQLVenueRepository) SetActive(ctx context.Context, tenantID, id int64, isActive bool) error {

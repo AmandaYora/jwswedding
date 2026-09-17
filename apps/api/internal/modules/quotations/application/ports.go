@@ -29,6 +29,12 @@ type ClientDirectory interface {
 	// SignerOptions mengembalikan opsi Atas Nama sebagai pasangan
 	// {role, name} — dari clients, bukan client_contacts (T1).
 	SignerOptions(ctx context.Context, tenantID, clientID int64) ([][2]string, error)
+	// ClientIDForContact memetakan token portal (id kontak) ke master
+	// client-nya — dipakai gerbang baca portal di GetForClientContact (PLAN
+	// revisi-vendor-venue-portal §4.3/F2). Signature sama persis dengan milik
+	// clients.Contracts, dan main.go sudah memasang SetClientDirectory —
+	// tidak ada wiring baru, interface terpenuhi struktural.
+	ClientIDForContact(ctx context.Context, tenantID, contactID int64) (int64, error)
 }
 
 // VenueResolver adalah bentuk sempit yang dibutuhkan quotations dari

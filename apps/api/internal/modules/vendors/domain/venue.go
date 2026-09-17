@@ -24,6 +24,10 @@ type Venue struct {
 	Facilities         *string
 	SocialMedia        *string
 	Notes              string
+	// Categories holds the venue's fixed-list labels from
+	// AllowedVenueCategories (venue_category.go), loaded from the
+	// venue_categories table — never a column on venues itself.
+	Categories         []string
 	AttachmentPath     *string
 	AttachmentMimeType *string
 	IsActive           bool

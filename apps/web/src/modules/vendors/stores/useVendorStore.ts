@@ -83,7 +83,7 @@ interface VendorState {
   vendorPageMeta: PaginationMeta;
   vendorSummaries: VendorSummary[];
   fetchVendors: () => Promise<void>;
-  fetchVendorPage: (page: number, search: string, categoryId: string, city: string) => Promise<void>;
+  fetchVendorPage: (page: number, filters: VendorListFilters) => Promise<void>;
   // Public-safe {id, name} list — the only vendor data Client Portal is
   // allowed to fetch directly now that commercial fields exist (see
   // vendor_handler.go's Summary handler doc comment).
@@ -99,16 +99,49 @@ interface VendorState {
   uploadVendorAttachment: (id: string, file: CompressedFilePayload) => Promise<void>;
   downloadVendorTemplate: () => Promise<Blob>;
   importVendors: (file: File) => Promise<VendorImportResult>;
-  // Exports the currently filtered set (search/categoryId/city) as .xlsx —
-  // same column order as the import template, plus a Status column, so the
-  // file round-trips through Import unmodified.
-  exportVendors: (search: string, categoryId: string, city: string) => Promise<Blob>;
+  // Exports the currently filtered set (search/categoryId/city/price) as
+  // .xlsx — same column order as the import template, plus a Status column,
+  // so the file round-trips through Import unmodified.
+  exportVendors: (filters: VendorListFilters) => Promise<Blob>;
   // Hard delete (PLAN.md) — informed-consent, not a blocking precondition:
   // fetchVendorDeleteImpact names every project that would lose this
   // vendor's data source, for the confirmation dialog; deleteVendor performs
   // the actual (unconditional, Owner-only) delete.
   fetchVendorDeleteImpact: (id: string) => Promise<AffectedProject[]>;
   deleteVendor: (id: string) => Promise<void>;
+}
+
+// VendorListFilters groups VendorListPage's list filters into one object
+// (PLAN revisi-vendor-venue-portal §4.6/H1, D-6) — priceKind selects which
+// package-price column the range applies to ("Semua" = no price filter),
+// priceMin/priceMax are undefined when empty.
+export type VendorPriceKind = "akad" | "akadResepsi" | "resepsi";
+
+export interface VendorListFilters {
+  search: string;
+  categoryId: string;
+  city: string;
+  priceKind: "" | VendorPriceKind;
+  priceMin?: number;
+  priceMax?: number;
+}
+
+export const EMPTY_VENDOR_FILTERS: VendorListFilters = {
+  search: "",
+  categoryId: "",
+  city: "",
+  priceKind: "",
+};
+
+function toVendorListParams(filters: VendorListFilters) {
+  return {
+    search: filters.search || undefined,
+    categoryId: filters.categoryId || undefined,
+    city: filters.city || undefined,
+    priceKind: filters.priceKind || undefined,
+    priceMin: filters.priceMin ?? undefined,
+    priceMax: filters.priceMax ?? undefined,
+  };
 }
 
 // Backed by the real `vendors` module (Fase 3) — tenant-scoped. Also the
@@ -126,11 +159,11 @@ export const useVendorStore = create<VendorState>((set, get) => ({
     set({ vendors: (res.data.data as RawVendor[]).map(toVendor) });
   },
 
-  // Backs VendorListPage's table — real server-side pagination + search/
-  // category filtering, separate from the `vendors` full-roster cache above.
-  fetchVendorPage: async (page, search, categoryId, city) => {
+  // Backs VendorListPage's table — real server-side pagination + filtering,
+  // separate from the `vendors` full-roster cache above.
+  fetchVendorPage: async (page, filters) => {
     const res = await httpClient.get(API.vendors.base, {
-      params: { page, search: search || undefined, categoryId: categoryId || undefined, city: city || undefined },
+      params: { page, ...toVendorListParams(filters) },
     });
     set({
       vendorPage: (res.data.data as RawVendor[]).map(toVendor),
@@ -181,9 +214,9 @@ export const useVendorStore = create<VendorState>((set, get) => ({
     return toVendorImportResult(res.data.data as RawVendorImportResult);
   },
 
-  exportVendors: async (search, categoryId, city) => {
+  exportVendors: async (filters) => {
     const res = await httpClient.get(API.vendors.export, {
-      params: { search: search || undefined, categoryId: categoryId || undefined, city: city || undefined },
+      params: toVendorListParams(filters),
       responseType: "blob",
     });
     return res.data as Blob;

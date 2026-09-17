@@ -40,15 +40,19 @@ var allowedVenueAttachmentMimeTypes = map[string]bool{
 
 type VenueRepository interface {
 	List(ctx context.Context, tenantID int64) ([]domain.Venue, error)
-	ListPaginated(ctx context.Context, tenantID int64, params pagination.Params, search, city string) ([]domain.Venue, int64, error)
+	ListPaginated(ctx context.Context, tenantID int64, filter VenueListFilter, params pagination.Params) ([]domain.Venue, int64, error)
 	// ListFiltered backs Export -- same filters as ListPaginated, unpaginated.
-	ListFiltered(ctx context.Context, tenantID int64, search, city string) ([]domain.Venue, error)
+	ListFiltered(ctx context.Context, tenantID int64, filter VenueListFilter) ([]domain.Venue, error)
 	FindByID(ctx context.Context, tenantID, id int64) (*domain.Venue, error)
 	Create(ctx context.Context, venue *domain.Venue) error
 	CreateBatch(ctx context.Context, venues []domain.Venue) error
 	Update(ctx context.Context, venue *domain.Venue) error
 	SetActive(ctx context.Context, tenantID, id int64, isActive bool) error
 	UpdateAttachment(ctx context.Context, tenantID, id int64, path, mimeType *string) error
+	// SetCategoriesBatch writes categories for venues created via CreateBatch
+	// (which doesn't read IDs back) — one DELETE + one multi-row INSERT for
+	// the whole map, not one query per venue.
+	SetCategoriesBatch(ctx context.Context, tenantID int64, venueCategories map[int64][]string) error
 	// Delete is a deliberate, guarded exception to this codebase's soft-state
 	// convention (PLAN.md's hard-delete plan) -- reached only via
 	// VenueService.Delete's Owner-only, informed-consent flow.
@@ -78,14 +82,46 @@ func (s *VenueService) List(ctx context.Context, tenantID int64) ([]domain.Venue
 	return s.repo.List(ctx, tenantID)
 }
 
-func (s *VenueService) ListPaginated(ctx context.Context, tenantID int64, params pagination.Params, search, city string) ([]domain.Venue, int64, error) {
-	return s.repo.ListPaginated(ctx, tenantID, params, search, city)
+// VenueListFilter groups the GET /venues list filters into one struct so
+// adding a filter never changes the signature again (same idiom as
+// quotations' QuotationListFilter). Category is one of
+// AllowedVenueCategories; PriceTier one of VenuePriceTiers; CapacityMin a
+// minimum capacity. Empty/zero values mean "no filter".
+type VenueListFilter struct {
+	Search      string
+	City        string
+	Category    string
+	PriceTier   string
+	CapacityMin *int
+}
+
+func validateVenueListFilter(filter VenueListFilter) error {
+	if filter.Category != "" && !domain.IsValidVenueCategory(filter.Category) {
+		return apperror.Validation("Kategori venue tidak valid", map[string][]string{"category": {"Pilih kategori dari daftar yang tersedia"}})
+	}
+	if filter.PriceTier != "" && !domain.IsValidVenuePriceTier(filter.PriceTier) {
+		return apperror.Validation("Tier harga tidak valid", map[string][]string{"priceTier": {"Pilih tier harga dari daftar yang tersedia"}})
+	}
+	if filter.CapacityMin != nil && *filter.CapacityMin < 0 {
+		return apperror.Validation("Kapasitas tidak valid", map[string][]string{"capacityMin": {"Kapasitas minimal tidak boleh negatif"}})
+	}
+	return nil
+}
+
+func (s *VenueService) ListPaginated(ctx context.Context, tenantID int64, filter VenueListFilter, params pagination.Params) ([]domain.Venue, int64, error) {
+	if err := validateVenueListFilter(filter); err != nil {
+		return nil, 0, err
+	}
+	return s.repo.ListPaginated(ctx, tenantID, filter, params)
 }
 
 // Export backs "Export Excel" -- same filters as ListPaginated (so "filter
 // then export" works), unpaginated.
-func (s *VenueService) Export(ctx context.Context, tenantID int64, search, city string) ([]domain.Venue, error) {
-	return s.repo.ListFiltered(ctx, tenantID, search, city)
+func (s *VenueService) Export(ctx context.Context, tenantID int64, filter VenueListFilter) ([]domain.Venue, error) {
+	if err := validateVenueListFilter(filter); err != nil {
+		return nil, err
+	}
+	return s.repo.ListFiltered(ctx, tenantID, filter)
 }
 
 func (s *VenueService) Get(ctx context.Context, tenantID, id int64) (*domain.Venue, error) {
@@ -119,6 +155,11 @@ type VenueInput struct {
 	Facilities  string
 	SocialMedia string
 	Notes       string
+	// Categories is the multi-select fixed list (AllowedVenueCategories);
+	// nil/empty means "no category". Normalized via
+	// domain.NormalizeVenueCategories on Create/Update, same pattern as
+	// validateVenueCity below.
+	Categories []string
 }
 
 func stringPtrOrNil(s string) *string {
@@ -139,13 +180,17 @@ func (s *VenueService) Create(ctx context.Context, tenantID int64, input VenueIn
 	if err := validateVenueCity(input.City); err != nil {
 		return nil, err
 	}
+	categories, err := domain.NormalizeVenueCategories(input.Categories)
+	if err != nil {
+		return nil, apperror.Validation("Kategori venue tidak valid", map[string][]string{"categories": {err.Error()}})
+	}
 	venue := &domain.Venue{
 		TenantID: tenantID, Name: input.Name, PICName: input.PICName, PhonePIC: input.PhonePIC,
 		PhoneVenue: stringPtrOrNil(input.PhoneVenue), Email: stringPtrOrNil(input.Email),
 		Address: stringPtrOrNil(input.Address), City: stringPtrOrNil(input.City),
 		RentalPrice: input.RentalPrice, Charge: input.Charge, Capacity: input.Capacity,
 		Facilities: stringPtrOrNil(input.Facilities), SocialMedia: stringPtrOrNil(input.SocialMedia),
-		Notes: input.Notes, IsActive: true,
+		Notes: input.Notes, Categories: categories, IsActive: true,
 	}
 	if err := s.repo.Create(ctx, venue); err != nil {
 		return nil, err
@@ -156,6 +201,10 @@ func (s *VenueService) Create(ctx context.Context, tenantID int64, input VenueIn
 func (s *VenueService) Update(ctx context.Context, tenantID, id int64, input VenueInput) (*domain.Venue, error) {
 	if err := validateVenueCity(input.City); err != nil {
 		return nil, err
+	}
+	categories, err := domain.NormalizeVenueCategories(input.Categories)
+	if err != nil {
+		return nil, apperror.Validation("Kategori venue tidak valid", map[string][]string{"categories": {err.Error()}})
 	}
 	venue, err := s.Get(ctx, tenantID, id)
 	if err != nil {
@@ -174,6 +223,7 @@ func (s *VenueService) Update(ctx context.Context, tenantID, id int64, input Ven
 	venue.Facilities = stringPtrOrNil(input.Facilities)
 	venue.SocialMedia = stringPtrOrNil(input.SocialMedia)
 	venue.Notes = input.Notes
+	venue.Categories = categories
 	if err := s.repo.Update(ctx, venue); err != nil {
 		return nil, err
 	}
@@ -310,6 +360,10 @@ type VenueImportRow struct {
 	Facilities  string
 	SocialMedia string
 	Notes       string
+	// Categories carries the parsed "Kategori" cell (comma-separated fixed
+	// values) — validated per row via domain.NormalizeVenueCategories, same
+	// as VenueInput. An empty cell clears the categories (D-5).
+	Categories []string
 	// ParseIssues mirrors VendorImportRow.ParseIssues -- a cell the
 	// presentation layer's spreadsheet parser couldn't read as its column's
 	// expected type, reported verbatim as this row's error instead of
@@ -418,6 +472,11 @@ func (s *VenueService) ImportVenues(ctx context.Context, tenantID int64, rows []
 			}
 			continue
 		}
+		categories, err := domain.NormalizeVenueCategories(row.Categories)
+		if err != nil {
+			result.Errors = append(result.Errors, VenueImportRowError{Row: rowNum, Message: err.Error()})
+			continue
+		}
 
 		venue := domain.Venue{
 			TenantID: tenantID, Name: row.Name, PICName: row.PICName, PhonePIC: row.PhonePIC,
@@ -425,7 +484,7 @@ func (s *VenueService) ImportVenues(ctx context.Context, tenantID int64, rows []
 			Address: stringPtrOrNil(row.Address), City: stringPtrOrNil(city),
 			RentalPrice: row.RentalPrice, Charge: row.Charge, Capacity: row.Capacity,
 			Facilities: stringPtrOrNil(row.Facilities), SocialMedia: stringPtrOrNil(row.SocialMedia),
-			Notes: row.Notes, IsActive: true,
+			Notes: row.Notes, Categories: categories, IsActive: true,
 		}
 
 		key := venueImportKey(row.Name, city)
@@ -466,6 +525,44 @@ func (s *VenueService) ImportVenues(ctx context.Context, tenantID int64, rows []
 			continue
 		}
 		result.InsertedCount += len(chunk)
+	}
+
+	// CreateBatch deliberately doesn't read IDs back, so newly inserted rows
+	// have no ID to attach categories to yet. One repo.List re-fetch maps
+	// every inserted (name, city) back to its new ID, then a single batched
+	// category write covers them all — constant query count, not one per
+	// row. Chunks that failed above simply aren't found in the fresh roster
+	// and are skipped (their chunk error is already reported).
+	if len(toInsert) > 0 {
+		fresh, err := s.repo.List(ctx, tenantID)
+		if err != nil {
+			result.Errors = append(result.Errors, VenueImportRowError{Row: 0, Message: "Gagal memuat ulang venue untuk menyimpan kategori: " + err.Error()})
+		} else {
+			freshByKey := make(map[string]int64, len(fresh))
+			for _, v := range fresh {
+				city := ""
+				if v.City != nil {
+					city = *v.City
+				}
+				freshByKey[venueImportKey(v.Name, city)] = v.ID
+			}
+			batch := make(map[int64][]string)
+			for _, v := range toInsert {
+				if len(v.Categories) == 0 {
+					continue
+				}
+				city := ""
+				if v.City != nil {
+					city = *v.City
+				}
+				if id, ok := freshByKey[venueImportKey(v.Name, city)]; ok {
+					batch[id] = v.Categories
+				}
+			}
+			if err := s.repo.SetCategoriesBatch(ctx, tenantID, batch); err != nil {
+				result.Errors = append(result.Errors, VenueImportRowError{Row: 0, Message: "Gagal menyimpan kategori venue baru: " + err.Error()})
+			}
+		}
 	}
 
 	for _, item := range toUpdate {

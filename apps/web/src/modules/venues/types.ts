@@ -14,6 +14,11 @@ export interface Venue {
   email: string | null;
   address: string | null;
   city: string | null;
+  // Fixed-list labels (VENUE_CATEGORIES) — [] when the venue has none.
+  categories: string[];
+  // Server-computed tier label from rental_price (VENUE_PRICE_TIERS) — "" when
+  // rental_price is unset, so the tier Badge is hidden instead of wrong.
+  priceTier: string;
   rentalPrice: number | null;
   charge: number | null;
   capacity: number | null;

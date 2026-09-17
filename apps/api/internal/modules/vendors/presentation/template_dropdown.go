@@ -13,9 +13,15 @@ const templateDropdownRows = 1000
 
 // templateDropdown constrains one Import-template column (matched by its
 // exact header text) to a fixed set of values via an in-file Excel dropdown.
+// Set referenceOnly to write the values into the hidden "Referensi" sheet as
+// a lookup reference WITHOUT an Excel data-validation dropdown — for columns
+// whose valid content can't be expressed as one dropdown pick, e.g. Venue's
+// "Kategori" (comma-separated multi-values; Excel validation can't check
+// those, so the backend validates per row instead — D-4).
 type templateDropdown struct {
-	header string
-	values []string
+	header        string
+	values        []string
+	referenceOnly bool
 }
 
 // addTemplateDropdowns turns every non-free-text column in an Import
@@ -28,12 +34,12 @@ type templateDropdown struct {
 //
 // The values can't be inlined into the dropdown formula directly --
 // excelize's SetDropList caps a literal formula at 255 characters, and the
-// 128-entry AllowedCities list alone is already over that -- so each list is
-// written into its own column of a hidden "Referensi" helper sheet and the
-// dropdown references that range instead (SetSqrefDropList), the pattern
-// excelize's own docs recommend for exactly this case. The helper sheet is
-// hidden, not deleted, since a dropdown's source range must stay resolvable
-// for as long as the workbook exists.
+// 23-entry AllowedCities list alone is already ~420 characters -- so each
+// list is written into its own column of a hidden "Referensi" helper sheet
+// and the dropdown references that range instead (SetSqrefDropList), the
+// pattern excelize's own docs recommend for exactly this case. The helper
+// sheet is hidden, not deleted, since a dropdown's source range must stay
+// resolvable for as long as the workbook exists.
 func addTemplateDropdowns(f *excelize.File, sheet string, headers []string, dropdowns []templateDropdown) error {
 	if len(dropdowns) == 0 {
 		return nil
@@ -64,6 +70,12 @@ func addTemplateDropdowns(f *excelize.File, sheet string, headers []string, drop
 			if err := f.SetCellValue(helperSheet, fmt.Sprintf("%s%d", helperCol, rowIdx+1), v); err != nil {
 				return err
 			}
+		}
+		if dd.referenceOnly {
+			// Values stay as a visible-when-unhidden reference only; no
+			// data-validation is wired up (see the type's doc comment).
+			added = true
+			continue
 		}
 
 		targetCol, err := excelize.ColumnNumberToName(colIndex + 1)

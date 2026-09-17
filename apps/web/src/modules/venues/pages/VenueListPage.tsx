@@ -4,8 +4,12 @@ import { Card } from "@/shared/components/ui/Card";
 import { Button } from "@/shared/components/ui/Button";
 import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
 import { SearchInput } from "@/shared/components/ui/SearchInput";
+import { Input, Select } from "@/shared/components/ui/Input";
 import { Combobox } from "@/shared/components/ui/Combobox";
 import { CITIES } from "@/shared/constants/cities";
+import { VENUE_CATEGORIES } from "@/modules/venues/constants/venue-categories";
+import { VENUE_PRICE_TIERS } from "@/modules/venues/constants/venue-price-tiers";
+import { Badge } from "@/shared/components/ui/Badge";
 import { ImportBulkModal } from "@/shared/components/ui/ImportBulkModal";
 import { Table, THead, TBody, TR, TH, TD } from "@/shared/components/ui/Table";
 import { CardList, CardListField } from "@/shared/components/ui/CardList";
@@ -15,7 +19,7 @@ import { IconActionButton } from "@/shared/components/ui/IconActionButton";
 import { VenueFormModal } from "@/modules/venues/components/VenueFormModal";
 import { VenueStatusBadge } from "@/modules/venues/components/VenueStatusBadge";
 import type { VenueFormValues, VenueCreateFormValues } from "@/modules/venues/schemas/venue.schema";
-import { useVenueStore } from "@/modules/venues/stores/useVenueStore";
+import { useVenueStore, type VenueListFilters } from "@/modules/venues/stores/useVenueStore";
 import type { Venue } from "@/modules/venues/types";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
 import { formatCurrency } from "@/shared/lib/formatters";
@@ -36,10 +40,20 @@ export default function VenueListPage() {
   const fetchVenueDeleteImpact = useVenueStore((s) => s.fetchVenueDeleteImpact);
   const deleteVenue = useVenueStore((s) => s.deleteVenue);
   const isOwner = useAuthStore((s) => s.session?.role === "Owner");
+  // Sales boleh membaca direktori Venue (PLAN revisi-vendor-venue-portal §1.1
+  // poin 7) tapi tidak boleh menulis: sembunyikan Tambah/Import/Export serta
+  // Ubah & Nonaktifkan agar tidak ada tombol yang pasti 403 (backend:
+  // requireManagerRole).
+  const role = useAuthStore((s) => s.session?.role);
+  const canManage = role === "Owner" || role === "Admin";
 
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query);
   const [cityFilter, setCityFilter] = useState<string>("Semua");
+  const [categoryFilter, setCategoryFilter] = useState<string>("Semua");
+  const [priceTierFilter, setPriceTierFilter] = useState<string>("Semua");
+  const [capacityMinInput, setCapacityMinInput] = useState("");
+  const debouncedCapacityMin = useDebouncedValue(capacityMinInput);
   const [page, setPage] = useState(1);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingVenue, setEditingVenue] = useState<Venue | undefined>(undefined);
@@ -51,13 +65,28 @@ export default function VenueListPage() {
   const [impactLoading, setImpactLoading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedQuery, cityFilter]);
+  // Merakit filter daftar dari state — dipakai effect (debounced) maupun
+  // refetch manual sehabis aksi (nilai terkini). capacityMin non-angka
+  // diabaikan (tidak dikirim) agar tidak memicu 400 backend.
+  function buildFilters(searchText: string, capacityText: string): VenueListFilters {
+    const parsed = capacityText.trim() === "" ? NaN : Number(capacityText);
+    return {
+      search: searchText,
+      city: cityFilter === "Semua" ? "" : cityFilter,
+      category: categoryFilter === "Semua" ? "" : categoryFilter,
+      priceTier: priceTierFilter === "Semua" ? "" : priceTierFilter,
+      ...(Number.isInteger(parsed) && parsed >= 0 ? { capacityMin: parsed } : {}),
+    };
+  }
 
   useEffect(() => {
-    void fetchVenuePage(page, debouncedQuery, cityFilter === "Semua" ? "" : cityFilter);
-  }, [fetchVenuePage, page, debouncedQuery, cityFilter]);
+    setPage(1);
+  }, [debouncedQuery, cityFilter, categoryFilter, priceTierFilter, debouncedCapacityMin]);
+
+  useEffect(() => {
+    void fetchVenuePage(page, buildFilters(debouncedQuery, debouncedCapacityMin));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchVenuePage, page, debouncedQuery, cityFilter, categoryFilter, priceTierFilter, debouncedCapacityMin]);
 
   function openCreateModal() {
     setEditingVenue(undefined);
@@ -83,7 +112,7 @@ export default function VenueListPage() {
         await createVenue(values as VenueCreateFormValues);
       }
       closeModal();
-      await fetchVenuePage(page, query, cityFilter === "Semua" ? "" : cityFilter);
+      await fetchVenuePage(page, buildFilters(query, capacityMinInput));
     } catch (err) {
       setActionError(getApiErrorMessage(err, "Gagal menyimpan venue"));
     }
@@ -93,7 +122,7 @@ export default function VenueListPage() {
     setActionError(null);
     try {
       await toggleVenueActive(venue.id);
-      await fetchVenuePage(page, query, cityFilter === "Semua" ? "" : cityFilter);
+      await fetchVenuePage(page, buildFilters(query, capacityMinInput));
     } catch (err) {
       setActionError(getApiErrorMessage(err, "Gagal mengubah status venue"));
     }
@@ -101,7 +130,7 @@ export default function VenueListPage() {
 
   async function handleImportVenues(file: File) {
     const result = await importVenues(file);
-    await fetchVenuePage(page, query, cityFilter === "Semua" ? "" : cityFilter);
+    await fetchVenuePage(page, buildFilters(query, capacityMinInput));
     return result;
   }
 
@@ -130,7 +159,7 @@ export default function VenueListPage() {
     try {
       await deleteVenue(deleteTarget.id);
       closeDeleteConfirm();
-      await fetchVenuePage(page, query, cityFilter === "Semua" ? "" : cityFilter);
+      await fetchVenuePage(page, buildFilters(query, capacityMinInput));
     } catch (err) {
       setActionError(getApiErrorMessage(err, "Gagal menghapus venue"));
       closeDeleteConfirm();
@@ -143,7 +172,7 @@ export default function VenueListPage() {
     setActionError(null);
     setIsExporting(true);
     try {
-      const blob = await exportVenues(query, cityFilter === "Semua" ? "" : cityFilter);
+      const blob = await exportVenues(buildFilters(query, capacityMinInput));
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -165,15 +194,19 @@ export default function VenueListPage() {
           <p className="mt-1 text-[13px] text-text-secondary">Kelola direktori gedung/lokasi acara yang bekerja sama dengan WO.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" icon={<Upload className="h-4 w-4" />} onClick={() => setImportModalOpen(true)}>
-            Import Bulk
-          </Button>
-          <Button variant="secondary" icon={<Download className="h-4 w-4" />} onClick={() => void handleExportVenues()} disabled={isExporting}>
-            {isExporting ? "Mengekspor..." : "Export Excel"}
-          </Button>
-          <Button icon={<Plus className="h-4 w-4" />} onClick={openCreateModal}>
-            Tambah Venue
-          </Button>
+          {canManage && (
+            <>
+              <Button variant="secondary" icon={<Upload className="h-4 w-4" />} onClick={() => setImportModalOpen(true)}>
+                Import Bulk
+              </Button>
+              <Button variant="secondary" icon={<Download className="h-4 w-4" />} onClick={() => void handleExportVenues()} disabled={isExporting}>
+                {isExporting ? "Mengekspor..." : "Export Excel"}
+              </Button>
+              <Button icon={<Plus className="h-4 w-4" />} onClick={openCreateModal}>
+                Tambah Venue
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -191,6 +224,30 @@ export default function VenueListPage() {
             </option>
           ))}
         </Combobox>
+        <Select className="w-44" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+          <option value="Semua">Semua Kategori</option>
+          {VENUE_CATEGORIES.map((category) => (
+            <option key={category} value={category}>
+              {category}
+            </option>
+          ))}
+        </Select>
+        <Select className="w-44" value={priceTierFilter} onChange={(e) => setPriceTierFilter(e.target.value)}>
+          <option value="Semua">Semua Harga</option>
+          {VENUE_PRICE_TIERS.map((tier) => (
+            <option key={tier} value={tier}>
+              {tier}
+            </option>
+          ))}
+        </Select>
+        <Input
+          className="w-40"
+          type="number"
+          min={0}
+          placeholder="Kapasitas min."
+          value={capacityMinInput}
+          onChange={(e) => setCapacityMinInput(e.target.value)}
+        />
       </div>
 
       <Card>
@@ -213,14 +270,23 @@ export default function VenueListPage() {
                     <CardListField label="No Tlp PIC" value={venue.phonePic} />
                     <CardListField label="Kota" value={venue.city ?? "-"} />
                     <CardListField label="Harga Sewa" value={venue.rentalPrice ? formatCurrency(venue.rentalPrice) : "Belum diisi"} />
+                    {venue.priceTier && (
+                      <div className="pt-0.5">
+                        <Badge tone="navy" dot={false}>{venue.priceTier}</Badge>
+                      </div>
+                    )}
                     <CardListField label="Kapasitas" value={venue.capacity ? `${venue.capacity} orang` : "-"} />
                   </div>
                   <div className="flex items-center gap-1.5 pt-1">
-                    <IconActionButton icon={Pencil} label="Ubah Venue" tone="neutral" onClick={() => openEditModal(venue)} />
-                    {venue.isActive ? (
-                      <IconActionButton icon={Ban} label="Nonaktifkan" tone="danger" onClick={() => void handleToggleActive(venue)} />
-                    ) : (
-                      <IconActionButton icon={CheckCircle2} label="Aktifkan" tone="success" onClick={() => void handleToggleActive(venue)} />
+                    {canManage && (
+                      <>
+                        <IconActionButton icon={Pencil} label="Ubah Venue" tone="neutral" onClick={() => openEditModal(venue)} />
+                        {venue.isActive ? (
+                          <IconActionButton icon={Ban} label="Nonaktifkan" tone="danger" onClick={() => void handleToggleActive(venue)} />
+                        ) : (
+                          <IconActionButton icon={CheckCircle2} label="Aktifkan" tone="success" onClick={() => void handleToggleActive(venue)} />
+                        )}
+                      </>
                     )}
                     {isOwner && (
                       <IconActionButton icon={Trash2} label="Hapus Permanen" tone="danger" onClick={() => void openDeleteConfirm(venue)} />
@@ -251,18 +317,29 @@ export default function VenueListPage() {
                         <span className="block text-[12.5px] text-text-secondary">{venue.phonePic}</span>
                       </TD>
                       <TD>{venue.city ?? <span className="text-text-secondary">-</span>}</TD>
-                      <TD>{venue.rentalPrice ? formatCurrency(venue.rentalPrice) : <span className="text-text-secondary">Belum diisi</span>}</TD>
+                      <TD>
+                        {venue.rentalPrice ? formatCurrency(venue.rentalPrice) : <span className="text-text-secondary">Belum diisi</span>}
+                        {venue.priceTier && (
+                          <div className="mt-1">
+                            <Badge tone="navy" dot={false}>{venue.priceTier}</Badge>
+                          </div>
+                        )}
+                      </TD>
                       <TD>{venue.capacity ? `${venue.capacity} orang` : "-"}</TD>
                       <TD>
                         <VenueStatusBadge isActive={venue.isActive} />
                       </TD>
                       <TD>
                         <div className="flex items-center gap-1.5">
-                          <IconActionButton icon={Pencil} label="Ubah Venue" tone="neutral" onClick={() => openEditModal(venue)} />
-                          {venue.isActive ? (
-                            <IconActionButton icon={Ban} label="Nonaktifkan" tone="danger" onClick={() => void handleToggleActive(venue)} />
-                          ) : (
-                            <IconActionButton icon={CheckCircle2} label="Aktifkan" tone="success" onClick={() => void handleToggleActive(venue)} />
+                          {canManage && (
+                            <>
+                              <IconActionButton icon={Pencil} label="Ubah Venue" tone="neutral" onClick={() => openEditModal(venue)} />
+                              {venue.isActive ? (
+                                <IconActionButton icon={Ban} label="Nonaktifkan" tone="danger" onClick={() => void handleToggleActive(venue)} />
+                              ) : (
+                                <IconActionButton icon={CheckCircle2} label="Aktifkan" tone="success" onClick={() => void handleToggleActive(venue)} />
+                              )}
+                            </>
                           )}
                           {isOwner && (
                             <IconActionButton icon={Trash2} label="Hapus Permanen" tone="danger" onClick={() => void openDeleteConfirm(venue)} />

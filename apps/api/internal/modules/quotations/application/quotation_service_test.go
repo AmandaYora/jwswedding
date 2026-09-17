@@ -261,6 +261,9 @@ func (fakeClientDirectory) SpecimenMeta(_ context.Context, _, _ int64) ([4]strin
 func (fakeClientDirectory) SignerOptions(_ context.Context, _, _ int64) ([][2]string, error) {
 	return [][2]string{{"Bride", "Rara"}, {"Groom", "Dafa"}}, nil
 }
+func (fakeClientDirectory) ClientIDForContact(_ context.Context, _, contactID int64) (int64, error) {
+	return contactID, nil
+}
 
 func newTransitionService() (*QuotationService, *fakeQuotationRepo, *fakeProjectsContracts) {
 	repo := newFakeQuotationRepo()

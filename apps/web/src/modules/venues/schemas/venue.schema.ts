@@ -19,6 +19,9 @@ export const venueSchema = z.object({
   facilities: z.string().optional().default(""),
   socialMedia: z.string().optional().default(""),
   notes: z.string().optional().default(""),
+  // Multi-select fixed list (VENUE_CATEGORIES) — optional on both create and
+  // edit (PLAN revisi-vendor-venue-portal §4.6/I2); [] = no category.
+  categories: z.array(z.string()).default([]),
 });
 
 export type VenueFormValues = z.infer<typeof venueSchema>;

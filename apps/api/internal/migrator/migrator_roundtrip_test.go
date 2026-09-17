@@ -106,8 +106,15 @@ func indexExists(t *testing.T, url, table, index string) bool {
 // penawaran-client-master migrations (000056-000063), 000064 (drop of the
 // payment-schedule feature), 000065 (quotations.package_name), the TTD
 // Penawaran migrations (000066 client_signatures, 000067
-// quotation_signature_links), and 000068 (tiga index filter Sales/WP,
-// ADR-0033) back one step at a time and then forward again.
+// quotation_signature_links), 000068 (tiga index filter Sales/WP, ADR-0033),
+// 000069 (venue_categories label table, PLAN revisi-vendor-venue-portal),
+// and 000070 (restrict cities to Jabodetabek+Bali, down = intentional no-op)
+// back one step at a time and then forward again.
+//
+// The step count below is coupled to the chain length: every new migration
+// appended after 000070 must extend it (and the table assertions), or the
+// rollback lands short and old tables "remain" — exactly the false failure
+// adding 000069/000070 first produced here.
 //
 // The rollback order matters and is the part most likely to break: the three
 // project_package_* tables carry FKs to `projects`, the quotation_* tables
@@ -155,6 +162,10 @@ func TestMigrations_UpDownUp(t *testing.T) {
 			t.Fatalf("setelah up, index %s.%s tidak ada", idx[0], idx[1])
 		}
 	}
+	// 000069 (PLAN revisi-vendor-venue-portal): label kategori venue.
+	if !tableExists(t, url, "venue_categories") {
+		t.Fatal("setelah up, tabel venue_categories tidak ada")
+	}
 	// 000062 dropped the old composition tables at the end of the chain.
 	for _, table := range []string{
 		"project_package_blocks", "project_package_adjustments", "project_package_orders",
@@ -177,8 +188,10 @@ func TestMigrations_UpDownUp(t *testing.T) {
 		t.Fatal("setelah up, kolom client_contacts.project_id masih ada")
 	}
 
-	// Roll back the seventeen steps: 000068 down to 000052.
-	for i := 0; i < 17; i++ {
+	// Roll back the nineteen steps: 000070 down to 000052. (000070's own down
+	// is an intentional no-op — its city-NULLing is unrecoverable by design,
+	// see A6/A7 — so no data assertion covers it on this empty schema.)
+	for i := 0; i < 19; i++ {
 		if err := migrator.Down(url); err != nil {
 			t.Fatalf("migrate down langkah ke-%d: %v", i+1, err)
 		}
@@ -211,7 +224,7 @@ func TestMigrations_UpDownUp(t *testing.T) {
 		"package_templates", "package_template_blocks", "package_template_terms",
 		"project_package_blocks", "project_package_adjustments", "project_package_orders",
 		"quotations", "quotation_blocks", "quotation_adjustments", "client_contacts",
-		"client_signatures", "quotation_signature_links",
+		"client_signatures", "quotation_signature_links", "venue_categories",
 	} {
 		if tableExists(t, url, table) {
 			t.Errorf("setelah down, tabel %s masih ada", table)
@@ -261,6 +274,9 @@ func TestMigrations_UpDownUp(t *testing.T) {
 	}
 	if !tableExists(t, url, "client_contacts") {
 		t.Error("setelah up ulang, client_contacts tidak kembali")
+	}
+	if !tableExists(t, url, "venue_categories") {
+		t.Error("setelah up ulang, venue_categories tidak kembali")
 	}
 	for _, table := range []string{
 		"project_package_blocks", "project_package_adjustments", "project_package_orders",

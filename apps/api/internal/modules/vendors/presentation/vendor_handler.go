@@ -88,10 +88,12 @@ func (h *VendorHandler) Collection(w http.ResponseWriter, r *http.Request) {
 			response.OK(w, "ok", result)
 			return
 		}
+		filter, ok := parseVendorListFilter(w, r, categoryID)
+		if !ok {
+			return
+		}
 		params := pagination.FromRequest(r)
-		search := r.URL.Query().Get("search")
-		city := r.URL.Query().Get("city")
-		vendors, total, err := h.vendors.ListPaginated(r.Context(), tenantID, categoryID, params, search, city)
+		vendors, total, err := h.vendors.ListPaginated(r.Context(), tenantID, filter, params)
 		if err != nil {
 			writeAppError(w, err)
 			return
@@ -111,11 +113,53 @@ func (h *VendorHandler) Collection(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// parseVendorListFilter reads the GET /vendors list filters (search, city,
+// priceKind + priceMin/priceMax) into one VendorListFilter. categoryID is
+// passed in because Collection parses it before the ?all=true branch.
+// priceKind outside the domain whitelist → 400; non-numeric priceMin/Max →
+// 400. min > max → 422 via the service's own validation (writeAppError).
+// A mistyped param is never silently ignored: that would display the full
+// list as if it were the filtered result.
+func parseVendorListFilter(w http.ResponseWriter, r *http.Request, categoryID *int64) (application.VendorListFilter, bool) {
+	filter := application.VendorListFilter{
+		CategoryID: categoryID,
+		Search:     r.URL.Query().Get("search"),
+		City:       r.URL.Query().Get("city"),
+		PriceKind:  r.URL.Query().Get("priceKind"),
+	}
+	if filter.PriceKind != "" {
+		if _, ok := domain.VendorPriceColumn(filter.PriceKind); !ok {
+			response.Error(w, http.StatusBadRequest, "priceKind tidak valid", nil)
+			return filter, false
+		}
+	}
+	parseBound := func(name string) (*int64, bool) {
+		raw := r.URL.Query().Get(name)
+		if raw == "" {
+			return nil, true
+		}
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, name+" tidak valid", nil)
+			return nil, false
+		}
+		return &n, true
+	}
+	var ok bool
+	if filter.PriceMin, ok = parseBound("priceMin"); !ok {
+		return filter, false
+	}
+	if filter.PriceMax, ok = parseBound("priceMax"); !ok {
+		return filter, false
+	}
+	return filter, true
+}
+
 // Export streams every vendor matching the same filters Collection's list
-// view accepts (categoryId/search/city) as an .xlsx workbook, unpaginated —
-// "filter then export" (PLAN.md's Export design). Column order matches
-// vendorTemplateHeaders exactly, plus an appended Status column, so the file
-// round-trips through Import unmodified.
+// view accepts (categoryId/search/city/priceKind/priceMin/priceMax) as an
+// .xlsx workbook, unpaginated — "filter then export" (PLAN.md's Export
+// design). Column order matches vendorTemplateHeaders exactly, plus an
+// appended Status column, so the file round-trips through Import unmodified.
 func (h *VendorHandler) Export(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := requireStaffTenant(w, r)
 	if !ok {
@@ -138,10 +182,12 @@ func (h *VendorHandler) Export(w http.ResponseWriter, r *http.Request) {
 		}
 		categoryID = &id
 	}
-	search := r.URL.Query().Get("search")
-	city := r.URL.Query().Get("city")
+	filter, ok := parseVendorListFilter(w, r, categoryID)
+	if !ok {
+		return
+	}
 
-	vendors, err := h.vendors.Export(r.Context(), tenantID, categoryID, search, city)
+	vendors, err := h.vendors.Export(r.Context(), tenantID, filter)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -651,7 +697,23 @@ func (h *VendorHandler) Import(w http.ResponseWriter, r *http.Request) {
 	defer rowIter.Close()
 
 	var rows []application.VendorImportRow
-	rowIter.Next() // header row -- skip, position and meaning are fixed (vendorTemplateHeaders)
+	// Baris header divalidasi, bukan dilewati — alasan lengkapnya di
+	// validateImportHeaderRow. Kolom Vendor belum pernah bergeser, tapi
+	// penjagaan yang sama dipasang di sini supaya perubahan kolom berikutnya
+	// tidak mengulang kegagalan senyap yang sama di modul ini.
+	if !rowIter.Next() {
+		response.Error(w, http.StatusBadRequest, "Berkas kosong — gunakan berkas hasil unduh Template", nil)
+		return
+	}
+	headerCells, err := rowIter.Columns()
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "Gagal membaca baris header pada berkas Excel", nil)
+		return
+	}
+	if err := validateImportHeaderRow(headerCells, vendorTemplateHeaders); err != nil {
+		response.Error(w, http.StatusUnprocessableEntity, "Format berkas tidak sesuai: "+err.Error(), nil)
+		return
+	}
 	for rowIter.Next() {
 		cells, err := rowIter.Columns()
 		if err != nil {

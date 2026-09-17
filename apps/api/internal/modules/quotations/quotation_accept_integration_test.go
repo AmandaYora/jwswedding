@@ -75,6 +75,9 @@ func (stubClientDirectory) SpecimenMeta(_ context.Context, _, _ int64) ([4]strin
 func (stubClientDirectory) SignerOptions(_ context.Context, _, _ int64) ([][2]string, error) {
 	return [][2]string{{"Bride", "Rara"}, {"Groom", "Dafa"}}, nil
 }
+func (stubClientDirectory) ClientIDForContact(_ context.Context, _, contactID int64) (int64, error) {
+	return contactID, nil
+}
 
 // mapObjectStorage adalah ObjectStorage dalam memori untuk tes integrasi —
 // TTD tidak butuh bucket sungguhan untuk mengunci alurnya.

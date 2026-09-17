@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, Pencil, CheckCircle2, Ban, Eye, Upload, Download, Trash2 } from "lucide-react";
+import { Plus, Pencil, CheckCircle2, Ban, Eye, Upload, Download, Trash2, Instagram } from "lucide-react";
 import { Card } from "@/shared/components/ui/Card";
 import { Button } from "@/shared/components/ui/Button";
 import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
 import { SearchInput } from "@/shared/components/ui/SearchInput";
 import { Select } from "@/shared/components/ui/Input";
+import { CurrencyInput } from "@/shared/components/ui/CurrencyInput";
 import { Combobox } from "@/shared/components/ui/Combobox";
 import { CITIES } from "@/shared/constants/cities";
 import { Badge } from "@/shared/components/ui/Badge";
@@ -19,11 +20,12 @@ import { IconActionButton } from "@/shared/components/ui/IconActionButton";
 import { VendorFormModal } from "@/modules/vendors/components/VendorFormModal";
 import { VendorStatusBadge } from "@/modules/vendors/components/VendorStatusBadge";
 import type { VendorFormValues, VendorCreateFormValues } from "@/modules/vendors/schemas/vendor.schema";
-import { useVendorStore } from "@/modules/vendors/stores/useVendorStore";
+import { useVendorStore, type VendorListFilters, type VendorPriceKind } from "@/modules/vendors/stores/useVendorStore";
 import type { Vendor, VendorProjectHistoryItem } from "@/modules/vendors/types";
 import { useVendorCategoryStore } from "@/modules/vendor-categories/stores/useVendorCategoryStore";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
+import { instagramUrlFrom } from "@/shared/lib/instagram";
 import { formatDate } from "@/shared/lib/formatters";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
 import { useAuthStore } from "@/shared/stores/useAuthStore";
@@ -50,6 +52,14 @@ export default function VendorListPage() {
   const debouncedQuery = useDebouncedValue(query);
   const [categoryFilter, setCategoryFilter] = useState<string>("Semua");
   const [cityFilter, setCityFilter] = useState<string>("Semua");
+  // Filter range harga (PLAN revisi-vendor-venue-portal §1.1 poin 1): pilih
+  // jenis paket dulu, lalu Min–Maks. "Semua" = tanpa filter harga; Min/Maks
+  // disabled selama itu agar tidak ada isian yang diam-diam diabaikan.
+  const [priceKindFilter, setPriceKindFilter] = useState<string>("Semua");
+  const [priceMin, setPriceMin] = useState(0);
+  const [priceMax, setPriceMax] = useState(0);
+  const debouncedPriceMin = useDebouncedValue(priceMin);
+  const debouncedPriceMax = useDebouncedValue(priceMax);
   const [page, setPage] = useState(1);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | undefined>(undefined);
@@ -68,18 +78,28 @@ export default function VendorListPage() {
     void fetchCategories();
   }, [fetchCategories]);
 
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedQuery, categoryFilter, cityFilter]);
+  // Merakit filter daftar dari state — dipakai effect (debounced) maupun
+  // refetch manual sehabis aksi (nilai terkini). Min/Maks hanya dikirim bila
+  // jenis paket dipilih; kalau tidak, backend akan 422.
+  function buildFilters(searchText: string, min: number, max: number): VendorListFilters {
+    const priceKind = priceKindFilter === "Semua" ? "" : (priceKindFilter as VendorPriceKind);
+    return {
+      search: searchText,
+      categoryId: categoryFilter === "Semua" ? "" : categoryFilter,
+      city: cityFilter === "Semua" ? "" : cityFilter,
+      priceKind,
+      ...(priceKind ? { priceMin: min || undefined, priceMax: max || undefined } : {}),
+    };
+  }
 
   useEffect(() => {
-    void fetchVendorPage(
-      page,
-      debouncedQuery,
-      categoryFilter === "Semua" ? "" : categoryFilter,
-      cityFilter === "Semua" ? "" : cityFilter
-    );
-  }, [fetchVendorPage, page, debouncedQuery, categoryFilter, cityFilter]);
+    setPage(1);
+  }, [debouncedQuery, categoryFilter, cityFilter, priceKindFilter, debouncedPriceMin, debouncedPriceMax]);
+
+  useEffect(() => {
+    void fetchVendorPage(page, buildFilters(debouncedQuery, debouncedPriceMin, debouncedPriceMax));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchVendorPage, page, debouncedQuery, categoryFilter, cityFilter, priceKindFilter, debouncedPriceMin, debouncedPriceMax]);
 
   useEffect(() => {
     if (!historyVendor) {
@@ -116,7 +136,7 @@ export default function VendorListPage() {
         await createVendor(values as VendorCreateFormValues);
       }
       closeModal();
-      await fetchVendorPage(page, query, categoryFilter === "Semua" ? "" : categoryFilter, cityFilter === "Semua" ? "" : cityFilter);
+      await fetchVendorPage(page, buildFilters(query, priceMin, priceMax));
     } catch (err) {
       setActionError(getApiErrorMessage(err, "Gagal menyimpan vendor"));
     }
@@ -126,7 +146,7 @@ export default function VendorListPage() {
     setActionError(null);
     try {
       await toggleVendorActive(vendor.id);
-      await fetchVendorPage(page, query, categoryFilter === "Semua" ? "" : categoryFilter, cityFilter === "Semua" ? "" : cityFilter);
+      await fetchVendorPage(page, buildFilters(query, priceMin, priceMax));
     } catch (err) {
       setActionError(getApiErrorMessage(err, "Gagal mengubah status vendor"));
     }
@@ -134,7 +154,7 @@ export default function VendorListPage() {
 
   async function handleImportVendors(file: File) {
     const result = await importVendors(file);
-    await fetchVendorPage(page, query, categoryFilter === "Semua" ? "" : categoryFilter, cityFilter === "Semua" ? "" : cityFilter);
+    await fetchVendorPage(page, buildFilters(query, priceMin, priceMax));
     return result;
   }
 
@@ -165,7 +185,7 @@ export default function VendorListPage() {
     try {
       await deleteVendor(deleteTarget.id);
       closeDeleteConfirm();
-      await fetchVendorPage(page, query, categoryFilter === "Semua" ? "" : categoryFilter, cityFilter === "Semua" ? "" : cityFilter);
+      await fetchVendorPage(page, buildFilters(query, priceMin, priceMax));
     } catch (err) {
       setActionError(getApiErrorMessage(err, "Gagal menghapus vendor"));
       closeDeleteConfirm();
@@ -178,7 +198,7 @@ export default function VendorListPage() {
     setActionError(null);
     setIsExporting(true);
     try {
-      const blob = await exportVendors(query, categoryFilter === "Semua" ? "" : categoryFilter, cityFilter === "Semua" ? "" : cityFilter);
+      const blob = await exportVendors(buildFilters(query, priceMin, priceMax));
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -239,6 +259,26 @@ export default function VendorListPage() {
             </option>
           ))}
         </Combobox>
+        <Select className="w-44" value={priceKindFilter} onChange={(e) => setPriceKindFilter(e.target.value)}>
+          <option value="Semua">Semua Paket</option>
+          <option value="akad">Akad</option>
+          <option value="akadResepsi">Akad+Resepsi</option>
+          <option value="resepsi">Resepsi</option>
+        </Select>
+        <CurrencyInput
+          className="w-40"
+          placeholder="Min Rp"
+          value={priceMin}
+          onChange={setPriceMin}
+          disabled={priceKindFilter === "Semua"}
+        />
+        <CurrencyInput
+          className="w-40"
+          placeholder="Maks Rp"
+          value={priceMax}
+          onChange={setPriceMax}
+          disabled={priceKindFilter === "Semua"}
+        />
       </div>
 
       <Card>
@@ -252,6 +292,7 @@ export default function VendorListPage() {
             keyFor={(vendor) => vendor.id}
             renderItem={(vendor) => {
               const category = categories.find((c) => c.id === vendor.categoryId);
+              const instagramUrl = instagramUrlFrom(vendor.socialMedia);
               return (
                 <>
                   <div className="flex items-start justify-between gap-3">
@@ -272,6 +313,9 @@ export default function VendorListPage() {
                       <IconActionButton icon={CheckCircle2} label="Aktifkan" tone="success" onClick={() => void handleToggleActive(vendor)} />
                     )}
                     <IconActionButton icon={Eye} label="Lihat Project" tone="info" onClick={() => setHistoryVendor(vendor)} />
+                    {instagramUrl && (
+                      <IconActionButton icon={Instagram} label="Buka Instagram" tone="info" href={instagramUrl} />
+                    )}
                     {isOwner && (
                       <IconActionButton icon={Trash2} label="Hapus Permanen" tone="danger" onClick={() => void openDeleteConfirm(vendor)} />
                     )}
@@ -296,6 +340,7 @@ export default function VendorListPage() {
             <TBody>
               {vendors.map((vendor) => {
                 const category = categories.find((c) => c.id === vendor.categoryId);
+                const instagramUrl = instagramUrlFrom(vendor.socialMedia);
                 return (
                   <TR key={vendor.id}>
                     <TD className="font-semibold text-text-primary">{vendor.name}</TD>
@@ -318,6 +363,9 @@ export default function VendorListPage() {
                           <IconActionButton icon={CheckCircle2} label="Aktifkan" tone="success" onClick={() => void handleToggleActive(vendor)} />
                         )}
                         <IconActionButton icon={Eye} label="Lihat Project" tone="info" onClick={() => setHistoryVendor(vendor)} />
+                        {instagramUrl && (
+                          <IconActionButton icon={Instagram} label="Buka Instagram" tone="info" href={instagramUrl} />
+                        )}
                         {isOwner && (
                           <IconActionButton icon={Trash2} label="Hapus Permanen" tone="danger" onClick={() => void openDeleteConfirm(vendor)} />
                         )}

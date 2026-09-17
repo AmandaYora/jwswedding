@@ -7,26 +7,33 @@ import { CurrencyInput } from "@/shared/components/ui/CurrencyInput";
 import { Combobox } from "@/shared/components/ui/Combobox";
 import { venueSchema, venueCreateSchema, type VenueFormValues, type VenueCreateFormValues } from "@/modules/venues/schemas/venue.schema";
 import { CITIES } from "@/shared/constants/cities";
+import { VENUE_CATEGORIES } from "@/modules/venues/constants/venue-categories";
 import type { Venue } from "@/modules/venues/types";
 import { useVenueStore } from "@/modules/venues/stores/useVenueStore";
 import { httpClient } from "@/shared/services/http-client";
 import { API } from "@/shared/services/api-endpoints";
 import { compressFileForUpload } from "@/shared/lib/image-compression";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
+import { formatFileSizeMB } from "@/shared/lib/formatters";
 
 function toFormValues(venue?: Venue): VenueFormValues {
   if (!venue) {
     return {
       name: "", picName: "", phonePic: "", phoneVenue: "", email: "", address: "", city: "",
-      rentalPrice: 0, charge: 0, capacity: 0, facilities: "", socialMedia: "", notes: "",
+      categories: [], rentalPrice: 0, charge: 0, capacity: 0, facilities: "", socialMedia: "", notes: "",
     };
   }
   return {
     name: venue.name, picName: venue.picName, phonePic: venue.phonePic,
     phoneVenue: venue.phoneVenue ?? "", email: venue.email ?? "", address: venue.address ?? "", city: venue.city ?? "",
+    categories: venue.categories ?? [],
     rentalPrice: venue.rentalPrice ?? 0, charge: venue.charge ?? 0, capacity: venue.capacity ?? 0,
     facilities: venue.facilities ?? "", socialMedia: venue.socialMedia ?? "", notes: venue.notes,
   };
+}
+
+function toggleCategory(current: string[], category: string): string[] {
+  return current.includes(category) ? current.filter((c) => c !== category) : [...current, category];
 }
 
 interface VenueFormModalProps {
@@ -63,6 +70,14 @@ export function VenueFormModal({ open, onClose, onSubmitCreate, onSubmitEdit, in
 
   async function handleAttachmentChange(file: File | undefined) {
     if (!file || !initialVenue) return;
+    // Pre-upload guard (PLAN revisi-vendor-venue-portal E3): the backend cap
+    // (maxVenueAttachmentDecodedSize = 15 MB) applies to the decoded bytes,
+    // and a PDF passes compression through unchanged — so a >15 MB file is
+    // certain to be rejected after a ~20 MB base64 upload. Reject here.
+    if (file.size > 15 * 1024 * 1024) {
+      setAttachmentError(`Ukuran berkas ${formatFileSizeMB(file.size)} melebihi batas 15 MB.`);
+      return;
+    }
     setAttachmentError(null);
     setAttachmentUploading(true);
     try {
@@ -156,6 +171,33 @@ export function VenueFormModal({ open, onClose, onSubmitCreate, onSubmitEdit, in
         <Field label="Charge (Rp)" hint={errors.charge}>
           <CurrencyInput value={values.charge} onChange={(n) => set("charge", n)} />
         </Field>
+        <div className="sm:col-span-2">
+          <Field label="Kategori (boleh pilih lebih dari satu)" hint={errors.categories}>
+            <div className="flex flex-wrap gap-2">
+              {VENUE_CATEGORIES.map((category) => {
+                const checked = values.categories.includes(category);
+                return (
+                  <label
+                    key={category}
+                    className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                      checked
+                        ? "border-navy-800 bg-navy-800 text-white"
+                        : "border-border bg-white text-text-secondary hover:border-navy-200"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={checked}
+                      onChange={() => set("categories", toggleCategory(values.categories, category))}
+                    />
+                    {category}
+                  </label>
+                );
+              })}
+            </div>
+          </Field>
+        </div>
         <div className="sm:col-span-2">
           <Field label="Alamat" hint={errors.address}>
             <Textarea rows={2} value={values.address} onChange={(e) => set("address", e.target.value)} placeholder="Opsional" />

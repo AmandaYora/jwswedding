@@ -17,6 +17,8 @@ interface RawVenue {
   email: string | null;
   address: string | null;
   city: string | null;
+  categories: string[] | null;
+  priceTier: string;
   rentalPrice: number | null;
   charge: number | null;
   capacity: number | null;
@@ -30,7 +32,7 @@ interface RawVenue {
 }
 
 function toVenue(raw: RawVenue): Venue {
-  return { ...raw, id: String(raw.id) };
+  return { ...raw, id: String(raw.id), categories: raw.categories ?? [], priceTier: raw.priceTier ?? "" };
 }
 
 interface RawVenueImportResult {
@@ -60,7 +62,7 @@ interface VenueState {
   venuePage: Venue[];
   venuePageMeta: PaginationMeta;
   fetchVenues: () => Promise<void>;
-  fetchVenuePage: (page: number, search: string, city: string) => Promise<void>;
+  fetchVenuePage: (page: number, filters: VenueListFilters) => Promise<void>;
   // Full staff-only record (rental price, charge, PIC contact) — used by
   // Project Detail's Venue tab once it knows which venue is attached, never
   // by Client Portal (see ADR-0016).
@@ -71,12 +73,42 @@ interface VenueState {
   uploadVenueAttachment: (id: string, file: CompressedFilePayload) => Promise<void>;
   downloadVenueTemplate: () => Promise<Blob>;
   importVenues: (file: File) => Promise<VenueImportResult>;
-  // Exports the currently filtered set (search/city) as .xlsx — same column
-  // order as the import template, plus a Status column.
-  exportVenues: (search: string, city: string) => Promise<Blob>;
+  // Exports the currently filtered set (search/city/category/priceTier/
+  // capacityMin) as .xlsx — same column order as the import template, plus
+  // a Status column.
+  exportVenues: (filters: VenueListFilters) => Promise<Blob>;
   // Hard delete (PLAN.md) — informed-consent, not a blocking precondition.
   fetchVenueDeleteImpact: (id: string) => Promise<AffectedProject[]>;
   deleteVenue: (id: string) => Promise<void>;
+}
+
+// VenueListFilters groups VenueListPage's list filters into one object
+// (PLAN revisi-vendor-venue-portal §4.6/I3, D-6). category is one of
+// VENUE_CATEGORIES, priceTier one of VENUE_PRICE_TIERS, capacityMin a minimum
+// capacity — ""/undefined each mean "no filter".
+export interface VenueListFilters {
+  search: string;
+  city: string;
+  category: string;
+  priceTier: string;
+  capacityMin?: number;
+}
+
+export const EMPTY_VENUE_FILTERS: VenueListFilters = {
+  search: "",
+  city: "",
+  category: "",
+  priceTier: "",
+};
+
+function toVenueListParams(filters: VenueListFilters) {
+  return {
+    search: filters.search || undefined,
+    city: filters.city || undefined,
+    category: filters.category || undefined,
+    priceTier: filters.priceTier || undefined,
+    capacityMin: filters.capacityMin ?? undefined,
+  };
 }
 
 // Backed by the `vendors` module's Venue directory (ADR-0016) — tenant-scoped.
@@ -92,10 +124,10 @@ export const useVenueStore = create<VenueState>((set, get) => ({
     set({ venues: (res.data.data as RawVenue[]).map(toVenue) });
   },
 
-  // Backs VenueListPage's table — real server-side pagination + search,
+  // Backs VenueListPage's table — real server-side pagination + filtering,
   // separate from the `venues` full-roster cache above.
-  fetchVenuePage: async (page, search, city) => {
-    const res = await httpClient.get(API.venues.base, { params: { page, search: search || undefined, city: city || undefined } });
+  fetchVenuePage: async (page, filters) => {
+    const res = await httpClient.get(API.venues.base, { params: { page, ...toVenueListParams(filters) } });
     set({
       venuePage: (res.data.data as RawVenue[]).map(toVenue),
       venuePageMeta: toPaginationMeta(res.data.meta as RawPaginationMeta),
@@ -140,9 +172,9 @@ export const useVenueStore = create<VenueState>((set, get) => ({
     return toVenueImportResult(res.data.data as RawVenueImportResult);
   },
 
-  exportVenues: async (search, city) => {
+  exportVenues: async (filters) => {
     const res = await httpClient.get(API.venues.export, {
-      params: { search: search || undefined, city: city || undefined },
+      params: toVenueListParams(filters),
       responseType: "blob",
     });
     return res.data as Blob;

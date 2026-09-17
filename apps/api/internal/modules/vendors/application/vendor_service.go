@@ -35,9 +35,9 @@ var allowedVendorAttachmentMimeTypes = map[string]bool{
 
 type VendorRepository interface {
 	List(ctx context.Context, tenantID int64, categoryID *int64) ([]domain.Vendor, error)
-	ListPaginated(ctx context.Context, tenantID int64, categoryID *int64, params pagination.Params, search, city string) ([]domain.Vendor, int64, error)
+	ListPaginated(ctx context.Context, tenantID int64, filter VendorListFilter, params pagination.Params) ([]domain.Vendor, int64, error)
 	// ListFiltered backs Export -- same filters as ListPaginated, unpaginated.
-	ListFiltered(ctx context.Context, tenantID int64, categoryID *int64, search, city string) ([]domain.Vendor, error)
+	ListFiltered(ctx context.Context, tenantID int64, filter VendorListFilter) ([]domain.Vendor, error)
 	FindByID(ctx context.Context, tenantID, id int64) (*domain.Vendor, error)
 	Create(ctx context.Context, vendor *domain.Vendor) error
 	CreateBatch(ctx context.Context, vendors []domain.Vendor) error
@@ -74,14 +74,48 @@ func (s *VendorService) List(ctx context.Context, tenantID int64, categoryID *in
 	return s.repo.List(ctx, tenantID, categoryID)
 }
 
-func (s *VendorService) ListPaginated(ctx context.Context, tenantID int64, categoryID *int64, params pagination.Params, search, city string) ([]domain.Vendor, int64, error) {
-	return s.repo.ListPaginated(ctx, tenantID, categoryID, params, search, city)
+// VendorListFilter groups the GET /vendors list filters into one struct so
+// adding a filter never changes the signature again (same idiom as
+// quotations' QuotationListFilter). PriceKind selects which price column the
+// range applies to ("pilih jenis paket dulu, lalu Min–Maks" — locked §2.1);
+// "" means no price filter. PriceMin/PriceMax are nil when absent.
+type VendorListFilter struct {
+	CategoryID *int64
+	Search     string
+	City       string
+	PriceKind  string
+	PriceMin   *int64
+	PriceMax   *int64
+}
+
+func validateVendorListFilter(filter VendorListFilter) error {
+	if filter.PriceKind != "" {
+		if _, ok := domain.VendorPriceColumn(filter.PriceKind); !ok {
+			return apperror.Validation("Jenis paket tidak valid", map[string][]string{"priceKind": {"Pilih akad, akadResepsi, atau resepsi"}})
+		}
+		if filter.PriceMin != nil && filter.PriceMax != nil && *filter.PriceMin > *filter.PriceMax {
+			return apperror.Validation("Rentang harga tidak valid", map[string][]string{"priceMin": {"Harga minimum tidak boleh lebih besar dari maksimum"}})
+		}
+	} else if filter.PriceMin != nil || filter.PriceMax != nil {
+		return apperror.Validation("Jenis paket wajib dipilih", map[string][]string{"priceKind": {"Pilih jenis paket dulu sebelum mengisi rentang harga"}})
+	}
+	return nil
+}
+
+func (s *VendorService) ListPaginated(ctx context.Context, tenantID int64, filter VendorListFilter, params pagination.Params) ([]domain.Vendor, int64, error) {
+	if err := validateVendorListFilter(filter); err != nil {
+		return nil, 0, err
+	}
+	return s.repo.ListPaginated(ctx, tenantID, filter, params)
 }
 
 // Export backs "Export Excel" -- same filters as ListPaginated (so "filter
 // then export" works), unpaginated.
-func (s *VendorService) Export(ctx context.Context, tenantID int64, categoryID *int64, search, city string) ([]domain.Vendor, error) {
-	return s.repo.ListFiltered(ctx, tenantID, categoryID, search, city)
+func (s *VendorService) Export(ctx context.Context, tenantID int64, filter VendorListFilter) ([]domain.Vendor, error) {
+	if err := validateVendorListFilter(filter); err != nil {
+		return nil, err
+	}
+	return s.repo.ListFiltered(ctx, tenantID, filter)
 }
 
 func (s *VendorService) Get(ctx context.Context, tenantID, id int64) (*domain.Vendor, error) {
