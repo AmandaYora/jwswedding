@@ -8,6 +8,18 @@ interface CurrencyInputProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  /** Accessible name for fields with no visible <label> of their own. */
+  "aria-label"?: string;
+  /**
+   * Render 0 as an empty field so the placeholder shows through.
+   *
+   * Opt-in, because the default is load-bearing elsewhere: every FORM in this
+   * app uses "0 in the field == not set" and shows that 0 on purpose (see
+   * venue.schema.ts). A FILTER is the opposite case — a visible "0" there
+   * reads as an active lower bound the user never typed, so the field has to
+   * look empty until they do.
+   */
+  blankWhenZero?: boolean;
 }
 
 function countDigits(s: string): number {
@@ -39,7 +51,7 @@ function cursorForDigitCount(formatted: string, digitsBeforeCursor: number): num
 // `<Input type="number" value={n} onChange={(e) => set(Number(e.target.value))} />`
 // at every call site.
 export const CurrencyInput = forwardRef<HTMLInputElement, CurrencyInputProps>(function CurrencyInput(
-  { value, onChange, className, ...props },
+  { value, onChange, className, blankWhenZero = false, ...props },
   forwardedRef
 ) {
   const innerRef = useRef<HTMLInputElement | null>(null);
@@ -49,7 +61,7 @@ export const CurrencyInput = forwardRef<HTMLInputElement, CurrencyInputProps>(fu
   // raw keystroke -- self-corrects artifacts like a leading zero the moment
   // React re-renders, the same way a native number input already does.
   const digits = String(Math.max(0, Math.trunc(value)));
-  const formatted = Number(digits).toLocaleString("id-ID");
+  const formatted = blankWhenZero && value === 0 ? "" : Number(digits).toLocaleString("id-ID");
 
   useLayoutEffect(() => {
     if (pendingCursor.current !== null && innerRef.current) {

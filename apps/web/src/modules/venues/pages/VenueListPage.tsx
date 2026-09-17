@@ -240,14 +240,21 @@ export default function VenueListPage() {
             </option>
           ))}
         </Select>
-        <Input
-          className="w-40"
-          type="number"
-          min={0}
-          placeholder="Kapasitas min."
-          value={capacityMinInput}
-          onChange={(e) => setCapacityMinInput(e.target.value)}
-        />
+        {/* Lebar diatur pembungkus, bukan className pada Input: `Input` membawa
+            `w-full` bawaan dan `cn()` di repo ini penggabung biasa (tanpa
+            tailwind-merge), jadi `w-40` di sini kalah dan kotaknya melar
+            selebar baris. Placeholder-nya sudah menyebut dirinya sendiri, jadi
+            tidak perlu label tambahan. */}
+        <div className="w-44">
+          <Input
+            type="number"
+            min={0}
+            placeholder="Kapasitas min."
+            aria-label="Kapasitas minimal"
+            value={capacityMinInput}
+            onChange={(e) => setCapacityMinInput(e.target.value)}
+          />
+        </div>
       </div>
 
       <Card>

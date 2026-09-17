@@ -24,6 +24,7 @@ import { useVendorStore, type VendorListFilters, type VendorPriceKind } from "@/
 import type { Vendor, VendorProjectHistoryItem } from "@/modules/vendors/types";
 import { useVendorCategoryStore } from "@/modules/vendor-categories/stores/useVendorCategoryStore";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
+import { cn } from "@/shared/lib/cn";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
 import { instagramUrlFrom } from "@/shared/lib/instagram";
 import { formatDate } from "@/shared/lib/formatters";
@@ -265,20 +266,47 @@ export default function VendorListPage() {
           <option value="akadResepsi">Akad+Resepsi</option>
           <option value="resepsi">Resepsi</option>
         </Select>
-        <CurrencyInput
-          className="w-40"
-          placeholder="Min Rp"
-          value={priceMin}
-          onChange={setPriceMin}
-          disabled={priceKindFilter === "Semua"}
-        />
-        <CurrencyInput
-          className="w-40"
-          placeholder="Maks Rp"
-          value={priceMax}
-          onChange={setPriceMax}
-          disabled={priceKindFilter === "Semua"}
-        />
+        {/* Rentang harga dibaca sebagai SATU kontrol: unitnya disebut sekali
+            di depan ("Rp"), dan tanda pisah di tengah yang menyatakan kedua
+            kotak itu batas bawah dan batas atas dari hal yang sama. Dua kotak
+            telanjang tanpa keduanya tidak memberi tahu apa pun tentang dirinya.
+            Lebar diatur oleh pembungkus, bukan className pada input: `Input`
+            membawa `w-full` bawaan dan `cn()` di repo ini penggabung biasa
+            (tanpa tailwind-merge), jadi `w-40` di input akan kalah. */}
+        <div
+          className="flex items-center gap-1.5"
+          title={priceKindFilter === "Semua" ? "Pilih jenis paket dulu untuk menyaring rentang harga." : undefined}
+        >
+          <span
+            className={cn(
+              "text-[13px] font-medium",
+              priceKindFilter === "Semua" ? "text-text-secondary/60" : "text-text-secondary"
+            )}
+          >
+            Rp
+          </span>
+          <div className="w-28">
+            <CurrencyInput
+              placeholder="Min"
+              aria-label="Harga minimum"
+              value={priceMin}
+              onChange={setPriceMin}
+              disabled={priceKindFilter === "Semua"}
+              blankWhenZero
+            />
+          </div>
+          <span aria-hidden="true" className="text-text-secondary/70">–</span>
+          <div className="w-28">
+            <CurrencyInput
+              placeholder="Maks"
+              aria-label="Harga maksimum"
+              value={priceMax}
+              onChange={setPriceMax}
+              disabled={priceKindFilter === "Semua"}
+              blankWhenZero
+            />
+          </div>
+        </div>
       </div>
 
       <Card>
