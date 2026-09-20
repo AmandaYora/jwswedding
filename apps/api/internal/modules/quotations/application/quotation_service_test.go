@@ -580,3 +580,17 @@ func TestQuotation_SetHeader_ClientMasihBisaDigantiSebelumJadiProject(t *testing
 		t.Errorf("clientID = %d, mau 99", repo.rows[o.ID].ClientID)
 	}
 }
+
+// Tiga pelengkap projects.Contracts setelah modul `rundowns` menambahkannya
+// (PLAN rundown-generator §8.1). Tes di berkas ini tidak melewatinya.
+func (f *fakeProjectsContracts) RundownProjectContext(ctx context.Context, tenantID, projectID int64) (projectscontracts.RundownProjectContext, error) {
+	return projectscontracts.RundownProjectContext{}, nil
+}
+
+func (f *fakeProjectsContracts) ProjectIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error) {
+	return nil, nil
+}
+
+func (f *fakeProjectsContracts) SaveGeneratedDocument(ctx context.Context, tenantID, projectID, actorStaffID int64, in projectscontracts.GeneratedDocInput) (int64, error) {
+	return 0, nil
+}

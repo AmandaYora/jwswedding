@@ -22,6 +22,8 @@ const ClientListPage = lazy(() => import("@/modules/clients/pages/ClientListPage
 const ClientDetailPage = lazy(() => import("@/modules/clients/pages/ClientDetailPage"));
 const QuotationListPage = lazy(() => import("@/modules/quotations/pages/QuotationListPage"));
 const QuotationDetailPage = lazy(() => import("@/modules/quotations/pages/QuotationDetailPage"));
+const RundownListPage = lazy(() => import("@/modules/rundowns/pages/RundownListPage"));
+const RundownDetailPage = lazy(() => import("@/modules/rundowns/pages/RundownDetailPage"));
 const VendorCategoryListPage = lazy(() => import("@/modules/vendor-categories/pages/VendorCategoryListPage"));
 const MilestoneTemplateListPage = lazy(() => import("@/modules/milestone-templates/pages/MilestoneTemplateListPage"));
 const PackageTemplateListPage = lazy(() => import("@/modules/package-templates/pages/PackageTemplateListPage"));
@@ -105,7 +107,15 @@ export const protectedRoutes: RouteObject = {
           // route/menu entry reachable by Staff too — scoped server-side to
           // their own PIC'd projects.
           element: <RequireRole allow={["Owner", "Admin", "Staff"]} />,
-          children: [{ path: ROUTE_PATHS.clientTimelines, element: <TimelineMonitorPage /> }],
+          children: [
+            { path: ROUTE_PATHS.clientTimelines, element: <TimelineMonitorPage /> },
+            // Rundown ikut blok yang sama: buku acara justru paling sering
+            // dibuka Wedding Planner di hari-H. Cakupannya tetap dibatasi
+            // server-side ke project yang dia pegang.
+            { path: ROUTE_PATHS.rundowns, element: <RundownListPage /> },
+            { path: "/rundowns/:id", element: <RundownDetailPage /> },
+            { path: "/rundowns/:id/:tab", element: <RundownDetailPage /> },
+          ],
         },
         {
           element: <RequireRole allow={["Owner"]} />,

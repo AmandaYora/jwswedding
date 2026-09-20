@@ -275,3 +275,13 @@ func TestListClientMilestoneDocuments_HanyaVisibleMilestone(t *testing.T) {
 		t.Errorf("hasil = %+v, want hanya baris projectMilestone yang visible (ID 1)", got)
 	}
 }
+
+// DeleteByID melengkapi EvidenceRepository setelah jalur "ganti dokumen hasil
+// generate" ditambahkan (PLAN rundown-generator D6). Tes di berkas ini tidak
+// melewatinya, jadi cukup no-op.
+func (f *fakeEvidenceRepoForUpload) DeleteByID(ctx context.Context, projectID, id int64) error { return nil }
+
+// DeleteByID melengkapi EvidenceRepository setelah jalur "ganti dokumen hasil
+// generate" ditambahkan (PLAN rundown-generator D6). Tes di berkas ini tidak
+// melewatinya, jadi cukup no-op.
+func (f *fakeEvidenceRepoForToggle) DeleteByID(ctx context.Context, projectID, id int64) error { return nil }

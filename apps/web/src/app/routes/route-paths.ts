@@ -16,6 +16,23 @@ export type ProjectDetailTab =
 // Console's own (unaffected) tab set and keeps its separate "venue" entry.
 export type ClientPortalTab = "vendor" | "pembayaran" | "kendala" | "timeline" | "dokumen";
 
+// Dua belas tab editor rundown -- Cover berdiri sendiri dan SUSUNAN ACARA
+// dipecah akad/resepsi, jadi jumlahnya 12 meski WO menghitung 10 halaman
+// dokumen. Nilainya sama persis dengan kunci seksi di API.
+export type RundownTab =
+  | "cover"
+  | "vendors"
+  | "roles"
+  | "committees"
+  | "data-lainnya"
+  | "makeup"
+  | "acara-akad"
+  | "acara-resepsi"
+  | "layout"
+  | "foto-tamu"
+  | "tamu-vip"
+  | "playlist";
+
 export const ROUTE_PATHS = {
   home: "/",
   login: "/login",
@@ -26,6 +43,8 @@ export const ROUTE_PATHS = {
   clientDetail: (id: string) => `/clients/${id}`,
   quotations: "/quotations",
   quotationDetail: (id: string) => `/quotations/${id}`,
+  rundowns: "/rundowns",
+  rundownDetail: (id: string, tab: RundownTab = "cover") => `/rundowns/${id}/${tab}`,
   vendorCategories: "/vendor-categories",
   vendors: "/vendors",
   venues: "/venues",

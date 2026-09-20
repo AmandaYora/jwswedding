@@ -66,7 +66,18 @@ function scaledDimensions(width: number, height: number): { width: number; heigh
   return { width: Math.round((width * MAX_DIMENSION) / height), height: MAX_DIMENSION };
 }
 
-function blobToBase64(blob: Blob): Promise<string> {
+/**
+ * Base64 mentah (tanpa prefix `data:...;base64,`) dari sebuah Blob/File.
+ *
+ * Diekspor karena ada pemanggil yang butuh base64 TANPA melewati
+ * compressFileForUpload: denah akad pada modul Rundown ditukar apa adanya ke
+ * dalam entry PNG di berkas .docx, jadi ia tidak boleh di-re-encode ulang
+ * lewat canvas. Yang dibutuhkan pemanggil semacam itu hanya pengubahan
+ * format — dan itu harus lewat FileReader, bukan loop String.fromCharCode per
+ * byte, yang pada berkas 5 MB berarti jutaan konkatenasi string dan UI thread
+ * yang membeku beberapa detik.
+ */
+export function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {

@@ -49,6 +49,11 @@ type ProjectRepository interface {
 	// PIC tertentu — dasar filter Sales/WP di daftar Client. 0 = tidak
 	// memfilter untuk slot itu.
 	ClientIDsForPIC(ctx context.Context, tenantID, picStaffID, picSalesStaffID int64) ([]int64, error)
+	// ProjectIDsForPICStaff menjawab project mana saja yang dipegang satu
+	// Wedding Planner — dasar penyaringan daftar Rundown. Sepadan dengan
+	// QuotationIDsForPICStaff di atas, hanya memproyeksikan project-nya
+	// sendiri, bukan penawaran yang melahirkannya.
+	ProjectIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error)
 	// PICsForClients menjawab himpunan PIC berbeda dari seluruh project
 	// milik tiap client pada satu halaman daftar Client — satu query.
 	PICsForClients(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64]domain.ClientPICs, error)
@@ -123,6 +128,16 @@ type ProjectService struct {
 	activator  ClientActivator
 	quotations QuotationResolver
 	invoices   *ClientInvoiceService
+	rundowns   RundownCleaner
+}
+
+// RundownCleaner membersihkan buku acara milik project yang dihapus permanen.
+// Dipenuhi secara struktural oleh rundowns.Contracts — `projects` TIDAK
+// mengimpor `rundowns`. Dipasang lewat setter two-phase karena `rundowns`
+// justru dibangun SETELAH modul ini (ia butuh projects.Contracts), jadi tidak
+// bisa jadi argumen konstruktor.
+type RundownCleaner interface {
+	DeleteRundownForProject(ctx context.Context, tenantID, projectID int64) error
 }
 
 func NewProjectService(

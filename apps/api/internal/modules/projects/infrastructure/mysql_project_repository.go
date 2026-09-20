@@ -492,6 +492,29 @@ func (r *MySQLProjectRepository) ClientIDsForPIC(ctx context.Context, tenantID, 
 	return out, rows.Err()
 }
 
+// ProjectIDsForPICStaff menjawab project mana saja yang dipegang satu Wedding
+// Planner — dasar penyaringan daftar Rundown (PLAN rundown-generator §9.1).
+// Sepadan dengan QuotationIDsForPICStaff, hanya memproyeksikan project-nya
+// sendiri. Beralas idx_projects_tenant dan kolom pic_staff_id.
+func (r *MySQLProjectRepository) ProjectIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id FROM projects WHERE tenant_id = ? AND pic_staff_id = ? ORDER BY id`,
+		tenantID, picStaffID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // PICsForClients menjawab himpunan PIC berbeda dari seluruh project milik
 // tiap client pada satu halaman daftar Client — satu query, bukan N+1 (PLAN
 // wording-role-dan-filter-sales-wp §5.3, pola yang sama dengan

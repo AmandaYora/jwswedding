@@ -484,3 +484,12 @@ func TestListProjects_TanpaParameterBaru_RegresiPerRole(t *testing.T) {
 		})
 	}
 }
+
+// Dua pelengkap setelah modul `rundowns` memperluas port yang sudah ada.
+func (emptyEvidenceRepoForFilterTest) DeleteByID(ctx context.Context, projectID, id int64) error {
+	return nil
+}
+
+func (f *fakeProjectRepoForFilterTest) ProjectIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error) {
+	return nil, nil
+}

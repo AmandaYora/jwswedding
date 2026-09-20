@@ -23,6 +23,23 @@ apps/api/prisma/*.db
 # di bawah.
 /Invoice-PO.pdf
 
+# Buku acara asli dari klien, acuan fitur Rundown. Alasannya persis sama dengan
+# /Invoice-PO.pdf di atas: memuat nama pasangan, nama keluarga, dan nomor
+# telepon panitia. `source.docx` adalah salinan berkas yang sama yang dibaca
+# tools/rundown-template/build_template.py.
+#
+# Konsekuensinya disadari: tanpa berkas itu skrip pembangun template TIDAK bisa
+# dijalankan ulang dari clone yang bersih. Yang di-commit adalah HASILNYA
+# (apps/api/.../templates/rundown_template.docx, sudah bersih dari data klien —
+# dijaga tes TestBuildRundownDocx_NoDraftHighlights dan pemeriksaan "sisa nama
+# pasangan asli" di skrip). Siapa pun yang perlu membangun ulang template
+# meminta berkas sumbernya ke pemilik repo.
+/DRAFT RUNDOWN*.docx
+/tools/rundown-template/source.docx
+
+# Cache inkremental tsc. Artefak build murni, beda tiap mesin.
+apps/web/tsconfig.tsbuildinfo
+
 # One-off source photos for `api upload-login-slides` — uploaded to object
 # storage, never shipped in the repo/frontend bundle.
 kebutuhan_login_jws/

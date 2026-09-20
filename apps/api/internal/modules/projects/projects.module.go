@@ -99,6 +99,14 @@ func (m *Module) SetVenueResolver(resolver application.VenueResolver) {
 	m.projectService.SetVenueResolver(resolver)
 }
 
+// SetRundownCleaner melengkapi two-phase wiring yang sama, untuk membersihkan
+// buku acara milik project yang dihapus permanen — lihat doc comment
+// application.RundownCleaner. `rundowns` dibangun setelah modul ini (ia butuh
+// projects.Contracts), jadi ini tidak bisa jadi argumen konstruktor.
+func (m *Module) SetRundownCleaner(cleaner application.RundownCleaner) {
+	m.projectService.SetRundownCleaner(cleaner)
+}
+
 func (m *Module) RegisterRoutes(mux *http.ServeMux, authed func(http.Handler) http.Handler) {
 	mux.Handle("/api/v1/projects", authed(http.HandlerFunc(m.handler.Collection)))
 	mux.Handle("/api/v1/projects/", authed(http.HandlerFunc(m.handler.Item)))

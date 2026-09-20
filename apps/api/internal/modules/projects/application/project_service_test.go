@@ -710,3 +710,14 @@ func TestCreateFromQuotation_TanpaTanggalAcara_Ditolak(t *testing.T) {
 		t.Fatal("CreateFromQuotation tanpa tanggal acara berhasil, seharusnya ditolak")
 	}
 }
+
+// DeleteByID melengkapi EvidenceRepository setelah jalur "ganti dokumen hasil
+// generate" ditambahkan (PLAN rundown-generator D6). Tes di berkas ini tidak
+// melewatinya, jadi cukup no-op.
+func (f *fakeEvidenceRepoForGuard) DeleteByID(ctx context.Context, projectID, id int64) error { return nil }
+
+// ProjectIDsForPICStaff melengkapi ProjectRepository setelah penyaringan
+// daftar Rundown per Wedding Planner ditambahkan.
+func (f *fakeProjectRepo) ProjectIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error) {
+	return nil, nil
+}

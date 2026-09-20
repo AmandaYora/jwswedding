@@ -145,6 +145,84 @@ func (s *ProjectService) SetQuotationResolver(resolver QuotationResolver) {
 	s.quotations = resolver
 }
 
+// SetRundownCleaner melengkapi two-phase wiring (lihat RundownCleaner).
+func (s *ProjectService) SetRundownCleaner(cleaner RundownCleaner) {
+	s.rundowns = cleaner
+}
+
+// ProjectIDsForPICStaff menjawab project mana saja yang dipegang satu Wedding
+// Planner — dasar penyaringan daftar Rundown.
+func (s *ProjectService) ProjectIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error) {
+	return s.repo.ProjectIDsForPICStaff(ctx, tenantID, picStaffID)
+}
+
+// RundownProjectSnapshot adalah kolom milik `projects` sendiri yang dipakai
+// modul `rundowns` untuk mengisi awal sebuah buku acara. Nama vendor dan
+// kategori TIDAK ada di sini: keduanya milik modul `vendors` dan diselesaikan
+// frontend dari store-nya sendiri (MODULE_MAP.md).
+type RundownProjectSnapshot struct {
+	ProjectID      int64
+	ProjectName    string
+	BrideName      string
+	GroomName      string
+	EventDate      time.Time
+	EventStartTime string
+	EventEndTime   string
+	Venue          string
+	PackageName    string
+	PICStaffID     int64
+}
+
+// RundownProjectSnapshotFor memasok data prefill sekaligus menjadi gerbang
+// keberadaan project: kalau project-nya tidak ada (atau milik tenant lain),
+// Get sudah mengembalikan NotFound dan pemanggil tidak perlu memeriksa dua
+// kali.
+func (s *ProjectService) RundownProjectSnapshotFor(ctx context.Context, tenantID, projectID int64) (RundownProjectSnapshot, error) {
+	p, err := s.Get(ctx, tenantID, projectID)
+	if err != nil {
+		return RundownProjectSnapshot{}, err
+	}
+	snap := RundownProjectSnapshot{
+		ProjectID: p.ID, ProjectName: p.Name, BrideName: p.BrideName,
+		GroomName: p.GroomName, EventDate: p.EventDate, Venue: p.Venue,
+		PackageName: p.PackageName, PICStaffID: p.PICStaffID,
+	}
+	if p.EventStartTime != nil {
+		snap.EventStartTime = *p.EventStartTime
+	}
+	if p.EventEndTime != nil {
+		snap.EventEndTime = *p.EventEndTime
+	}
+	return snap, nil
+}
+
+// SaveGeneratedRundownDocument menaruh berkas hasil generate modul `rundowns`
+// ke tab Dokumen project ini (evidence kind `general`, ADR-0020), menggantikan
+// hasil sebelumnya untuk format yang sama.
+func (s *ProjectService) SaveGeneratedRundownDocument(ctx context.Context, tenantID, projectID, actorStaffID int64,
+	name, fileName, mimeType string, data []byte, replaceEvidenceID int64) (int64, error) {
+
+	if _, err := s.Get(ctx, tenantID, projectID); err != nil {
+		return 0, err
+	}
+	e, err := s.evidence.SaveGeneratedDocument(ctx, tenantID, projectID, actorStaffID,
+		UploadEvidenceInput{
+			Name:        name,
+			Type:        domain.EvidenceDocument,
+			FileName:    fileName,
+			MimeType:    mimeType,
+			RelatedKind: domain.RelatedGeneral,
+			RelatedID:   0,
+			// Dokumen operasional WO: tidak otomatis terbuka untuk klien.
+			// WO yang memutuskan lewat toggle di tab Dokumen (ADR-0020).
+			IsClientVisible: false,
+		}, data, replaceEvidenceID)
+	if err != nil {
+		return 0, err
+	}
+	return e.ID, nil
+}
+
 // SetClientInvoiceService memasok ledger tagihan yang dibutuhkan
 // SyncContractValue dan ImpactForClient. Setter (bukan konstruktor) supaya
 // signature NewProjectService dan semua pemanggilnya tidak berubah.
@@ -615,6 +693,16 @@ func (s *ProjectService) DeleteProjectCascade(ctx context.Context, tenantID, id 
 		// tidak lagi punya project harus ikut nonaktif (D4).
 		if err := s.activator.SyncCredentialActive(ctx, tenantID, p.ClientID); err != nil {
 			logger.Error("gagal sinkron akun portal client %d setelah project %d dihapus: %v", p.ClientID, id, err)
+		}
+	}
+
+	if s.rundowns != nil {
+		// Best-effort, sama seperti dua blok di atas: buku acara yang barisnya
+		// memang sudah tidak ada bukan kegagalan. Kalau langkah ini gagal yang
+		// tertinggal adalah rundown yatim — masih bisa dilihat dan dihapus
+		// manual oleh Owner/Admin, bukan referensi menggantung.
+		if err := s.rundowns.DeleteRundownForProject(ctx, tenantID, id); err != nil {
+			logger.Error("gagal menghapus rundown project %d: %v", id, err)
 		}
 	}
 	return nil

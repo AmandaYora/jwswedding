@@ -21,6 +21,7 @@ import (
 	"jwswedding/internal/modules/platform"
 	"jwswedding/internal/modules/projects"
 	"jwswedding/internal/modules/quotations"
+	"jwswedding/internal/modules/rundowns"
 	"jwswedding/internal/modules/staff"
 	staffcontracts "jwswedding/internal/modules/staff/contracts"
 	"jwswedding/internal/modules/vendors"
@@ -253,6 +254,14 @@ func serve(cfg config.Config) {
 	// Same bridge, direktori client untuk kop PO + daftar Penawaran.
 	quotationsModule.SetClientDirectory(clientsModule.Contracts())
 
+	// Buku acara hari-H. Dibangun setelah projectsModule karena butuh
+	// contracts-nya (prefill, scoping Wedding Planner, arsip berkas hasil
+	// generate). Arah sebaliknya — membersihkan rundown saat project dihapus
+	// permanen — dijembatani setter, idiom yang sama dengan empat bridge di
+	// atas; `projects` tidak pernah mengimpor `rundowns`.
+	rundownsModule := rundowns.NewModule(db, projectsModule.Contracts(), storageClient)
+	projectsModule.SetRundownCleaner(rundownsModule.Contracts())
+
 	// Runs for the lifetime of the process (T1's safety net for a missed
 	// webhook) — no separate shutdown signal exists anywhere else in this
 	// server either (see server.ListenAndServe() below), so this goroutine
@@ -266,6 +275,7 @@ func serve(cfg config.Config) {
 	projectsModule.RegisterRoutes(mux, authed)
 	quotationsModule.RegisterRoutes(mux, authed)
 	clientsModule.RegisterRoutes(mux, authed)
+	rundownsModule.RegisterRoutes(mux, authed)
 	// Magic link tanda tangan (jalur C, tanpa login) — pemakai pertama
 	// middleware.RateLimit (T5): 30 permintaan/menit per IP. Yang dilindungi
 	// adalah penyalahgunaan sumber daya, bukan tebakan token — pertahanan

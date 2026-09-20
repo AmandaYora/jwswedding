@@ -86,6 +86,19 @@ export const API = {
     import: "/api/v1/venues/import",
     export: "/api/v1/venues/export",
   },
+  rundowns: {
+    base: "/api/v1/rundowns",
+    // Endpoint tersendiri, BUKAN hasil paginasi `base`: pagination.MaxLimit
+    // di backend adalah 100 dan memotong `?limit=` di atasnya tanpa
+    // peringatan, jadi menyaring picker lewat daftar ber-paginasi akan
+    // diam-diam salah begitu rundown melewati seratus baris.
+    usedProjectIds: "/api/v1/rundowns/used-project-ids",
+    item: (id: string) => `/api/v1/rundowns/${id}`,
+    section: (id: string, section: string) => `/api/v1/rundowns/${id}/sections/${section}`,
+    layoutImage: (id: string) => `/api/v1/rundowns/${id}/layout-image`,
+    generate: (id: string, format: "docx" | "pdf") =>
+      `/api/v1/rundowns/${id}/generate?format=${format}`,
+  },
   projects: {
     base: "/api/v1/projects",
     me: "/api/v1/projects/me",

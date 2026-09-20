@@ -185,3 +185,12 @@ func (r *MySQLEvidenceRepository) DeleteByRelated(ctx context.Context, kind doma
 	_, err := r.db.ExecContext(ctx, `DELETE FROM evidence WHERE related_kind = ? AND related_id = ?`, string(kind), relatedID)
 	return err
 }
+
+// DeleteByID menghapus satu baris evidence. Dipakai jalur "ganti dokumen hasil
+// generate" (PLAN rundown-generator D6): tiap generate ulang menggantikan
+// berkas sebelumnya untuk format yang sama, bukan menumpuk. Dibatasi
+// project_id supaya id dari project lain tidak bisa ikut terhapus.
+func (r *MySQLEvidenceRepository) DeleteByID(ctx context.Context, projectID, id int64) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM evidence WHERE project_id = ? AND id = ?`, projectID, id)
+	return err
+}

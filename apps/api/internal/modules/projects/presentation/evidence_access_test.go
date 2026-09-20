@@ -252,3 +252,8 @@ func TestListMilestoneDocuments_HanyaLampiranVisible(t *testing.T) {
 		}
 	}
 }
+
+// DeleteByID melengkapi EvidenceRepository setelah jalur "ganti dokumen hasil
+// generate" ditambahkan (PLAN rundown-generator D6). Tes di berkas ini tidak
+// melewatinya, jadi cukup no-op.
+func (f *fakeEvidenceRepoForAccess) DeleteByID(ctx context.Context, projectID, id int64) error { return nil }

@@ -47,6 +47,9 @@ type EvidenceRepository interface {
 	// DeleteByRelated hard-deletes every evidence row for one related_kind+
 	// related_id pair — backs DeleteForRelated below.
 	DeleteByRelated(ctx context.Context, kind domain.EvidenceRelatedKind, relatedID int64) error
+	// DeleteByID hard-deletes one evidence row — backs
+	// SaveGeneratedDocument's replace-in-place behaviour.
+	DeleteByID(ctx context.Context, projectID, id int64) error
 }
 
 // ObjectStorage is the narrow slice of internal/shared/storage.Client this
@@ -205,6 +208,37 @@ func (s *EvidenceService) Upload(ctx context.Context, tenantID, projectID int64,
 	if err != nil {
 		return nil, apperror.Validation("Data file tidak valid", map[string][]string{"base64Data": {"Gagal membaca data file"}})
 	}
+	return s.upload(ctx, tenantID, projectID, actorStaffID, input, decoded)
+}
+
+// SaveGeneratedDocument menyimpan dokumen yang dibangkitkan server sendiri ke
+// tab Dokumen project, MENGGANTIKAN hasil generate sebelumnya untuk format
+// yang sama bila ada (PLAN rundown-generator D6 — tanpa ini storage bertambah
+// satu berkas tiap kali tombol Generate ditekan).
+//
+// Penghapusan yang lama dijalankan best-effort dan sebelum penyimpanan yang
+// baru: kalau gagal, yang tertinggal paling buruk satu objek yatim di storage,
+// bukan kehilangan dokumen yang baru.
+func (s *EvidenceService) SaveGeneratedDocument(ctx context.Context, tenantID, projectID, actorStaffID int64,
+	input UploadEvidenceInput, data []byte, replaceEvidenceID int64) (*domain.Evidence, error) {
+
+	if replaceEvidenceID != 0 {
+		if old, err := s.repo.FindByID(ctx, projectID, replaceEvidenceID); err == nil && old != nil {
+			if err := s.repo.DeleteByID(ctx, projectID, old.ID); err != nil {
+				logger.Error("gagal menghapus dokumen hasil generate lama %d: %v", old.ID, err)
+			} else {
+				s.DeleteStorageObjects(ctx, []domain.Evidence{*old})
+			}
+		}
+	}
+	return s.upload(ctx, tenantID, projectID, actorStaffID, input, data)
+}
+
+// upload adalah badan bersama Upload dan SaveGeneratedDocument: validasi,
+// kompresi, simpan ke object storage, catat baris evidence. Satu-satunya
+// perbedaan di pemanggilnya adalah dari mana `decoded` berasal — base64 dari
+// browser, atau byte mentah dokumen yang dibangkitkan server sendiri.
+func (s *EvidenceService) upload(ctx context.Context, tenantID, projectID int64, actorStaffID int64, input UploadEvidenceInput, decoded []byte) (*domain.Evidence, error) {
 	if len(decoded) == 0 {
 		return nil, apperror.Validation("File kosong", map[string][]string{"base64Data": {"File tidak boleh kosong"}})
 	}

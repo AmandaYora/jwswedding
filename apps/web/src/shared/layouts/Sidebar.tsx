@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
-import { LayoutDashboard, FolderKanban, Users, Tags, Store, Building2, UserCog, Sparkles, Settings, CalendarClock, CalendarCheck, Landmark, Package, ChevronDown, LogOut, X, FileText } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Users, Tags, Store, Building2, UserCog, Sparkles, Settings, CalendarClock, CalendarCheck, Landmark, Package, ChevronDown, LogOut, X, FileText, BookOpen } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { Avatar } from "@/shared/components/ui/Avatar";
@@ -42,6 +42,11 @@ const NAV_ITEMS: NavEntry[] = [
   // pra-deal di sini; Wedding Planner tidak membuka menu ini.
   { kind: "link", to: ROUTE_PATHS.quotations, label: "Penawaran", icon: FileText, allowedRoles: ["Owner", "Admin", "Sales"] },
   { kind: "link", to: ROUTE_PATHS.clientTimelines, label: "Monitoring Timeline", icon: CalendarCheck, allowedRoles: ["Owner", "Admin", "Staff"] },
+  // Rundown (buku acara hari-H) duduk tepat setelah Monitoring Timeline
+  // supaya tiga menu yang dilihat Wedding Planner -- Project, Monitoring
+  // Timeline, Rundown -- berurutan. Sales TIDAK membukanya: perannya berhenti
+  // di tahap pra-deal.
+  { kind: "link", to: ROUTE_PATHS.rundowns, label: "Rundown", icon: BookOpen, allowedRoles: ["Owner", "Admin", "Staff"] },
   // Client terbuka juga untuk Sales (menyusun penawaran butuh memilih/menambah
   // pasangan); Wedding Planner tetap tidak membuka menu ini.
   { kind: "link", to: ROUTE_PATHS.clients, label: "Client", icon: Users, allowedRoles: ["Owner", "Admin", "Sales"] },

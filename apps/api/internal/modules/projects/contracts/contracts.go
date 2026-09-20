@@ -98,6 +98,33 @@ type ClientPaymentInfo struct {
 	Method      string
 }
 
+// RundownProjectContext adalah proyeksi primitif sebuah project untuk mengisi
+// awal buku acara di modul `rundowns` — hanya kolom milik `projects` sendiri.
+// Nama vendor/kategori sengaja TIDAK di sini: keduanya milik modul `vendors`
+// dan diselesaikan frontend dari store-nya sendiri (MODULE_MAP.md).
+type RundownProjectContext struct {
+	ProjectID      int64
+	ProjectName    string
+	BrideName      string
+	GroomName      string
+	EventDate      time.Time
+	EventStartTime string
+	EventEndTime   string
+	Venue          string
+	PackageName    string
+	PICStaffID     int64
+}
+
+// GeneratedDocInput adalah berkas hasil generate yang disimpan ke tab Dokumen
+// project. ReplaceEvidenceID 0 berarti tidak ada yang digantikan.
+type GeneratedDocInput struct {
+	Name              string
+	FileName          string
+	MimeType          string
+	Data              []byte
+	ReplaceEvidenceID int64
+}
+
 // ProjectDeleteImpact is one project's share of a delete confirmation (T3.5).
 type ProjectDeleteImpact struct {
 	ProjectID        int64
@@ -187,6 +214,16 @@ type Contracts interface {
 	// PICsForClients answers the distinct PIC sets across all projects of
 	// each client on ONE client-list page — one query, not N+1.
 	PICsForClients(ctx context.Context, tenantID int64, clientIDs []int64) (map[int64]ClientPICs, error)
+	// --- dipakai modul `rundowns` (PLAN rundown-generator §8.1) ---
+	// RundownProjectContext memasok data prefill buku acara sekaligus menjadi
+	// gerbang keberadaan project: NotFound bila project tidak ada di tenant ini.
+	RundownProjectContext(ctx context.Context, tenantID, projectID int64) (RundownProjectContext, error)
+	// ProjectIDsForPICStaff menyaring daftar Rundown untuk Wedding Planner.
+	ProjectIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error)
+	// SaveGeneratedDocument menaruh berkas hasil generate ke tab Dokumen
+	// project (evidence kind `general`), menggantikan hasil sebelumnya untuk
+	// format yang sama.
+	SaveGeneratedDocument(ctx context.Context, tenantID, projectID, actorStaffID int64, in GeneratedDocInput) (int64, error)
 }
 
 type impl struct {
@@ -411,4 +448,29 @@ func (c *impl) PICsForClients(ctx context.Context, tenantID int64, clientIDs []i
 		out[clientID] = ClientPICs{PICStaffIDs: row.PICStaffIDs, PICSalesStaffIDs: row.PICSalesStaffIDs}
 	}
 	return out, nil
+}
+
+// --- dipakai modul `rundowns` (PLAN rundown-generator §8.1) ---
+
+func (c *impl) RundownProjectContext(ctx context.Context, tenantID, projectID int64) (RundownProjectContext, error) {
+	s, err := c.projects.RundownProjectSnapshotFor(ctx, tenantID, projectID)
+	if err != nil {
+		return RundownProjectContext{}, err
+	}
+	return RundownProjectContext{
+		ProjectID: s.ProjectID, ProjectName: s.ProjectName,
+		BrideName: s.BrideName, GroomName: s.GroomName,
+		EventDate: s.EventDate, EventStartTime: s.EventStartTime,
+		EventEndTime: s.EventEndTime, Venue: s.Venue,
+		PackageName: s.PackageName, PICStaffID: s.PICStaffID,
+	}, nil
+}
+
+func (c *impl) ProjectIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error) {
+	return c.projects.ProjectIDsForPICStaff(ctx, tenantID, picStaffID)
+}
+
+func (c *impl) SaveGeneratedDocument(ctx context.Context, tenantID, projectID, actorStaffID int64, in GeneratedDocInput) (int64, error) {
+	return c.projects.SaveGeneratedRundownDocument(ctx, tenantID, projectID, actorStaffID,
+		in.Name, in.FileName, in.MimeType, in.Data, in.ReplaceEvidenceID)
 }
