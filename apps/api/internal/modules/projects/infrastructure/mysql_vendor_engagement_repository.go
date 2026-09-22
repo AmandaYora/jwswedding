@@ -19,11 +19,14 @@ func NewMySQLVendorEngagementRepository(db *sql.DB) *MySQLVendorEngagementReposi
 const projectVendorColumns = `id, project_id, vendor_id, category_id, scope, contract_value, pricing_tier, engagement_status,
 	booking_date, event_date, event_start_time, event_end_time, dp_amount, due_date, pic_staff_id, notes`
 
-// timeToHHMM/hhmmToTime convert between MySQL's TIME wire format
-// ("15:04:05") and the "HH:MM" shape ProjectVendor.EventStartTime/
-// EventEndTime carry at the domain/API boundary -- mirrors how every other
-// nullable field in this file converts at the scan/exec boundary rather than
-// leaking a driver-specific shape upward.
+// timeToHHMM converts MySQL's TIME wire format ("15:04:05") into the "HH:MM"
+// shape ProjectVendor.EventStartTime/EventEndTime carry at the domain/API
+// boundary -- mirrors how every other nullable field in this file converts at
+// the scan boundary rather than leaking a driver-specific shape upward.
+//
+// There is no write-side counterpart here on purpose: MySQL accepts "HH:MM"
+// for a TIME column directly, and the guard that keeps anything else from
+// reaching it is validateHHMM in the application layer (PLAN.md T4).
 func timeToHHMM(s string) string {
 	if len(s) >= 5 {
 		return s[:5]

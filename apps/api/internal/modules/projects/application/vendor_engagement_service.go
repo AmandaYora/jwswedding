@@ -42,7 +42,7 @@ type VendorMilestoneRepository interface {
 // pemeriksaan. Sengaja — jalur uji dan skrip tidak boleh gagal hanya karena
 // bagian ini tidak dirakit.
 type ProjectBudgetReader interface {
-	CostSummary(ctx context.Context, tenantID, projectID int64) (domain.ProjectCostSummary, error)
+	CostBasis(ctx context.Context, tenantID, projectID int64) (domain.ProjectCostBasis, error)
 }
 
 type VendorEngagementService struct {
@@ -111,7 +111,12 @@ func (s *VendorEngagementService) guardBudget(ctx context.Context, c budgetCheck
 	if s.budget == nil {
 		return nil
 	}
+	// SATU pembacaan daftar engagement, dipakai untuk biaya kini DAN proyeksi.
 	existing, err := s.repo.ListByProject(ctx, c.projectID)
+	if err != nil {
+		return err
+	}
+	basis, err := s.budget.CostBasis(ctx, c.tenantID, c.projectID)
 	if err != nil {
 		return err
 	}
@@ -119,11 +124,11 @@ func (s *VendorEngagementService) guardBudget(ctx context.Context, c budgetCheck
 	if c.newStatus != domain.EngagementCancelled {
 		projectedVendorCost += c.newContract
 	}
-	summary, err := s.budget.CostSummary(ctx, c.tenantID, c.projectID)
-	if err != nil {
-		return err
-	}
-	projected := newProjectedSummary(summary, projectedVendorCost)
+	// sumActiveContracts(existing, 0) melewati baris Cancelled dan menjumlahkan
+	// ContractValue — identik dengan yang dulu dihitung CostSummary di dalam
+	// dirinya sendiri, jadi `current` di bawah sama persis dengan `summary` lama.
+	current := summaryFromBasis(basis, sumActiveContracts(existing, 0))
+	projected := summaryFromBasis(basis, projectedVendorCost)
 	if projected.Remaining >= 0 {
 		return nil
 	}
@@ -133,7 +138,7 @@ func (s *VendorEngagementService) guardBudget(ctx context.Context, c budgetCheck
 	// termasuk saat nilainya justru DITURUNKAN — dan mencatat peristiwa yang
 	// tidak pernah terjadi. Yang perlu diakui adalah pelampauan yang dibuat
 	// atau diperdalam, bukan yang sedang diperbaiki.
-	if projected.CommittedCost <= summary.CommittedCost {
+	if projected.CommittedCost <= current.CommittedCost {
 		return nil
 	}
 	over := -projected.Remaining
@@ -151,20 +156,22 @@ func (s *VendorEngagementService) guardBudget(ctx context.Context, c budgetCheck
 	}
 	s.activity.Record(ctx, &c.projectID, domain.ActivityVendorOverBudget, c.actorStaffID, "project", formatID(c.projectID),
 		formatRupiahShort(over),
-		"Komitmen vendor melampaui Nilai Kontrak sebesar "+formatRupiahShort(over)+". Alasan: "+strings.TrimSpace(c.reason))
+		truncateTo("Komitmen vendor melampaui Nilai Kontrak sebesar "+formatRupiahShort(over)+". Alasan: "+strings.TrimSpace(c.reason), maxActivityDescription))
 	return nil
 }
 
-// newProjectedSummary menyusun ulang ringkasan dengan biaya vendor hipotetis —
-// venue dan nilai kontrak tidak berubah karena tulisan engagement.
-func newProjectedSummary(base domain.ProjectCostSummary, vendorCost int64) domain.ProjectCostSummary {
-	committed := vendorCost + base.VenueCost
+// summaryFromBasis merakit ringkasan biaya dari basis project (nilai kontrak +
+// venue) dan satu angka biaya vendor — yang nyata maupun yang hipotetis
+// (sesudah engagement yang sedang ditulis). Satu helper untuk keduanya, karena
+// perbedaannya hanya pada angka yang dimasukkan, bukan pada rumusnya.
+func summaryFromBasis(basis domain.ProjectCostBasis, vendorCost int64) domain.ProjectCostSummary {
+	committed := vendorCost + basis.VenueCost
 	return domain.ProjectCostSummary{
-		ContractValue: base.ContractValue,
+		ContractValue: basis.ContractValue,
 		VendorCost:    vendorCost,
-		VenueCost:     base.VenueCost,
+		VenueCost:     basis.VenueCost,
 		CommittedCost: committed,
-		Remaining:     base.ContractValue - committed,
+		Remaining:     basis.ContractValue - committed,
 	}
 }
 
@@ -218,7 +225,7 @@ type VendorEngagementInput struct {
 }
 
 func (s *VendorEngagementService) Create(ctx context.Context, tenantID, projectID int64, actorStaffID int64, input VendorEngagementInput) (*domain.ProjectVendor, error) {
-	if err := validateEngagementInput(input.EngagementStatus, input.PricingTier); err != nil {
+	if err := validateEngagementInput(input); err != nil {
 		return nil, err
 	}
 	// Gerbang SEBELUM menulis: penolakan 422 tidak boleh meninggalkan baris
@@ -241,7 +248,7 @@ func (s *VendorEngagementService) Create(ctx context.Context, tenantID, projectI
 	if err := s.repo.Create(ctx, pv); err != nil {
 		return nil, err
 	}
-	s.activity.Record(ctx, &projectID, domain.ActivityVendorAdded, actorStaffID, "project_vendor", formatID(pv.ID), input.Scope,
+	s.activity.Record(ctx, &projectID, domain.ActivityVendorAdded, actorStaffID, "project_vendor", formatID(pv.ID), truncateTo(input.Scope, maxActivityLabel),
 		"Vendor ditambahkan ke project")
 	return pv, nil
 }
@@ -272,7 +279,7 @@ func (s *VendorEngagementService) Update(ctx context.Context, tenantID, projectI
 	// Bentuk masukan diperiksa SEBELUM gerbang anggaran: status yang tidak
 	// dikenal membuat "apakah komitmen ini dihitung" tidak terjawab, dan
 	// gerbangnya akan menebak.
-	if err := validateEngagementInput(input.EngagementStatus, input.PricingTier); err != nil {
+	if err := validateEngagementInput(input); err != nil {
 		return nil, err
 	}
 	if err := s.guardBudget(ctx, budgetCheck{
@@ -301,21 +308,43 @@ func (s *VendorEngagementService) Update(ctx context.Context, tenantID, projectI
 	if err := s.repo.Update(ctx, pv); err != nil {
 		return nil, err
 	}
-	s.activity.Record(ctx, &projectID, domain.ActivityVendorStatusChanged, actorStaffID, "project_vendor", formatID(pv.ID), pv.Scope,
+	s.activity.Record(ctx, &projectID, domain.ActivityVendorStatusChanged, actorStaffID, "project_vendor", formatID(pv.ID), truncateTo(pv.Scope, maxActivityLabel),
 		"Informasi kerja sama vendor diperbarui")
 	return pv, nil
 }
 
-// validateEngagementInput rejects enum values the database itself would
-// refuse: engagement_status is a MySQL ENUM, so without this check an
-// unknown status sails through to repo.Create/repo.Update and comes back
-// as a bare 500 ("Terjadi kesalahan pada server") instead of a 422 the
-// frontend can render under the field. pricing_tier is a plain VARCHAR
-// (no DB guard at all), so the same helper also keeps typos there from
-// silently persisting as free text. Mirrors validateTerms' shape in the
-// quotations module: one helper, field-keyed apperror.Validation, called
-// from both Create and Update.
-func validateEngagementInput(status domain.EngagementStatus, tier domain.VendorPricingTier) error {
+// Batas panjang teks yang ditegakkan sebelum menyentuh DB.
+//
+// maxScope bukan batas kolom — sejak migrasi 000072 `scope` adalah TEXT
+// (65.535 byte) — melainkan batas produk: cukup untuk scope sepanjang
+// paragraf, sekaligus menjadikan penolakan sebuah 422 yang bisa dirender
+// form alih-alih 500 di tebing TEXT. maxReason menjaga activity_log.
+// description (VARCHAR(500)), yang dirangkai guardBudget dari alasan ini
+// plus prefiks ±77 karakter.
+const (
+	maxScope  = 2000
+	maxReason = 400
+)
+
+// validateEngagementInput rejects values the database itself would refuse,
+// atau yang diam-diam merusak jejak aktivitas. Empat penjaga:
+//
+//  1. engagement_status — MySQL ENUM, so without this check an unknown
+//     status sails through to repo.Create/repo.Update and comes back as a
+//     bare 500 ("Terjadi kesalahan pada server") instead of a 422 the
+//     frontend can render under the field.
+//  2. pricing_tier — plain VARCHAR (no DB guard at all), so the same helper
+//     also keeps typos there from silently persisting as free text.
+//  3. panjang scope & alasan over-budget — kegagalan yang SAMA BENTUKNYA
+//     dengan (1): sebelum migrasi 000072, scope > 255 karakter adalah
+//     satu-satunya sumber 500 di produksi (56 dari 56 dalam 45 jam, lihat
+//     docs/plan/vendor-engagement-500/PLAN.md §3.3).
+//  4. format jam acara — lihat validateHHMM.
+//
+// Mirrors validateTerms' shape in the quotations module: one helper,
+// field-keyed apperror.Validation, called from both Create and Update.
+func validateEngagementInput(input VendorEngagementInput) error {
+	status, tier := input.EngagementStatus, input.PricingTier
 	switch status {
 	case domain.EngagementPlanned, domain.EngagementNegotiation, domain.EngagementBooked,
 		domain.EngagementDPPaid, domain.EngagementInProgress, domain.EngagementFullyPaid,
@@ -331,6 +360,36 @@ func validateEngagementInput(status domain.EngagementStatus, tier domain.VendorP
 	default:
 		return apperror.Validation("Tier harga vendor tidak valid", map[string][]string{
 			"pricingTier": {"Tier harga vendor tidak valid"},
+		})
+	}
+	if len([]rune(input.Scope)) > maxScope {
+		return apperror.Validation("Scope pekerjaan terlalu panjang", map[string][]string{
+			"scope": {"Maksimal 2000 karakter"},
+		})
+	}
+	if len([]rune(input.OverBudgetReason)) > maxReason {
+		return apperror.Validation("Alasan terlalu panjang", map[string][]string{
+			"overBudgetReason": {"Maksimal 400 karakter"},
+		})
+	}
+	if err := validateHHMM("eventStartTime", input.EventStartTime); err != nil {
+		return err
+	}
+	return validateHHMM("eventEndTime", input.EventEndTime)
+}
+
+// validateHHMM menjaga kolom TIME dari string sembarang: tanpa ini, "19.00"
+// atau "" lolos ke repo.Create dan kembali sebagai 500 telanjang, persis
+// kegagalan yang sudah dijelaskan doc comment validateEngagementInput untuk
+// ENUM. Repository hanya punya arah baca (timeToHHMM); ini pasangan arah
+// tulisnya. nil berarti "Belum ditentukan" dan selalu sah.
+func validateHHMM(field string, v *string) error {
+	if v == nil {
+		return nil
+	}
+	if _, err := time.Parse("15:04", *v); err != nil {
+		return apperror.Validation("Format jam tidak valid", map[string][]string{
+			field: {"Gunakan format HH:MM"},
 		})
 	}
 	return nil
@@ -369,7 +428,7 @@ func (s *VendorEngagementService) Cancel(ctx context.Context, projectID, id int6
 		return nil, err
 	}
 	pv.EngagementStatus = domain.EngagementCancelled
-	s.activity.Record(ctx, &projectID, domain.ActivityVendorStatusChanged, actorStaffID, "project_vendor", formatID(pv.ID), pv.Scope,
+	s.activity.Record(ctx, &projectID, domain.ActivityVendorStatusChanged, actorStaffID, "project_vendor", formatID(pv.ID), truncateTo(pv.Scope, maxActivityLabel),
 		"Kerja sama vendor dibatalkan")
 	return pv, nil
 }

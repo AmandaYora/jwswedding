@@ -11,6 +11,8 @@ import {
   projectVendorSchema,
   ENGAGEMENT_STATUS_OPTIONS,
   EVENT_HOURS_PRESETS,
+  MAX_OVER_BUDGET_REASON_LENGTH,
+  MAX_SCOPE_LENGTH,
   PRICING_TIER_CHOICES,
   type ProjectVendorFormValues,
 } from "@/modules/projects/schemas/project-vendor.schema";
@@ -290,6 +292,13 @@ export function ProjectVendorFormModal({ projectId, open, onClose, onSubmit, ini
 
   const currentHoursPresetKey = presetKeyFor(values.eventStartTime, values.eventEndTime);
 
+  // Penghitung baru muncul saat batasnya sudah dekat — sebuah angka yang
+  // selalu terpampang hanya jadi derau pada scope yang rata-rata 21 karakter.
+  const scopeCounterHint =
+    values.scope.length > MAX_SCOPE_LENGTH * 0.9
+      ? `${values.scope.length} / ${MAX_SCOPE_LENGTH} karakter`
+      : undefined;
+
   return (
     <Modal
       open={open}
@@ -349,8 +358,14 @@ export function ProjectVendorFormModal({ projectId, open, onClose, onSubmit, ini
           </Select>
         </Field>
         <div className="sm:col-span-2">
-          <Field label="Layanan / Scope Pekerjaan" required hint={errors.scope}>
-            <Textarea rows={2} value={values.scope} onChange={(e) => set("scope", e.target.value)} placeholder="cth. Sewa ballroom + basic lighting rigging" />
+          <Field label="Layanan / Scope Pekerjaan" required hint={errors.scope ?? scopeCounterHint}>
+            <Textarea
+              rows={2}
+              maxLength={MAX_SCOPE_LENGTH}
+              value={values.scope}
+              onChange={(e) => set("scope", e.target.value)}
+              placeholder="cth. Sewa ballroom + basic lighting rigging"
+            />
           </Field>
         </div>
         {canEditMoney && (
@@ -376,6 +391,7 @@ export function ProjectVendorFormModal({ projectId, open, onClose, onSubmit, ini
                 >
                   <Textarea
                     rows={2}
+                    maxLength={MAX_OVER_BUDGET_REASON_LENGTH}
                     value={values.overBudgetReason}
                     onChange={(e) => set("overBudgetReason", e.target.value)}
                     placeholder="cth. Tambahan permintaan klien, penawaran menyusul direvisi"

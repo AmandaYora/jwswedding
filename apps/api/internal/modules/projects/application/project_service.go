@@ -160,38 +160,26 @@ func NewProjectService(
 	}
 }
 
-// CostSummary menghitung sisi biaya sebuah project terhadap nilai kontraknya.
+// CostBasis membaca bagian biaya sebuah project yang TIDAK berubah karena
+// tulisan engagement: nilai kontrak dan biaya venue.
 //
-// Pindah dari frontend ke sini dengan sengaja: gerbang komitmen vendor
-// (VendorEngagementService) memakai angka yang SAMA, dan dua salinan
+// Perhitungan uang ini hidup di server dengan sengaja: gerbang komitmen
+// vendor (VendorEngagementService) memakai angka yang SAMA, dan dua salinan
 // perhitungan uang di dua lapisan adalah cara paling pasti untuk membuat
 // layar dan aturan berselisih.
-func (s *ProjectService) CostSummary(ctx context.Context, tenantID, projectID int64) (domain.ProjectCostSummary, error) {
+//
+// Menggantikan CostSummary sebelumnya, yang ikut membaca daftar engagement —
+// padahal satu-satunya pemanggilnya (guardBudget) sudah memegang daftar itu,
+// sehingga setiap penambahan vendor membayar query yang sama dua kali. Lihat
+// docs/plan/vendor-engagement-500/PLAN.md T6.
+func (s *ProjectService) CostBasis(ctx context.Context, tenantID, projectID int64) (domain.ProjectCostBasis, error) {
 	p, err := s.repo.FindByID(ctx, tenantID, projectID)
 	if err != nil {
-		return domain.ProjectCostSummary{}, err
+		return domain.ProjectCostBasis{}, err
 	}
 	if p == nil {
-		return domain.ProjectCostSummary{}, apperror.NotFound("Project tidak ditemukan")
+		return domain.ProjectCostBasis{}, apperror.NotFound("Project tidak ditemukan")
 	}
-	engagements, err := s.vendorEngagements.ListByProject(ctx, projectID)
-	if err != nil {
-		return domain.ProjectCostSummary{}, err
-	}
-	var vendorCost int64
-	for _, e := range engagements {
-		if e.EngagementStatus == domain.EngagementCancelled {
-			continue
-		}
-		vendorCost += e.ContractValue
-	}
-	return newCostSummary(p, vendorCost), nil
-}
-
-// newCostSummary merakit ringkasan dari dua bahan yang sudah dibaca pemanggil
-// — dipisah supaya gerbang komitmen bisa menghitung ulang dengan nilai vendor
-// HIPOTETIS (sesudah engagement yang sedang ditulis) tanpa membaca ulang DB.
-func newCostSummary(p *domain.Project, vendorCost int64) domain.ProjectCostSummary {
 	var venueCost int64
 	if p.VenueRentalPrice != nil {
 		venueCost += *p.VenueRentalPrice
@@ -199,14 +187,7 @@ func newCostSummary(p *domain.Project, vendorCost int64) domain.ProjectCostSumma
 	if p.VenueCharge != nil {
 		venueCost += *p.VenueCharge
 	}
-	committed := vendorCost + venueCost
-	return domain.ProjectCostSummary{
-		ContractValue: p.ContractValue,
-		VendorCost:    vendorCost,
-		VenueCost:     venueCost,
-		CommittedCost: committed,
-		Remaining:     p.ContractValue - committed,
-	}
+	return domain.ProjectCostBasis{ContractValue: p.ContractValue, VenueCost: venueCost}, nil
 }
 
 // ResolvePICName backs the `picName` field on a project's response (PLAN.md's

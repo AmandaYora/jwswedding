@@ -35,12 +35,26 @@ export const EVENT_HOURS_PRESETS = [
   { label: "18.45 - 21.00", start: "18:45", end: "21:00" },
 ] as const;
 
+// Batas panjang teks bebas. Ditegakkan DUA KALI — di sini supaya pengguna
+// tahu sebelum mengirim, dan di backend (validateEngagementInput) karena
+// gerbang yang hanya ada di layar bukan gerbang. Angkanya wajib sama dengan
+// maxScope/maxReason di apps/api/.../vendor_engagement_service.go.
+//
+// Sebelum ada batas ini, scope panjang lolos ke kolom VARCHAR(255) dan
+// kembali sebagai 500 "Terjadi kesalahan pada server" — 56 dari 56 error
+// produksi dalam 45 jam. Lihat docs/plan/vendor-engagement-500/PLAN.md.
+export const MAX_SCOPE_LENGTH = 2000;
+export const MAX_OVER_BUDGET_REASON_LENGTH = 400;
+
 export const projectVendorSchema = z.object({
   vendorId: z.string().min(1, "Vendor wajib dipilih"),
   // Optional — memilih Vendor tetap menyinkronkan field ini ke kategori
   // vendor tersebut; field ini sendiri hanya memfilter dropdown Vendor.
   categoryId: z.string().optional().default(""),
-  scope: z.string().min(3, "Scope pekerjaan wajib diisi"),
+  scope: z
+    .string()
+    .min(3, "Scope pekerjaan wajib diisi")
+    .max(MAX_SCOPE_LENGTH, `Maksimal ${MAX_SCOPE_LENGTH} karakter`),
   contractValue: z.coerce.number().min(0, "Nilai kerja sama tidak valid"),
   pricingTier: z.enum(PRICING_TIER_OPTIONS),
   engagementStatus: z.enum(ENGAGEMENT_STATUS_OPTIONS),
@@ -57,7 +71,11 @@ export const projectVendorSchema = z.object({
   // syarat itu ditegakkan form (agar orangnya tahu sebelum mengirim) dan
   // ditegakkan ulang backend (guardBudget), karena gerbang yang hanya ada di
   // layar bukan gerbang.
-  overBudgetReason: z.string().optional().default(""),
+  overBudgetReason: z
+    .string()
+    .max(MAX_OVER_BUDGET_REASON_LENGTH, `Maksimal ${MAX_OVER_BUDGET_REASON_LENGTH} karakter`)
+    .optional()
+    .default(""),
 });
 
 export type ProjectVendorFormValues = z.infer<typeof projectVendorSchema>;

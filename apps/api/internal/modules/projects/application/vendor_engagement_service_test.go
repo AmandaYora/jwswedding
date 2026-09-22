@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"jwswedding/internal/modules/projects/domain"
 	"jwswedding/internal/shared/apperror"
@@ -241,12 +242,16 @@ func (stubVendorMilestoneRepoForValidationTest) NextSortOrder(ctx context.Contex
 // kapan ia meloloskan sambil mencatat, dan kapan ia tidak berbunyi sama
 // sekali.
 
+// fakeBudgetReader kini hanya memasok BASIS biaya (nilai kontrak + venue).
+// Biaya vendor tidak lagi disuntik dari sini: guardBudget menghitungnya dari
+// daftar engagement yang sudah dibacanya sendiri (budgetRepo.existing), yang
+// juga menghapus satu query duplikat -- lihat PLAN.md T6.
 type fakeBudgetReader struct {
-	summary domain.ProjectCostSummary
+	basis domain.ProjectCostBasis
 }
 
-func (f *fakeBudgetReader) CostSummary(ctx context.Context, tenantID, projectID int64) (domain.ProjectCostSummary, error) {
-	return f.summary, nil
+func (f *fakeBudgetReader) CostBasis(ctx context.Context, tenantID, projectID int64) (domain.ProjectCostBasis, error) {
+	return f.basis, nil
 }
 
 // countingActivityRepo menangkap apa yang tercatat. Gerbang ini meloloskan
@@ -271,9 +276,14 @@ type budgetRepo struct {
 	fakeVendorEngagementRepo
 	existing []domain.ProjectVendor
 	created  *domain.ProjectVendor
+	// listCalls menghitung pembacaan daftar engagement. Sebelum PLAN.md T6,
+	// satu Create membayar query ini DUA kali: sekali di guardBudget, sekali
+	// lagi dari dalam CostSummary yang dipanggilnya.
+	listCalls int
 }
 
 func (r *budgetRepo) ListByProject(ctx context.Context, projectID int64) ([]domain.ProjectVendor, error) {
+	r.listCalls++
 	return r.existing, nil
 }
 
@@ -298,9 +308,11 @@ func newGuardedServiceForTest() (*VendorEngagementService, *budgetRepo, *countin
 	}
 	acts := &countingActivityRepo{}
 	svc := &VendorEngagementService{repo: repo, activity: NewActivityService(acts)}
-	svc.SetBudgetReader(&fakeBudgetReader{summary: domain.ProjectCostSummary{
-		ContractValue: 100_000_000, VendorCost: 50_000_000, VenueCost: 10_000_000,
-		CommittedCost: 60_000_000, Remaining: 40_000_000,
+	// VendorCost 50jt tidak lagi disuntik di sini -- ia lahir dari
+	// repo.existing di atas, dan totalnya tetap sama: 50jt + 10jt venue = 60jt
+	// terpakai dari 100jt, sisa 40jt.
+	svc.SetBudgetReader(&fakeBudgetReader{basis: domain.ProjectCostBasis{
+		ContractValue: 100_000_000, VenueCost: 10_000_000,
 	}})
 	return svc, repo, acts
 }
@@ -433,9 +445,11 @@ func newOverBudgetServiceForTest() (*VendorEngagementService, *countingActivityR
 	}
 	acts := &countingActivityRepo{}
 	svc := &VendorEngagementService{repo: repo, activity: NewActivityService(acts)}
-	svc.SetBudgetReader(&fakeBudgetReader{summary: domain.ProjectCostSummary{
-		ContractValue: 100_000_000, VendorCost: 120_000_000, VenueCost: 10_000_000,
-		CommittedCost: 130_000_000, Remaining: -30_000_000,
+	// Sama seperti di atas: VendorCost 120jt datang dari repo.existing, jadi
+	// 120jt + 10jt venue = 130jt terpakai dari 100jt -- project ini sudah minus
+	// 30jt sebelum tulisan apa pun.
+	svc.SetBudgetReader(&fakeBudgetReader{basis: domain.ProjectCostBasis{
+		ContractValue: 100_000_000, VenueCost: 10_000_000,
 	}})
 	return svc, acts
 }
@@ -485,5 +499,195 @@ func TestGuardBudget_SudahMinus_DiperdalamTanpaAlasan_Ditolak422(t *testing.T) {
 	// pertambahannya -- itu yang harus ditandatangani orangnya.
 	if got := appErr.Fields["overage"]; len(got) != 1 || got[0] != "60000000" {
 		t.Errorf("overage = %v, want [60000000]", got)
+	}
+}
+
+// --- Batas panjang teks & format jam (PLAN.md vendor-engagement-500, T4) ---
+//
+// Regresi atas satu-satunya sumber 500 di produksi: 56 dari 56 `unhandled
+// error` dalam 45 jam adalah "Error 1406 Data too long for column 'scope'".
+// Kolomnya kini TEXT (migrasi 000072), tapi gerbang panjangnya tetap ada
+// supaya penolakan berupa 422 yang bisa dirender form, bukan 500 di tebing
+// 65.535 byte milik TEXT.
+
+func repeatRunes(r rune, n int) string {
+	return strings.Repeat(string(r), n)
+}
+
+func TestVendorEngagementCreate_ScopeTerlaluPanjang_Ditolak422(t *testing.T) {
+	pv := baseEngagement()
+	repo := &fakeVendorEngagementRepo{engagement: pv}
+	svc := &VendorEngagementService{repo: repo, activity: NewActivityService(&fakeActivityRepoForProject{})}
+	input := baseEngagementInputFor(pv)
+	input.Scope = repeatRunes('a', maxScope+1)
+
+	_, err := svc.Create(context.Background(), 1, pv.ProjectID, 99, input)
+	assertValidation(t, err, "scope")
+	if repo.created != nil {
+		t.Error("repo.Create terpanggil padahal validasi menolak — gerbangnya harus SEBELUM tulisan")
+	}
+}
+
+func TestVendorEngagementCreate_ScopeTepatDiBatas_Diterima(t *testing.T) {
+	pv := baseEngagement()
+	svc := newVendorEngagementServiceForTest(pv)
+	input := baseEngagementInputFor(pv)
+	input.Scope = repeatRunes('a', maxScope)
+
+	got, err := svc.Create(context.Background(), 1, pv.ProjectID, 99, input)
+	if err != nil {
+		t.Fatalf("Create() error = %v, want nil pada panjang tepat batas", err)
+	}
+	if len([]rune(got.Scope)) != maxScope {
+		t.Errorf("Scope tersimpan %d rune, want %d — tidak boleh dipangkas diam-diam", len([]rune(got.Scope)), maxScope)
+	}
+}
+
+// Regresi langsung atas root cause: 300 karakter dulu menghasilkan 500 karena
+// kolomnya VARCHAR(255). Sekarang harus tersimpan utuh.
+func TestVendorEngagementCreate_ScopeDiAtas255_Diterima(t *testing.T) {
+	pv := baseEngagement()
+	svc := newVendorEngagementServiceForTest(pv)
+	input := baseEngagementInputFor(pv)
+	input.Scope = repeatRunes('a', 300)
+
+	got, err := svc.Create(context.Background(), 1, pv.ProjectID, 99, input)
+	if err != nil {
+		t.Fatalf("Create() error = %v, want nil — 300 karakter adalah kasus yang dulu 500", err)
+	}
+	if len([]rune(got.Scope)) != 300 {
+		t.Errorf("Scope tersimpan %d rune, want 300", len([]rune(got.Scope)))
+	}
+}
+
+func TestVendorEngagementCreate_AlasanOverBudgetTerlaluPanjang_Ditolak422(t *testing.T) {
+	pv := baseEngagement()
+	repo := &fakeVendorEngagementRepo{engagement: pv}
+	svc := &VendorEngagementService{repo: repo, activity: NewActivityService(&fakeActivityRepoForProject{})}
+	input := baseEngagementInputFor(pv)
+	input.OverBudgetReason = repeatRunes('a', maxReason+1)
+
+	_, err := svc.Create(context.Background(), 1, pv.ProjectID, 99, input)
+	assertValidation(t, err, "overBudgetReason")
+	if repo.created != nil {
+		t.Error("repo.Create terpanggil padahal validasi menolak")
+	}
+}
+
+func TestVendorEngagementCreate_JamAcaraTidakValid_Ditolak422(t *testing.T) {
+	for _, tc := range []struct {
+		nama  string
+		jam   string
+		field string
+	}{
+		{"string kosong", "", "eventStartTime"},
+		{"pakai titik", "19.00", "eventStartTime"},
+		{"jam di luar rentang", "25:00", "eventStartTime"},
+		{"bukan jam sama sekali", "malam", "eventStartTime"},
+	} {
+		t.Run(tc.nama, func(t *testing.T) {
+			pv := baseEngagement()
+			svc := newVendorEngagementServiceForTest(pv)
+			input := baseEngagementInputFor(pv)
+			jam := tc.jam
+			input.EventStartTime = &jam
+
+			_, err := svc.Create(context.Background(), 1, pv.ProjectID, 99, input)
+			assertValidation(t, err, tc.field)
+		})
+	}
+}
+
+func TestVendorEngagementCreate_JamAcaraValidAtauKosong_Diterima(t *testing.T) {
+	jam := "19:00"
+	for _, tc := range []struct {
+		nama  string
+		mulai *string
+	}{
+		{"HH:MM valid", &jam},
+		{"nil = Belum ditentukan", nil},
+	} {
+		t.Run(tc.nama, func(t *testing.T) {
+			pv := baseEngagement()
+			svc := newVendorEngagementServiceForTest(pv)
+			input := baseEngagementInputFor(pv)
+			input.EventStartTime = tc.mulai
+
+			if _, err := svc.Create(context.Background(), 1, pv.ProjectID, 99, input); err != nil {
+				t.Fatalf("Create() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// --- truncateTo (PLAN.md T2) ---
+
+func TestTruncateTo(t *testing.T) {
+	t.Run("memangkas tepat ke batas", func(t *testing.T) {
+		got := truncateTo(repeatRunes('a', maxScope), maxActivityLabel)
+		if n := len([]rune(got)); n != maxActivityLabel {
+			t.Errorf("panjang hasil = %d rune, want %d", n, maxActivityLabel)
+		}
+	})
+
+	t.Run("tidak mengusik teks yang sudah muat", func(t *testing.T) {
+		in := repeatRunes('a', 200)
+		if got := truncateTo(in, maxActivityDescription); got != in {
+			t.Error("teks yang sudah muat tidak boleh diubah")
+		}
+	})
+
+	// Pemangkasan berbasis rune, bukan byte: memotong di tengah karakter
+	// multibyte menghasilkan UTF-8 rusak yang justru DITOLAK MySQL — kegagalan
+	// yang sama persis dengan yang sedang diperbaiki.
+	t.Run("tidak memotong rune multibyte di tengah", func(t *testing.T) {
+		got := truncateTo(repeatRunes('é', 300), maxActivityLabel)
+		if !utf8.ValidString(got) {
+			t.Error("hasil pemangkasan bukan UTF-8 yang sah")
+		}
+		if n := len([]rune(got)); n != maxActivityLabel {
+			t.Errorf("panjang hasil = %d rune, want %d", n, maxActivityLabel)
+		}
+	})
+}
+
+// --- Query ganda (PLAN.md T6) ---
+
+// Sebelum T6, guardBudget membaca daftar engagement lalu memanggil
+// CostSummary yang membacanya LAGI — dua query identik untuk satu tulisan.
+func TestGuardBudget_Create_HanyaSatuPembacaanDaftar(t *testing.T) {
+	svc, repo, _ := newGuardedServiceForTest()
+
+	if _, err := svc.Create(context.Background(), 1, 10, 99, guardedInput(10_000_000)); err != nil {
+		t.Fatalf("Create() error = %v, want nil", err)
+	}
+	if repo.listCalls != 1 {
+		t.Errorf("ListByProject terpanggil %d kali, want tepat 1", repo.listCalls)
+	}
+}
+
+// Alasan sepanjang batas tetap menghasilkan baris audit yang muat di
+// activity_log.description (VARCHAR(500)) — kalau tidak, Record menelan
+// errornya dan komitmen over-budget tersimpan TANPA jejak siapa-kapan-kenapa,
+// yaitu justru satu-satunya alasan gerbang ini dirancang.
+func TestGuardBudget_AlasanPanjangDiBatas_JejakTetapTercatatDanMuat(t *testing.T) {
+	svc, _, acts := newGuardedServiceForTest()
+	input := guardedInput(60_000_000) // 50jt + 60jt + 10jt venue = 120jt > 100jt
+	input.OverBudgetReason = repeatRunes('a', maxReason)
+
+	if _, err := svc.Create(context.Background(), 1, 10, 99, input); err != nil {
+		t.Fatalf("Create() error = %v, want lolos karena alasan terisi", err)
+	}
+	var found *domain.ActivityLogEntry
+	for _, e := range acts.entries {
+		if e.Type == domain.ActivityVendorOverBudget {
+			found = e
+		}
+	}
+	if found == nil {
+		t.Fatal("tidak ada entri ActivityVendorOverBudget — jejaknya hilang")
+	}
+	if n := len([]rune(found.Description)); n > maxActivityDescription {
+		t.Errorf("description %d rune, melebihi kolom VARCHAR(%d) — Record akan menelan Error 1406", n, maxActivityDescription)
 	}
 }

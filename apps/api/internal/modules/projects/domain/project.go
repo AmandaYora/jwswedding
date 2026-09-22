@@ -130,6 +130,21 @@ type ProjectMilestone struct {
 	CompletedDate *time.Time
 }
 
+// ProjectCostBasis adalah bagian ringkasan biaya yang TIDAK berubah karena
+// tulisan engagement — dipisah supaya gerbang anggaran bisa membacanya sekali
+// lalu memproyeksikan sendiri, tanpa membuat repository membaca ulang daftar
+// engagement yang sudah ada di tangannya.
+//
+// Lihat docs/plan/vendor-engagement-500/PLAN.md T6: sebelum ini, satu
+// penambahan vendor membayar tiga query (daftar engagement, project, lalu
+// daftar engagement LAGI dari dalam CostSummary).
+type ProjectCostBasis struct {
+	ContractValue int64
+	// VenueCost dibaca dari snapshot milik project (venue_rental_price +
+	// venue_charge), bukan dari tabel venue milik modul `vendors`.
+	VenueCost int64
+}
+
 // ProjectCostSummary adalah sisi biaya sebuah project berhadapan dengan nilai
 // kontraknya — dasar "Sisa Anggaran" dan gerbang komitmen vendor.
 //

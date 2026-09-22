@@ -3,11 +3,15 @@ package migrator_test
 import (
 	"database/sql"
 	"fmt"
+	"io/fs"
+	"strconv"
+	"strings"
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
 
 	"jwswedding/internal/migrator"
+	"jwswedding/migrations"
 )
 
 // Round-trip test for the migration set, against a throwaway database created
@@ -111,10 +115,12 @@ func indexExists(t *testing.T, url, table, index string) bool {
 // and 000070 (restrict cities to Jabodetabek+Bali, down = intentional no-op)
 // back one step at a time and then forward again.
 //
-// The step count below is coupled to the chain length: every new migration
-// appended after 000070 must extend it (and the table assertions), or the
-// rollback lands short and old tables "remain" — exactly the false failure
-// adding 000069/000070 first produced here.
+// Jumlah langkah rollback dihitung sendiri dari migrasi terakhir yang
+// di-embed (latestMigrationVersion), jadi menambah migrasi baru TIDAK lagi
+// membuat tes ini gagal palsu dengan "tabel X masih ada" — kegagalan yang
+// sempat muncul saat 000069/000070, lalu terulang saat 000071 dan 000072.
+// Yang masih perlu ditambah manual hanyalah assertion tabel/kolom di bawah,
+// dan hanya kalau migrasi barunya memang menambah objek skema baru.
 //
 // The rollback order matters and is the part most likely to break: the three
 // project_package_* tables carry FKs to `projects`, the quotation_* tables
@@ -188,10 +194,19 @@ func TestMigrations_UpDownUp(t *testing.T) {
 		t.Fatal("setelah up, kolom client_contacts.project_id masih ada")
 	}
 
-	// Roll back the nineteen steps: 000070 down to 000052. (000070's own down
-	// is an intentional no-op — its city-NULLing is unrecoverable by design,
-	// see A6/A7 — so no data assertion covers it on this empty schema.)
-	for i := 0; i < 19; i++ {
+	// Roll back to just below 000052 — the assertions further down check what
+	// 000052..000070 undid, so every migration above 000051 has to come off.
+	// (000070's own down is an intentional no-op — its city-NULLing is
+	// unrecoverable by design, see A6/A7 — so no data assertion covers it on
+	// this empty schema.)
+	//
+	// Dihitung dari migrasi terakhir, BUKAN angka tetap: dulu ini hardcoded 19
+	// ("000070 down to 000052") dan langsung usang begitu 000071 ditambahkan —
+	// tesnya gagal dengan "tabel X masih ada" yang menyesatkan, seolah down
+	// migration-nya rusak padahal rollback-nya cuma berhenti kelewat tinggi.
+	const floorVersion = 51 // 000052's down is the last one that must run
+	steps := latestMigrationVersion(t) - floorVersion
+	for i := 0; i < steps; i++ {
 		if err := migrator.Down(url); err != nil {
 			t.Fatalf("migrate down langkah ke-%d: %v", i+1, err)
 		}
@@ -356,4 +371,34 @@ func TestMigrations_RollbackDenganData(t *testing.T) {
 
 func roundTripDSN() string {
 	return fmt.Sprintf("root:@tcp(127.0.0.1:3306)/%s?multiStatements=true&parseTime=true", roundTripDB)
+}
+
+// latestMigrationVersion membaca nomor migrasi tertinggi dari berkas yang
+// benar-benar di-embed, supaya jumlah langkah rollback di atas ikut bergerak
+// sendiri setiap kali migrasi baru ditambahkan.
+func latestMigrationVersion(t *testing.T) int {
+	t.Helper()
+
+	entries, err := fs.Glob(migrations.FS, "*.up.sql")
+	if err != nil {
+		t.Fatalf("baca daftar migrasi: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("tidak ada berkas migrasi yang ter-embed")
+	}
+	latest := 0
+	for _, name := range entries {
+		prefix, _, ok := strings.Cut(name, "_")
+		if !ok {
+			t.Fatalf("nama migrasi tidak sesuai pola <versi>_<nama>.up.sql: %s", name)
+		}
+		v, err := strconv.Atoi(prefix)
+		if err != nil {
+			t.Fatalf("versi migrasi tidak berupa angka pada %s: %v", name, err)
+		}
+		if v > latest {
+			latest = v
+		}
+	}
+	return latest
 }

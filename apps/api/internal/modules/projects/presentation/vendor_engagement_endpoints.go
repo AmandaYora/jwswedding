@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"jwswedding/internal/modules/projects/application"
@@ -101,10 +102,21 @@ func toVendorEngagementInput(body vendorEngagementInputBody) (application.Vendor
 		VendorID: body.VendorID, CategoryID: body.CategoryID, Scope: body.Scope, ContractValue: body.ContractValue,
 		PricingTier:      domain.VendorPricingTier(body.PricingTier),
 		EngagementStatus: domain.EngagementStatus(body.EngagementStatus), BookingDate: bookingDate, EventDate: eventDate,
-		EventStartTime: body.EventStartTime, EventEndTime: body.EventEndTime,
+		EventStartTime: nilIfBlank(body.EventStartTime), EventEndTime: nilIfBlank(body.EventEndTime),
 		DPAmount: body.DPAmount, DueDate: dueDate, PICStaffID: body.PICStaffID, Notes: body.Notes,
 		OverBudgetReason: body.OverBudgetReason,
 	}, nil
+}
+
+// nilIfBlank menyamakan jalur vendor dengan jalur project, yang sudah
+// mengubah "" menjadi NULL lewat emptyStrToNilPtr. Form saat ini sudah
+// mengirim null, tetapi pointer ke "" dari klien mana pun akan menjadi
+// Error 1292 di kolom TIME — lihat docs/plan/vendor-engagement-500/PLAN.md T5.
+func nilIfBlank(p *string) *string {
+	if p == nil {
+		return nil
+	}
+	return emptyStrToNilPtr(strings.TrimSpace(*p))
 }
 
 func parseOptionalDate(s string) *time.Time {
