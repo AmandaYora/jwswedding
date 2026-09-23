@@ -24,6 +24,11 @@ export interface StaffMember {
   email: string;
   phone: string;
   isActive: boolean;
+  // Hanya ADA/TIDAK, bukan gambarnya — daftar Pengguna menampilkan badge dari
+  // flag ini, sedangkan gambarnya baru diambil saat modal/halaman TTD dibuka.
+  // Menaruh thumbnail di tabel berarti satu request gambar per baris (PLAN
+  // tanda-tangan-pengguna A7).
+  hasSignature: boolean;
 }
 
 // Public-safe subset (any staff role, unlike StaffMember's Owner-only

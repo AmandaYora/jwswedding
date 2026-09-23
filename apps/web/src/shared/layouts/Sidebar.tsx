@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
-import { LayoutDashboard, FolderKanban, Users, Tags, Store, Building2, UserCog, Sparkles, Settings, CalendarClock, CalendarCheck, Landmark, Package, ChevronDown, LogOut, X, FileText, BookOpen } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Users, Tags, Store, Building2, UserCog, Sparkles, Settings, CalendarClock, CalendarCheck, Landmark, Package, ChevronDown, LogOut, X, FileText, BookOpen, Signature } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { Avatar } from "@/shared/components/ui/Avatar";
@@ -55,6 +55,11 @@ const NAV_ITEMS: NavEntry[] = [
   // 7 — baca saja, tombol tulis disembunyikan di halamannya); Wedding Planner
   // tetap tidak membuka menu ini.
   { kind: "link", to: ROUTE_PATHS.venues, label: "Venue", icon: Building2, allowedRoles: ["Owner", "Admin", "Sales"] },
+  // Tanpa allowedRoles: setiap staff berhak mengurus TTD-nya sendiri. Sengaja
+  // di luar grup "Pengaturan" di bawah, yang seluruhnya Owner-only — kalau
+  // ditaruh di sana, justru Admin/Staff/Sales yang tidak akan pernah melihatnya
+  // (PLAN tanda-tangan-pengguna K7).
+  { kind: "link", to: ROUTE_PATHS.mySignature, label: "Tanda Tangan Saya", icon: Signature },
   {
     kind: "group",
     label: "Pengaturan",

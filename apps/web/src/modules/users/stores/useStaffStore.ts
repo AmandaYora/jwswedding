@@ -3,6 +3,7 @@ import { httpClient } from "@/shared/services/http-client";
 import { API } from "@/shared/services/api-endpoints";
 import type { StaffMember, StaffSummary } from "@/modules/users/types";
 import type { UserFormValues, UserCreateFormValues } from "@/modules/users/schemas/user.schema";
+import type { SignaturePayload } from "@/modules/users/components/SignatureField";
 import { toPaginationMeta, EMPTY_PAGINATION_META, type PaginationMeta, type RawPaginationMeta } from "@/shared/types/pagination";
 import { toAffectedProjects, type AffectedProject, type RawDeleteImpact } from "@/shared/types/delete-impact";
 
@@ -16,6 +17,7 @@ interface RawStaffMember {
   email: string;
   phone: string;
   isActive: boolean;
+  hasSignature: boolean;
 }
 
 function toStaffMember(raw: RawStaffMember): StaffMember {
@@ -59,6 +61,30 @@ interface StaffState {
   // (403), never reaching a confirmation dialog.
   fetchStaffDeleteImpact: (id: string) => Promise<AffectedProject[]>;
   deleteStaff: (id: string) => Promise<void>;
+  // --- TTD pengguna (PLAN tanda-tangan-pengguna) ---
+  // Dua jalur: `id` (Owner-only, dari modal Pengguna) dan `me` (semua role,
+  // dari halaman "Tanda Tangan Saya"). Keduanya sengaja terpisah alih-alih
+  // satu fungsi ber-flag, supaya jalur Owner tidak pernah bisa terpanggil
+  // tanpa sengaja dari layar self-service.
+  saveStaffSignature: (id: string, payload: SignaturePayload) => Promise<void>;
+  deleteStaffSignature: (id: string) => Promise<void>;
+  fetchStaffSignatureImageUrl: (id: string) => Promise<string | null>;
+  saveMySignature: (payload: SignaturePayload) => Promise<void>;
+  deleteMySignature: () => Promise<void>;
+  fetchMySignatureImageUrl: () => Promise<string | null>;
+  fetchMySignatureExists: () => Promise<boolean>;
+}
+
+// Object URL pratinjau TTD. Pemanggil WAJIB URL.revokeObjectURL saat selesai —
+// tanpa itu setiap pembukaan modal membocorkan satu blob.
+async function fetchSignatureObjectUrl(url: string): Promise<string | null> {
+  try {
+    const res = await httpClient.get(url, { responseType: "blob" });
+    return URL.createObjectURL(res.data as Blob);
+  } catch {
+    // 404 = belum punya TTD, bukan galat yang perlu dinaikkan ke UI.
+    return null;
+  }
 }
 
 // Backed by the real `staff` module (Fase 3) — tenant-scoped, fetch-then-set
@@ -115,5 +141,32 @@ export const useStaffStore = create<StaffState>((set, get) => ({
   deleteStaff: async (id) => {
     await httpClient.delete(API.staff.item(id));
     await get().fetchStaff();
+  },
+
+  saveStaffSignature: async (id, payload) => {
+    await httpClient.put(API.staff.signature(id), payload);
+    await get().fetchStaff();
+  },
+
+  deleteStaffSignature: async (id) => {
+    await httpClient.delete(API.staff.signature(id));
+    await get().fetchStaff();
+  },
+
+  fetchStaffSignatureImageUrl: (id) => fetchSignatureObjectUrl(API.staff.signatureImage(id)),
+
+  saveMySignature: async (payload) => {
+    await httpClient.put(API.staff.mySignature, payload);
+  },
+
+  deleteMySignature: async () => {
+    await httpClient.delete(API.staff.mySignature);
+  },
+
+  fetchMySignatureImageUrl: () => fetchSignatureObjectUrl(API.staff.mySignatureImage),
+
+  fetchMySignatureExists: async () => {
+    const res = await httpClient.get(API.staff.mySignature);
+    return Boolean((res.data.data as { hasSignature?: boolean } | null)?.hasSignature);
   },
 }));

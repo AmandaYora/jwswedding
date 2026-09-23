@@ -104,9 +104,17 @@ func (m *Module) SiteMetaForHost(ctx context.Context, host string) (meta SiteMet
 func (m *Module) RegisterPublicRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/v1/public/branding", httpx.Method(http.MethodGet, m.tenantHandler.PublicBranding))
 	mux.Handle("/api/v1/public/logo", httpx.Method(http.MethodGet, m.tenantHandler.PublicLogo))
+	mux.Handle("/api/v1/public/app-icon/", httpx.Method(http.MethodGet, m.tenantHandler.PublicAppIcon))
 	mux.Handle("/api/v1/public/login-slides", httpx.Method(http.MethodGet, m.loginSlidesHandler.List))
 	mux.Handle("/api/v1/public/login-slides/", httpx.Method(http.MethodGet, m.loginSlidesHandler.Slide))
 	mux.Handle("/webhooks/elproof-payment", httpx.Method(http.MethodPost, m.webhookHandler.Receive))
+	// PWA manifest — registered at the site root, not under /api/v1/, so its
+	// implicit scope covers "/" (docs/plan/ikon-homescreen-pwa/PLAN.md §3.3
+	// A1). Still safe to register alongside these pre-auth API routes: Go's
+	// ServeMux picks the most specific pattern regardless of registration
+	// order, so this never shadows spaFileServer's own "/" catch-all in
+	// main.go, and vice versa.
+	mux.Handle("/manifest.webmanifest", httpx.Method(http.MethodGet, m.tenantHandler.PublicManifest))
 }
 
 func (m *Module) RegisterRoutes(mux *http.ServeMux, authed func(http.Handler) http.Handler) {

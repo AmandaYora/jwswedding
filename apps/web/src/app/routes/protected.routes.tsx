@@ -30,6 +30,7 @@ const PackageTemplateListPage = lazy(() => import("@/modules/package-templates/p
 const VendorListPage = lazy(() => import("@/modules/vendors/pages/VendorListPage"));
 const VenueListPage = lazy(() => import("@/modules/venues/pages/VenueListPage"));
 const UserListPage = lazy(() => import("@/modules/users/pages/UserListPage"));
+const MySignaturePage = lazy(() => import("@/modules/users/pages/MySignaturePage"));
 const SubscriptionPage = lazy(() => import("@/modules/subscription/pages/SubscriptionPage"));
 const CompanyProfilePage = lazy(() => import("@/modules/company-profile/pages/CompanyProfilePage"));
 const TimelineMonitorPage = lazy(() => import("@/modules/timeline-monitor/pages/TimelineMonitorPage"));
@@ -72,6 +73,10 @@ export const protectedRoutes: RouteObject = {
             { path: "paket", element: <Navigate to="../vendor" replace /> },
           ],
         },
+        // Tanpa RequireRole: setiap staff berhak mengurus tanda tangannya
+        // sendiri, apa pun role-nya (PLAN tanda-tangan-pengguna K7). Endpoint
+        // di baliknya memakai jalur `me` yang mengambil staffID dari klaim JWT.
+        { path: ROUTE_PATHS.mySignature, element: <MySignaturePage /> },
         {
           element: <RequireRole allow={["Owner", "Admin"]} />,
           children: [

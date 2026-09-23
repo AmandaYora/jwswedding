@@ -57,10 +57,6 @@ type Tenant struct {
 	LastCredentialResetAt *time.Time
 	BrandColorPreset      string
 	LogoStoragePath       *string
-	// SignatureStoragePath backs the Kwitansi PDF's signature block (PLAN.md
-	// redesain-pdf-invoice-kwitansi §D4/§D7) — nil for a tenant that never
-	// uploaded one, same "optional asset" convention as LogoStoragePath.
-	SignatureStoragePath  *string
 	CustomDomain          *string
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
@@ -77,8 +73,8 @@ var ErrDuplicateCustomDomain = errors.New("domain kustom sudah digunakan tenant 
 // redesain-pdf-invoice-kwitansi-v2 §6.1) — every consumer (GET /tenants/me,
 // GET /tenants/me/branding, and the PDF-download gate in the `projects`
 // module, reached only via platform/contracts) calls this same function
-// rather than re-implementing the rule. Email, logo, and signature are
-// deliberately excluded (K1) — only identity, contact, and bank-transfer
+// rather than re-implementing the rule. Email and logo are deliberately
+// excluded (K1) — only identity, contact, and bank-transfer
 // destination are required. Returns a non-nil empty slice, never nil, when
 // complete, and preserves this fixed field order regardless of which fields
 // are missing, so the dialog always lists them the same way.

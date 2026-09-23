@@ -21,6 +21,9 @@ type StaffRepository interface {
 	FindByID(ctx context.Context, tenantID, id int64) (*domain.StaffMember, error)
 	Create(ctx context.Context, member *domain.StaffMember) error
 	Update(ctx context.Context, member *domain.StaffMember) error
+	// UpdateSignature adalah satu-satunya jalur tulis TTD — Create/Update
+	// sengaja tidak menyentuh kolomnya (PLAN tanda-tangan-pengguna T6).
+	UpdateSignature(ctx context.Context, tenantID, id int64, path *string) error
 	SetActive(ctx context.Context, tenantID, id int64, isActive bool) error
 	Delete(ctx context.Context, tenantID, id int64) error
 }

@@ -25,7 +25,7 @@ type Module struct {
 	quotationService       *application.QuotationService
 }
 
-func NewModule(db *sql.DB, platform platformcontracts.Contracts, projects projectscontracts.Contracts, vendors vendorscontracts.Contracts, storageClient *storage.Client) *Module {
+func NewModule(db *sql.DB, platform platformcontracts.Contracts, projects projectscontracts.Contracts, vendors vendorscontracts.Contracts, staff application.StaffSignerResolver, storageClient *storage.Client) *Module {
 	quotationRepo := infrastructure.NewMySQLQuotationRepository(db)
 	templateRepo := infrastructure.NewMySQLPackageTemplateRepository(db)
 	templateService := application.NewPackageTemplateService(templateRepo)
@@ -36,7 +36,7 @@ func NewModule(db *sql.DB, platform platformcontracts.Contracts, projects projec
 	// (same method, same DTO) — no adapter needed, unlike staffNameResolver.
 	quotationService.SetVenueResolver(vendors)
 	return &Module{
-		handler:                presentation.NewHandler(quotationService, platform, projects, linkService),
+		handler:                presentation.NewHandler(quotationService, platform, projects, linkService, staff),
 		publicHandler:          presentation.NewPublicHandler(linkService),
 		packageTemplateHandler: presentation.NewPackageTemplateHandler(templateService),
 		contracts:              contracts.New(quotationService),

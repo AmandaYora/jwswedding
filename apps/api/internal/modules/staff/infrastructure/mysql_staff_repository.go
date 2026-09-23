@@ -16,12 +16,13 @@ func NewMySQLStaffRepository(db *sql.DB) *MySQLStaffRepository {
 	return &MySQLStaffRepository{db: db}
 }
 
-const staffColumns = `id, tenant_id, name, title, initials, role, username, email, phone, is_active, created_at, updated_at`
+const staffColumns = `id, tenant_id, name, title, initials, role, username, email, phone, signature_storage_path, is_active, created_at, updated_at`
 
 func scanStaff(scan func(dest ...interface{}) error) (*domain.StaffMember, error) {
 	var m domain.StaffMember
 	var role string
-	err := scan(&m.ID, &m.TenantID, &m.Name, &m.Title, &m.Initials, &role, &m.Username, &m.Email, &m.Phone, &m.IsActive, &m.CreatedAt, &m.UpdatedAt)
+	var signatureStoragePath sql.NullString
+	err := scan(&m.ID, &m.TenantID, &m.Name, &m.Title, &m.Initials, &role, &m.Username, &m.Email, &m.Phone, &signatureStoragePath, &m.IsActive, &m.CreatedAt, &m.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -29,6 +30,12 @@ func scanStaff(scan func(dest ...interface{}) error) (*domain.StaffMember, error
 		return nil, err
 	}
 	m.Role = domain.StaffRole(role)
+	if signatureStoragePath.Valid {
+		// Salin ke variabel lokal baru: mengambil alamat field sql.NullString
+		// akan membuat setiap baris hasil scan berbagi pointer yang sama.
+		path := signatureStoragePath.String
+		m.SignatureStoragePath = &path
+	}
 	return &m, nil
 }
 
@@ -119,6 +126,18 @@ func (r *MySQLStaffRepository) Update(ctx context.Context, member *domain.StaffM
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE staff_members SET name = ?, title = ?, role = ?, initials = ?, email = ?, phone = ? WHERE tenant_id = ? AND id = ?`,
 		member.Name, member.Title, string(member.Role), member.Initials, member.Email, member.Phone, member.TenantID, member.ID,
+	)
+	return err
+}
+
+// UpdateSignature adalah SATU-SATUNYA jalur tulis kolom signature_storage_path.
+// Create/Update di atas sengaja tidak menyentuhnya supaya menyunting profil
+// pengguna tidak pernah menghapus TTD-nya secara tak sengaja. path nil
+// mengosongkan TTD.
+func (r *MySQLStaffRepository) UpdateSignature(ctx context.Context, tenantID, id int64, path *string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE staff_members SET signature_storage_path = ? WHERE tenant_id = ? AND id = ?`,
+		path, tenantID, id,
 	)
 	return err
 }

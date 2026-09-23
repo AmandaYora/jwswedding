@@ -3,8 +3,10 @@ package presentation
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,7 +43,6 @@ type tenantResponse struct {
 	LastCredentialResetAt *string `json:"lastCredentialResetAt"`
 	BrandColorPreset      string  `json:"brandColorPreset"`
 	HasLogo               bool    `json:"hasLogo"`
-	HasSignature          bool    `json:"hasSignature"`
 	CustomDomain          *string `json:"customDomain"`
 	// Address/BankName/BankAccountNumber/BankAccountHolderName back the
 	// "Profil Usaha" page and the Invoice/Kwitansi PDF kop surat (PLAN.md
@@ -98,9 +99,8 @@ func toTenantResponse(t domain.Tenant) tenantResponse {
 		SubscriptionExpiresAt: dateOrNil(t.SubscriptionExpiresAt), IsSuspended: t.IsSuspended,
 		LastCredentialResetAt: dateOrNil(t.LastCredentialResetAt),
 		BrandColorPreset:      t.BrandColorPreset, HasLogo: t.LogoStoragePath != nil,
-		HasSignature: t.SignatureStoragePath != nil,
 		CustomDomain: t.CustomDomain,
-		Address: t.Address, BankName: t.BankName, BankAccountNumber: t.BankAccountNumber,
+		Address:      t.Address, BankName: t.BankName, BankAccountNumber: t.BankAccountNumber,
 		BankAccountHolderName: t.BankAccountHolderName,
 		ProfileComplete:       len(missing) == 0, MissingProfileFields: missing,
 	}
@@ -156,13 +156,14 @@ func (h *TenantHandler) Item(w http.ResponseWriter, r *http.Request) {
 	// "me" is the authenticated principal's own self-service read + partial
 	// write — the only path this handler serves at all now that Platform
 	// Console CRUD is gone (D2). /me itself (full tenant incl. subscription,
-	// GET/PATCH), /me/logo's PUT, and /me/signature's PUT stay Owner-only;
-	// /me/branding and GET /me/logo are open to any tenant-scoped principal
-	// (any staff role, or client), since branding must render for everyone
-	// inside WO Console / Client Portal, not just the Owner. GET
-	// /me/signature follows the same "any tenant-scoped principal" rule as
-	// GET /me/logo — the Kwitansi PDF it feeds is reachable from Client
-	// Portal too (PLAN.md redesain-pdf-invoice-kwitansi §D4/§D7).
+	// GET/PATCH) and /me/logo's PUT stay Owner-only; /me/branding and GET
+	// /me/logo are open to any tenant-scoped principal (any staff role, or
+	// client), since branding must render for everyone inside WO Console /
+	// Client Portal, not just the Owner.
+	//
+	// /me/signature sudah tidak ada: TTD kini master data per pengguna, dilayani
+	// /api/v1/staff/{id}/signature dan /api/v1/staff/me/signature (PLAN
+	// tanda-tangan-pengguna K3).
 	if segments[0] == "me" {
 		switch {
 		case len(segments) == 1 && r.Method == http.MethodGet:
@@ -175,10 +176,6 @@ func (h *TenantHandler) Item(w http.ResponseWriter, r *http.Request) {
 			h.myLogo(w, r)
 		case len(segments) == 2 && segments[1] == "logo" && r.Method == http.MethodPut:
 			h.uploadMyLogo(w, r)
-		case len(segments) == 2 && segments[1] == "signature" && r.Method == http.MethodGet:
-			h.mySignature(w, r)
-		case len(segments) == 2 && segments[1] == "signature" && r.Method == http.MethodPut:
-			h.uploadMySignature(w, r)
 		default:
 			response.Error(w, http.StatusNotFound, "Endpoint tidak ditemukan", nil)
 		}
@@ -217,17 +214,6 @@ func (h *TenantHandler) myLogo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	streamFile(w, r, "logo", tenantID, h.tenants.DownloadLogo)
-}
-
-// mySignature streams the caller's own tenant's signature — same auth
-// scoping as myLogo above (PLAN.md redesain-pdf-invoice-kwitansi §D4/§D7).
-func (h *TenantHandler) mySignature(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := selfTenantID(r)
-	if !ok {
-		response.Error(w, http.StatusForbidden, "Akun ini tidak terikat ke tenant manapun", nil)
-		return
-	}
-	streamFile(w, r, "signature", tenantID, h.tenants.DownloadSignature)
 }
 
 // hostWithoutPort strips an optional ":port" suffix from r.Host — a custom
@@ -269,6 +255,124 @@ func (h *TenantHandler) PublicLogo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	streamFile(w, r, "logo", tenant.ID, h.tenants.DownloadLogo)
+}
+
+// appIconSizes is the fixed, closed set of icon sizes PublicAppIcon renders:
+// 180 (apple-touch-icon's own conventional size) and 192/512 (the PWA
+// manifest's two icon slots, PublicManifest below). A closed allowlist, not
+// a range check — it's what stops a request from forcing the server to
+// render an arbitrarily large icon via the path segment (see
+// docs/plan/ikon-homescreen-pwa/PLAN.md §3.3 A4).
+var appIconSizes = map[int]bool{180: true, 192: true, 512: true}
+
+// PublicAppIcon streams a square PNG icon rendered from the Host-resolved
+// tenant's logo — GET /api/v1/public/app-icon/{size}. size is a path
+// segment, not a query parameter, mirroring
+// /api/v1/public/login-slides/{index} (login_slides_handler.go's Slide): an
+// unrecognized size — not in appIconSizes, not a number, an empty or
+// multi-segment path — 404s exactly like an unknown slide index, rather than
+// 400ing as a malformed request. Unauthenticated, same Host-based resolution
+// as PublicLogo.
+func (h *TenantHandler) PublicAppIcon(w http.ResponseWriter, r *http.Request) {
+	segments := httpx.Segments(r.URL.Path, "/api/v1/public/app-icon/")
+	if len(segments) != 1 {
+		response.Error(w, http.StatusNotFound, "Ikon tidak ditemukan", nil)
+		return
+	}
+	size, err := strconv.Atoi(segments[0])
+	if err != nil || !appIconSizes[size] {
+		response.Error(w, http.StatusNotFound, "Ikon tidak ditemukan", nil)
+		return
+	}
+
+	tenant, err := h.tenants.GetBrandingByDomain(r.Context(), hostWithoutPort(r.Host))
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	icon, err := h.tenants.AppIcon(r.Context(), tenant.ID, size)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/png")
+	// Rendered on demand, no in-memory cache (docs/plan/ikon-homescreen-pwa/
+	// PLAN.md §10) — this header is the only caching layer, and it's enough:
+	// a device only re-requests the icon once a day at most.
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(icon)
+}
+
+// manifestIcon is one entry of manifestResponse.Icons — shape mirrors the
+// W3C Web App Manifest spec's own "icons" member exactly (src/sizes/type/
+// purpose), not this project's own API envelope.
+type manifestIcon struct {
+	Src     string `json:"src"`
+	Sizes   string `json:"sizes"`
+	Type    string `json:"type"`
+	Purpose string `json:"purpose"`
+}
+
+// manifestResponse is the PWA web app manifest body itself — served raw
+// (json.NewEncoder, not response.OK), since a manifest's consumer is the
+// browser's install machinery, not this project's own frontend expecting
+// the {success, message, data} envelope.
+type manifestResponse struct {
+	Name            string         `json:"name"`
+	ShortName       string         `json:"short_name"`
+	StartURL        string         `json:"start_url"`
+	Scope           string         `json:"scope"`
+	Display         string         `json:"display"`
+	BackgroundColor string         `json:"background_color"`
+	ThemeColor      string         `json:"theme_color"`
+	Icons           []manifestIcon `json:"icons,omitempty"`
+}
+
+// PublicManifest serves the PWA manifest — GET /manifest.webmanifest,
+// resolved from the Host header exactly like PublicBranding/PublicLogo (an
+// unmatched Host 404s, docs/plan/ikon-homescreen-pwa/PLAN.md §3.3 A7).
+// Registered at the site root, not under /api/v1/ (platform.module.go) —
+// a manifest's implicit scope follows its own URL's directory, so a
+// manifest served from /api/v1/public/ would scope the installed PWA to
+// that path and fail to install the SPA served at "/".
+//
+// name/short_name are marshaled via encoding/json rather than built with
+// fmt.Sprintf: a business name containing a quote or backslash would
+// otherwise produce invalid JSON.
+func (h *TenantHandler) PublicManifest(w http.ResponseWriter, r *http.Request) {
+	tenant, err := h.tenants.GetBrandingByDomain(r.Context(), hostWithoutPort(r.Host))
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+
+	accent, _, _ := domain.PresetRGB(tenant.BrandColorPreset)
+	manifest := manifestResponse{
+		Name:            tenant.BusinessName,
+		ShortName:       tenant.BusinessName,
+		StartURL:        "/",
+		Scope:           "/",
+		Display:         "standalone",
+		BackgroundColor: "#ffffff",
+		ThemeColor:      fmt.Sprintf("#%02x%02x%02x", accent[0], accent[1], accent[2]),
+	}
+	// A manifest whose icons[].src 404s makes Chrome reject the WHOLE
+	// manifest, not just fall back to no icon — so a tenant with no logo
+	// uploaded yet gets a manifest with no "icons" member at all (still
+	// installable, still standalone, still correctly named) rather than one
+	// pointing at an icon endpoint that will 404.
+	if tenant.LogoStoragePath != nil {
+		manifest.Icons = []manifestIcon{
+			{Src: "/api/v1/public/app-icon/192", Sizes: "192x192", Type: "image/png", Purpose: "any maskable"},
+			{Src: "/api/v1/public/app-icon/512", Sizes: "512x512", Type: "image/png", Purpose: "any maskable"},
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/manifest+json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(manifest)
 }
 
 // selfTenantID resolves the calling principal's own tenant from the JWT
@@ -384,45 +488,10 @@ func (h *TenantHandler) uploadMyLogo(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Logo usaha berhasil diperbarui", toTenantResponse(*tenant))
 }
 
-type signatureUploadBody struct {
-	FileName   string `json:"fileName"`
-	MimeType   string `json:"mimeType"`
-	Base64Data string `json:"base64Data"`
-}
-
-// uploadMySignature mirrors uploadMyLogo exactly (PLAN.md
-// redesain-pdf-invoice-kwitansi §D4/§D7) — Owner-only, same gate.
-func (h *TenantHandler) uploadMySignature(w http.ResponseWriter, r *http.Request) {
-	claims, ok := middleware.FromContext(r.Context())
-	if !ok || claims.PrincipalType != "staff" || claims.Role != "Owner" {
-		response.Error(w, http.StatusForbidden, "Hanya akun Owner yang dapat mengubah tanda tangan", nil)
-		return
-	}
-	tenantID, err := application.ParseTenantID(claims.TenantID)
-	if err != nil {
-		response.Error(w, http.StatusForbidden, "Akun ini tidak terikat ke tenant manapun", nil)
-		return
-	}
-
-	var body signatureUploadBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
-		return
-	}
-	tenant, err := h.tenants.UploadSignature(r.Context(), tenantID, application.UploadSignatureInput{
-		FileName: body.FileName, MimeType: body.MimeType, Base64Data: body.Base64Data,
-	})
-	if err != nil {
-		writeAppError(w, err)
-		return
-	}
-	response.OK(w, "Tanda tangan berhasil diperbarui", toTenantResponse(*tenant))
-}
-
-// streamFile is streamLogo generalized to also serve the signature asset
-// (PLAN.md redesain-pdf-invoice-kwitansi §D4/§D7) — download is
-// TenantService.DownloadLogo or .DownloadSignature, whichever the caller
-// bound; name only affects the Content-Disposition filename.
+// streamFile streams a tenant-level asset — download is the bound accessor
+// (today only TenantService.DownloadLogo); name only affects the
+// Content-Disposition filename. Bentuknya sengaja tetap umum walau tinggal
+// satu pemakai, supaya aset tenant berikutnya tidak perlu menulis ulang.
 func streamFile(w http.ResponseWriter, r *http.Request, name string, tenantID int64, download func(ctx context.Context, tenantID int64) (io.ReadCloser, error)) {
 	reader, err := download(r.Context(), tenantID)
 	if err != nil {

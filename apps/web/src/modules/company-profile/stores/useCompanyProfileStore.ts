@@ -8,21 +8,18 @@ import type { CompanyProfileFormValues } from "@/modules/company-profile/schemas
 // Narrow projection of the full tenant record (GET/PATCH /tenants/me) — same
 // "define exactly what this page reads/writes, not the whole Tenant"
 // convention as useSubscriptionStore.MyTenant. PLAN.md invoice-kwitansi-client
-// §1.7/§4.8, then redesain-pdf-invoice-kwitansi §D4/§D7 for hasSignature,
-// then redesain-pdf-invoice-kwitansi-v2 §6.3.7 for profileComplete/
+// §1.7/§4.8, then redesain-pdf-invoice-kwitansi-v2 §6.3.7 for profileComplete/
 // missingProfileFields (the same gate GET /tenants/me/branding surfaces to
 // useTenantBrandingStore — reused here to drive this page's own banner
 // rather than re-deriving the rule client-side).
 export interface CompanyProfile extends CompanyProfileFormValues {
   hasLogo: boolean;
-  hasSignature: boolean;
   profileComplete: boolean;
   missingProfileFields: string[];
 }
 
 interface RawTenant extends CompanyProfileFormValues {
   hasLogo: boolean;
-  hasSignature: boolean;
   profileComplete: boolean;
   missingProfileFields: string[];
 }
@@ -34,12 +31,10 @@ function toProfile(raw: RawTenant): CompanyProfile {
 interface CompanyProfileState {
   profile: CompanyProfile | null;
   logoUrl: string | null;
-  signatureUrl: string | null;
 
   fetchProfile: () => Promise<void>;
   updateProfile: (values: CompanyProfileFormValues) => Promise<void>;
   uploadLogo: (file: File) => Promise<void>;
-  uploadSignature: (file: File) => Promise<void>;
 }
 
 // Backs CompanyProfilePage only — the WO Console's self-service "Profil
@@ -48,7 +43,6 @@ interface CompanyProfileState {
 export const useCompanyProfileStore = create<CompanyProfileState>((set, get) => ({
   profile: null,
   logoUrl: null,
-  signatureUrl: null,
 
   fetchProfile: async () => {
     const res = await httpClient.get(API.platform.tenantMe);
@@ -60,16 +54,9 @@ export const useCompanyProfileStore = create<CompanyProfileState>((set, get) => 
       const fileRes = await httpClient.get(API.platform.tenantMeLogo, { responseType: "blob" });
       logoUrl = URL.createObjectURL(fileRes.data as Blob);
     }
-    let signatureUrl: string | null = null;
-    if (profile.hasSignature) {
-      const fileRes = await httpClient.get(API.platform.tenantMeSignature, { responseType: "blob" });
-      signatureUrl = URL.createObjectURL(fileRes.data as Blob);
-    }
     const previousLogoUrl = get().logoUrl;
-    const previousSignatureUrl = get().signatureUrl;
-    set({ profile, logoUrl, signatureUrl });
+    set({ profile, logoUrl });
     if (previousLogoUrl) URL.revokeObjectURL(previousLogoUrl);
-    if (previousSignatureUrl) URL.revokeObjectURL(previousSignatureUrl);
   },
 
   updateProfile: async (values) => {
@@ -96,12 +83,7 @@ export const useCompanyProfileStore = create<CompanyProfileState>((set, get) => 
     await get().fetchProfile();
   },
 
-  // Mirrors uploadLogo exactly — PLAN.md redesain-pdf-invoice-kwitansi
-  // §D4/§D7. compressFileForUpload passes PNG through its lossless
-  // re-encode path (image-compression.ts), preserving alpha end to end.
-  uploadSignature: async (file) => {
-    const compressed = await compressFileForUpload(file);
-    await httpClient.put(API.platform.tenantMeSignature, compressed);
-    await get().fetchProfile();
-  },
+  // Tanda tangan TIDAK lagi ada di sini: sejak PLAN tanda-tangan-pengguna (K3)
+  // ia master data per pengguna, dikelola lewat halaman Pengguna (Owner) dan
+  // "Tanda Tangan Saya" (semua role).
 }));

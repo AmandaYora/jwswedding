@@ -57,15 +57,16 @@ func TestProfileMissingFields_SatuFieldKurang(t *testing.T) {
 	}
 }
 
-// TestProfileMissingFields_EmailLogoTandaTanganTidakDinilai locks K1 — Email,
-// logo, dan tanda tangan tidak ikut menentukan kelengkapan profil.
-func TestProfileMissingFields_EmailLogoTandaTanganTidakDinilai(t *testing.T) {
+// TestProfileMissingFields_EmailDanLogoTidakDinilai locks K1 — Email dan logo
+// tidak ikut menentukan kelengkapan profil. Tanda tangan sudah tidak ada di
+// tingkat tenant sama sekali sejak PLAN tanda-tangan-pengguna (K3), jadi tidak
+// ada lagi yang bisa diuji di sini soal itu.
+func TestProfileMissingFields_EmailDanLogoTidakDinilai(t *testing.T) {
 	tenant := completeTenant()
 	tenant.Email = ""
 	tenant.LogoStoragePath = nil
-	tenant.SignatureStoragePath = nil
 	got := ProfileMissingFields(tenant)
 	if len(got) != 0 {
-		t.Errorf("ProfileMissingFields tidak boleh menilai Email/logo/tanda tangan, got %v", got)
+		t.Errorf("ProfileMissingFields tidak boleh menilai Email/logo, got %v", got)
 	}
 }

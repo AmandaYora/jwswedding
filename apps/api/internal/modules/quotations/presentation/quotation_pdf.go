@@ -537,12 +537,21 @@ func drawTermsAndBonus(pdf *fpdf.Fpdf, theme pdfTheme, y float64, data quotation
 // dualSignatureBlock renders blok B7: the client on the left, the WO on the
 // right, both wet-signed.
 //
-// Deliberately NOT built on signatureBlock, which hardcodes
-// profile.OwnerName as the name under the line (pdf_theme.go) — calling it
-// twice would print the WO owner's name in the client's column too. It reuses
-// the lower-level primitives instead (fitImage, hairline, formatTanggalPDF)
-// and leaves signatureBlock itself untouched for Invoice and Kwitansi.
-func dualSignatureBlock(pdf *fpdf.Fpdf, theme pdfTheme, y float64, profile platformcontracts.TenantProfile, signature, clientSignature []byte, signerName string, date time.Time, clientName string) float64 {
+// Deliberately NOT built on signatureBlock, which lays out a single centred
+// column — calling it twice would not produce this side-by-side pairing. It
+// reuses the lower-level primitives instead (fitImage, hairline,
+// formatTanggalPDF) and leaves signatureBlock itself untouched for Invoice
+// and Kwitansi.
+//
+// Two different signers meet here, so the names are deliberately explicit:
+// clientSignerName is who signed on the KLIEN side, while woSignerName /
+// woSignerTitle are the staff member who ISSUED this document, resolved by
+// the caller from quotation.CreatedByStaffID (PLAN tanda-tangan-pengguna).
+// The WO caption is that staff member's own job title rather than a fixed
+// "WEDDING CONSULTANT", since a Sales or Staff account may well be the one
+// issuing it (A4). Both are "" when the issuer can't be resolved, and the
+// whole right-hand column then prints blank above the line (K6).
+func dualSignatureBlock(pdf *fpdf.Fpdf, theme pdfTheme, y float64, profile platformcontracts.TenantProfile, signature, clientSignature []byte, clientSignerName string, date time.Time, clientName, woSignerName, woSignerTitle string) float64 {
 	const colW = 80.0
 	const boxH = 20.0
 
@@ -559,19 +568,27 @@ func dualSignatureBlock(pdf *fpdf.Fpdf, theme pdfTheme, y float64, profile platf
 	// Nama di bawah garis klien = penanda tangannya; sebelum ada TTD, tetap
 	// nama client seperti hari ini.
 	clientDisplay := clientName
-	if signerName != "" {
-		clientDisplay = signerName
+	if clientSignerName != "" {
+		clientDisplay = clientSignerName
+	}
+	// Kolom WO dikosongkan total — nama maupun caption — saat penerbitnya tidak
+	// ter-resolve, bukan jatuh ke "(-)" seperti kolom klien: tanda hubung di
+	// sini terbaca seperti "tidak ada penanggung jawab", padahal yang benar
+	// adalah "tanda tangani dan tulis namanya di sini" (K6).
+	woLabel := ""
+	if woSignerName != "" {
+		woLabel = "(" + woSignerName + ")"
 	}
 	columns := []struct {
 		x       float64
-		name    string
+		label   string
 		role    string
 		image   []byte
 		imgName string
 		withSig bool
 	}{
-		{pML, clientDisplay, "KLIEN", clientSignature, "po-client-signature", len(clientSignature) > 0},
-		{pMR - colW, profile.OwnerName, "WEDDING CONSULTANT", signature, "po-signature", true},
+		{pML, "(" + orDash(clientDisplay) + ")", "KLIEN", clientSignature, "po-client-signature", len(clientSignature) > 0},
+		{pMR - colW, woLabel, strings.ToUpper(woSignerTitle), signature, "po-signature", true},
 	}
 	for _, col := range columns {
 		if col.withSig {
@@ -589,7 +606,7 @@ func dualSignatureBlock(pdf *fpdf.Fpdf, theme pdfTheme, y float64, profile platf
 		hairline(pdf, col.x+6, col.x+colW-6, lineY)
 		pdf.SetXY(col.x, lineY+1.5)
 		pdf.SetFont(theme.Family, "B", 10)
-		pdf.CellFormat(colW, 5, "("+orDash(col.name)+")", "", 2, "C", false, 0, "")
+		pdf.CellFormat(colW, 5, col.label, "", 2, "C", false, 0, "")
 		pdf.SetX(col.x)
 		pdf.SetFont(theme.Family, "", 8)
 		pdf.SetTextColor(colorTextSecondary[0], colorTextSecondary[1], colorTextSecondary[2])
@@ -637,11 +654,17 @@ func quotationStatusBadge(status domain.QuotationStatus) (label string, bg, fg [
 }
 
 // buildQuotationPDF renders the whole document (blok B1-B7).
+//
+// signature/woSignerName/woSignerTitle milik staff PENERBIT dokumen ini,
+// diselesaikan pemanggil dari quotation.CreatedByStaffID (PLAN
+// tanda-tangan-pengguna) — bukan lagi TTD + nama pemilik usaha yang dulu
+// dipakai semua dokumen.
 func buildQuotationPDF(
 	data quotationPrintData,
 	eventDate time.Time,
 	profile platformcontracts.TenantProfile,
 	logo, signature []byte,
+	woSignerName, woSignerTitle string,
 ) (*fpdf.Fpdf, error) {
 	pdf, theme := newDocument(profile, logo, "PURCHASE ORDER", data.subtitle())
 	// Hanya Draft yang ber-watermark: dokumen bernomor yang sudah dikirim ke
@@ -695,7 +718,7 @@ func buildQuotationPDF(
 	y = drawLedgerAndTotals(pdf, theme, y, data)
 
 	y = ensureSpace(pdf, theme, y+6, 46)
-	dualSignatureBlock(pdf, theme, y, profile, signature, data.ClientSignature, data.ClientSignerName, data.IssuedAt, data.Event.ClientName)
+	dualSignatureBlock(pdf, theme, y, profile, signature, data.ClientSignature, data.ClientSignerName, data.IssuedAt, data.Event.ClientName, woSignerName, woSignerTitle)
 
 	return pdf, nil
 }

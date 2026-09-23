@@ -292,13 +292,17 @@ func (h *Handler) downloadClientInvoicePDF(w http.ResponseWriter, r *http.Reques
 	if !hasLogo {
 		logo = nil
 	}
-	signature, _, hasSignature, err := h.platform.GetTenantSignature(r.Context(), claims.tenantID)
+	// Blok tanda tangan memakai staff yang MENERBITKAN tagihan ini, bukan
+	// pemilik usaha (PLAN tanda-tangan-pengguna). ok=false — sentinel 0 atau
+	// akun yang sudah dihapus permanen — mencetak blok kosong, tidak jatuh ke
+	// orang lain.
+	signerName, _, signature, signerOK, err := h.staff.GetSigner(r.Context(), claims.tenantID, inv.CreatedByStaffID)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	if !hasSignature {
-		signature = nil
+	if !signerOK {
+		signerName, signature = "", nil
 	}
 	totalPaid, err := h.clientPayments.TotalReceived(r.Context(), projectID)
 	if err != nil {
@@ -319,7 +323,7 @@ func (h *Handler) downloadClientInvoicePDF(w http.ResponseWriter, r *http.Reques
 	}
 	composition := h.projects.QuotationComposition(r.Context(), claims.tenantID, project.QuotationID)
 
-	pdf, err := buildClientInvoicePDF(*project, *inv, profile, logo, signature, totalPaid, poNumber, composition)
+	pdf, err := buildClientInvoicePDF(*project, *inv, profile, logo, signature, totalPaid, poNumber, composition, signerName)
 	if err != nil {
 		writeAppError(w, err)
 		return

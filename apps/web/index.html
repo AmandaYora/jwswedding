@@ -16,6 +16,15 @@
     <meta property="og:site_name" content="JWS Wedding" />
     <meta property="og:title" content="JWS Wedding — Client Transparency Portal" />
     <meta property="og:description" content="Transparansi persiapan pernikahan Anda, dari WO hingga hari H." />
+    <!-- PWA "Add to Home Screen" (docs/plan/ikon-homescreen-pwa/PLAN.md) --
+         both URLs are tenant-neutral (they resolve the tenant server-side
+         from the request's own Host header), so they're static here, unlike
+         the tenant-specific tags above that injectTenantSiteMeta swaps.
+         Android reads the manifest for its icon; iOS Safari ignores the
+         manifest for icons entirely and only reads apple-touch-icon, so
+         both tags are required, not a choice between them. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/api/v1/public/app-icon/180" />
   </head>
   <body>
     <div id="root"></div>

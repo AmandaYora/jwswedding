@@ -57,6 +57,23 @@ func (r staffNameResolver) GetName(ctx context.Context, tenantID, staffID int64)
 	return summary.Name, true, nil
 }
 
+// GetSigner flattens staffcontracts.Signer into the same primitive shape both
+// projects/application.StaffNameResolver and
+// quotations/application.StaffSignerResolver declare, so one adapter satisfies
+// both (PLAN tanda-tangan-pengguna T13). It stays here, in main.go, for
+// exactly the reason spelled out on the type above — moving it into either
+// module closes the import cycle.
+func (r staffNameResolver) GetSigner(ctx context.Context, tenantID, staffID int64) (name, title string, signature []byte, ok bool, err error) {
+	signer, err := r.contracts.GetSigner(ctx, tenantID, staffID)
+	if err != nil {
+		return "", "", nil, false, err
+	}
+	if signer == nil {
+		return "", "", nil, false, nil
+	}
+	return signer.Name, signer.Title, signer.SignatureImage, true, nil
+}
+
 // main dispatches on an optional subcommand so the one compiled binary this
 // project ships as its deploy image (see infra/docker/Dockerfile) is
 // everything a production host needs — no separate migrate CLI, seed
@@ -196,7 +213,7 @@ func serve(cfg config.Config) {
 	// rate-limits POST /auth/app/token to 10 attempts/minute/IP.
 	elproofClient := elproofpay.NewClient(cfg.ElProofPaymentBaseURL, cfg.ElProofAppID, cfg.ElProofAppSecret)
 
-	staffModule := staff.NewModule(db, identityModule.Contracts())
+	staffModule := staff.NewModule(db, identityModule.Contracts(), storageClient)
 	billingModule := billing.NewModule(db, elproofClient)
 	platformModule := platform.NewModule(db, billingModule.Contracts(), elproofClient, cfg.ElProofChargeMaxAge, storageClient)
 	// Pre-auth, Host-header-resolved tenant branding (ADR-0015), plus
@@ -239,7 +256,7 @@ func serve(cfg config.Config) {
 	// Penawaran-client-master (T2.6): quotations dibangun setelah vendors
 	// (butuh venue display) dan projects (butuh ProjectCreator dkk), sebelum
 	// clients (yang butuh QuotationCleaner sebagai argumen konstruktor).
-	quotationsModule := quotations.NewModule(db, platformModule.Contracts(), projectsModule.Contracts(), vendorsModule.Contracts(), storageClient)
+	quotationsModule := quotations.NewModule(db, platformModule.Contracts(), projectsModule.Contracts(), vendorsModule.Contracts(), staffNameResolver{contracts: staffModule.Contracts()}, storageClient)
 	clientsModule := clients.NewModule(db, projectsModule.Contracts(), quotationsModule.Contracts(), identityModule.Contracts(), storageClient)
 	// Two-phase wiring: projects needs clients' contract (portal multi-project
 	// scoping, T1.10) but clients.NewModule already needs projects.Contracts()

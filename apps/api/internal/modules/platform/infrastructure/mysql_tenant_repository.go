@@ -23,7 +23,7 @@ func NewMySQLTenantRepository(db *sql.DB) *MySQLTenantRepository {
 
 const tenantColumns = `id, business_name, owner_name, username, email, phone, city, joined_at, plan_id,
 	subscription_status, subscription_expires_at, is_suspended, last_credential_reset_at,
-	brand_color_preset, logo_storage_path, signature_storage_path, custom_domain, address, bank_name,
+	brand_color_preset, logo_storage_path, custom_domain, address, bank_name,
 	bank_account_number, bank_account_holder_name, created_at, updated_at`
 
 func scanTenant(scan func(dest ...interface{}) error) (*domain.Tenant, error) {
@@ -31,11 +31,11 @@ func scanTenant(scan func(dest ...interface{}) error) (*domain.Tenant, error) {
 	var planID sql.NullInt64
 	var status string
 	var expiresAt, lastReset sql.NullTime
-	var logoStoragePath, signatureStoragePath, customDomain, address, bankName, bankAccountNumber, bankAccountHolderName sql.NullString
+	var logoStoragePath, customDomain, address, bankName, bankAccountNumber, bankAccountHolderName sql.NullString
 
 	err := scan(
 		&t.ID, &t.BusinessName, &t.OwnerName, &t.Username, &t.Email, &t.Phone, &t.City, &t.JoinedAt, &planID,
-		&status, &expiresAt, &t.IsSuspended, &lastReset, &t.BrandColorPreset, &logoStoragePath, &signatureStoragePath,
+		&status, &expiresAt, &t.IsSuspended, &lastReset, &t.BrandColorPreset, &logoStoragePath,
 		&customDomain, &address, &bankName, &bankAccountNumber, &bankAccountHolderName,
 		&t.CreatedAt, &t.UpdatedAt,
 	)
@@ -58,9 +58,6 @@ func scanTenant(scan func(dest ...interface{}) error) (*domain.Tenant, error) {
 	}
 	if logoStoragePath.Valid {
 		t.LogoStoragePath = &logoStoragePath.String
-	}
-	if signatureStoragePath.Valid {
-		t.SignatureStoragePath = &signatureStoragePath.String
 	}
 	if customDomain.Valid {
 		t.CustomDomain = &customDomain.String
@@ -188,11 +185,6 @@ func (r *MySQLTenantRepository) Update(ctx context.Context, tenant *domain.Tenan
 
 func (r *MySQLTenantRepository) UpdateLogo(ctx context.Context, id int64, logoStoragePath *string) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE tenants SET logo_storage_path = ? WHERE id = ?`, logoStoragePath, id)
-	return err
-}
-
-func (r *MySQLTenantRepository) UpdateSignature(ctx context.Context, id int64, signatureStoragePath *string) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE tenants SET signature_storage_path = ? WHERE id = ?`, signatureStoragePath, id)
 	return err
 }
 

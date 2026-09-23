@@ -35,6 +35,11 @@ func validPNGBytes(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
+// testSignerName adalah nama staff PENERBIT dokumen — sejak PLAN
+// tanda-tangan-pengguna itulah yang tercetak di bawah garis tanda tangan,
+// menggantikan TenantProfile.OwnerName.
+const testSignerName = "Anisa Putri"
+
 func testProfile() platformcontracts.TenantProfile {
 	return platformcontracts.TenantProfile{
 		BusinessName: "JWS Wedding", OwnerName: "Dimas Prasetio", Phone: "0812-0000-0000",
@@ -93,7 +98,7 @@ func assertValidPDF(t *testing.T, pdf *fpdf.Fpdf) {
 // --- Invoice ---
 
 func TestBuildClientInvoicePDF_LengkapDenganLogo(t *testing.T) {
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), validPNGBytes(t), validPNGBytes(t), 5_000_000, "", nil)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), validPNGBytes(t), validPNGBytes(t), 5_000_000, "", nil, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF: %v", err)
 	}
@@ -104,7 +109,7 @@ func TestBuildClientInvoicePDF_LengkapDenganLogo(t *testing.T) {
 }
 
 func TestBuildClientInvoicePDF_TanpaLogo(t *testing.T) {
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "", nil)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "", nil, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF tanpa logo: %v", err)
 	}
@@ -112,7 +117,7 @@ func TestBuildClientInvoicePDF_TanpaLogo(t *testing.T) {
 }
 
 func TestBuildClientInvoicePDF_LogoRusak(t *testing.T) {
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), []byte{0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x00}, nil, 0, "", nil)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), []byte{0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x00}, nil, 0, "", nil, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF dengan logo rusak: %v", err)
 	}
@@ -128,7 +133,7 @@ func TestBuildClientInvoicePDF_SeluruhStatus(t *testing.T) {
 	} {
 		inv := testInvoice()
 		inv.Status = status
-		pdf, err := buildClientInvoicePDF(testProject(), inv, testProfile(), nil, nil, 0, "", nil)
+		pdf, err := buildClientInvoicePDF(testProject(), inv, testProfile(), nil, nil, 0, "", nil, testSignerName)
 		if err != nil {
 			t.Fatalf("status %v: buildClientInvoicePDF: %v", status, err)
 		}
@@ -144,7 +149,7 @@ func TestBuildClientInvoicePDF_DeskripsiDanAlamatPanjang(t *testing.T) {
 	profile := testProfile()
 	profile.Address = strings.Repeat("Jalan yang sangat panjang sekali, ", 15) + "Bandung"
 
-	pdf, err := buildClientInvoicePDF(testProject(), inv, profile, nil, nil, 0, "", nil)
+	pdf, err := buildClientInvoicePDF(testProject(), inv, profile, nil, nil, 0, "", nil, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF dengan teks panjang: %v", err)
 	}
@@ -160,7 +165,7 @@ func TestBuildClientInvoicePDF_TanpaDataBank(t *testing.T) {
 	profile.BankAccountNumber = ""
 	profile.BankAccountHolderName = ""
 
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), profile, nil, nil, 0, "", nil)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), profile, nil, nil, 0, "", nil, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF tanpa data bank: %v", err)
 	}
@@ -174,11 +179,11 @@ func TestBuildClientInvoicePDF_WarnaAksenBerbedaMenghasilkanKeluaranBerbeda(t *t
 	emerald.AccentDarkRGB = [3]int{2, 44, 34}
 	emerald.AccentSoftRGB = [3]int{209, 250, 229}
 
-	pdfA, err := buildClientInvoicePDF(testProject(), testInvoice(), bronze, nil, nil, 0, "", nil)
+	pdfA, err := buildClientInvoicePDF(testProject(), testInvoice(), bronze, nil, nil, 0, "", nil, testSignerName)
 	if err != nil {
 		t.Fatalf("build bronze: %v", err)
 	}
-	pdfB, err := buildClientInvoicePDF(testProject(), testInvoice(), emerald, nil, nil, 0, "", nil)
+	pdfB, err := buildClientInvoicePDF(testProject(), testInvoice(), emerald, nil, nil, 0, "", nil, testSignerName)
 	if err != nil {
 		t.Fatalf("build emerald: %v", err)
 	}
@@ -207,7 +212,7 @@ func TestBuildClientInvoicePDF_NamaUsahaPanjangSatuHalaman(t *testing.T) {
 	profile.BusinessName = "JWS Wedding Organizer & Event Planner Indonesia"
 	profile.Address = "Jl. Melati Raya No. 12, Kompleks Permata Indah Blok C-4, Kelurahan Sukajadi, Kecamatan Sukajadi, Bandung, Jawa Barat 40162"
 
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), profile, nil, nil, 0, "", nil)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), profile, nil, nil, 0, "", nil, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF nama usaha panjang: %v", err)
 	}
@@ -228,7 +233,7 @@ func TestBuildClientInvoicePDF_DeskripsiSangatPanjangTidakRusak(t *testing.T) {
 	inv := testInvoice()
 	inv.Description = strings.Repeat("Pelunasan paket lengkap mencakup dekorasi, catering, dokumentasi. ", 10) // ~670 karakter
 
-	pdf, err := buildClientInvoicePDF(testProject(), inv, testProfile(), nil, nil, 0, "", nil)
+	pdf, err := buildClientInvoicePDF(testProject(), inv, testProfile(), nil, nil, 0, "", nil, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF deskripsi sangat panjang: %v", err)
 	}
@@ -247,7 +252,7 @@ func TestBuildClientInvoicePDF_DeskripsiSangatPanjangTidakRusak(t *testing.T) {
 func TestBuildClientInvoicePDF_LebihBayarTidakMenampilkanNegatif(t *testing.T) {
 	project := testProject()
 	project.ContractValue = 5_000_000
-	pdf, err := buildClientInvoicePDF(project, testInvoice(), testProfile(), nil, nil, 20_000_000, "", nil)
+	pdf, err := buildClientInvoicePDF(project, testInvoice(), testProfile(), nil, nil, 20_000_000, "", nil, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF totalPaid > ContractValue: %v", err)
 	}
@@ -264,7 +269,7 @@ func TestBuildClientInvoicePDF_LebihBayarTidakMenampilkanNegatif(t *testing.T) {
 // meng-clamp paid ke 0 sebelum ditampilkan, bukan mencetak "Total Sudah
 // Dibayar: -Rp ..." yang tidak masuk akal di dokumen customer-facing.
 func TestBuildClientInvoicePDF_TotalPaidNegatifTidakError(t *testing.T) {
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, -5_000_000, "", nil)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, -5_000_000, "", nil, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF totalPaid negatif: %v", err)
 	}
@@ -281,7 +286,7 @@ func TestBuildClientInvoicePDF_TanpaKotaTanpaBank(t *testing.T) {
 	profile.BankAccountNumber = ""
 	profile.BankAccountHolderName = ""
 
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), profile, nil, nil, 0, "", nil)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), profile, nil, nil, 0, "", nil, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF tanpa Kota/bank: %v", err)
 	}
@@ -301,7 +306,7 @@ func TestBuildClientInvoicePDF_NamaAcaraSangatPanjangTidakMenimpaKartuSebelah(t 
 	project := testProject()
 	project.Name = "Resepsi dan Akad Nikah Meriah Keluarga Besar Dimas dan Sari di Grand Ballroom Hotel Bersama Seluruh Kerabat dan Sahabat dari Berbagai Kota di Indonesia"
 
-	pdf, err := buildClientInvoicePDF(project, testInvoice(), testProfile(), nil, nil, 0, "", nil)
+	pdf, err := buildClientInvoicePDF(project, testInvoice(), testProfile(), nil, nil, 0, "", nil, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF nama acara sangat panjang: %v", err)
 	}
@@ -331,7 +336,7 @@ func TestFormatTanggalPDF(t *testing.T) {
 
 func TestBuildClientPaymentReceiptPDF_DenganTandaTanganTransparan(t *testing.T) {
 	sig := validPNGBytes(t)
-	pdf, err := buildClientPaymentReceiptPDF(testProject(), testPayment(), "INV/2026/08/001", testProfile(), nil, sig, 5_000_000)
+	pdf, err := buildClientPaymentReceiptPDF(testProject(), testPayment(), "INV/2026/08/001", testProfile(), nil, sig, 5_000_000, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientPaymentReceiptPDF dengan tanda tangan: %v", err)
 	}
@@ -343,7 +348,7 @@ func TestBuildClientPaymentReceiptPDF_DenganTandaTanganTransparan(t *testing.T) 
 		t.Fatalf("output: %v", err)
 	}
 
-	pdfNoSig, err := buildClientPaymentReceiptPDF(testProject(), testPayment(), "INV/2026/08/001", testProfile(), nil, nil, 5_000_000)
+	pdfNoSig, err := buildClientPaymentReceiptPDF(testProject(), testPayment(), "INV/2026/08/001", testProfile(), nil, nil, 5_000_000, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientPaymentReceiptPDF tanpa tanda tangan: %v", err)
 	}
@@ -358,7 +363,7 @@ func TestBuildClientPaymentReceiptPDF_DenganTandaTanganTransparan(t *testing.T) 
 }
 
 func TestBuildClientPaymentReceiptPDF_TanpaTandaTangan(t *testing.T) {
-	pdf, err := buildClientPaymentReceiptPDF(testProject(), testPayment(), "", testProfile(), nil, nil, 5_000_000)
+	pdf, err := buildClientPaymentReceiptPDF(testProject(), testPayment(), "", testProfile(), nil, nil, 5_000_000, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientPaymentReceiptPDF tanpa tanda tangan: %v", err)
 	}
@@ -366,7 +371,7 @@ func TestBuildClientPaymentReceiptPDF_TanpaTandaTangan(t *testing.T) {
 }
 
 func TestBuildClientPaymentReceiptPDF_TandaTanganRusak(t *testing.T) {
-	pdf, err := buildClientPaymentReceiptPDF(testProject(), testPayment(), "", testProfile(), nil, []byte{0x89, 0x50, 0x4e, 0x47, 0x01, 0x02}, 5_000_000)
+	pdf, err := buildClientPaymentReceiptPDF(testProject(), testPayment(), "", testProfile(), nil, []byte{0x89, 0x50, 0x4e, 0x47, 0x01, 0x02}, 5_000_000, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientPaymentReceiptPDF dengan tanda tangan rusak: %v", err)
 	}
@@ -381,7 +386,7 @@ func TestBuildClientPaymentReceiptPDF_NominalBesarDanCatatanPanjang(t *testing.T
 	p.Amount = 999_999_999_999
 	p.Notes = strings.Repeat("Catatan pembayaran tambahan yang cukup panjang. ", 10)
 
-	pdf, err := buildClientPaymentReceiptPDF(testProject(), p, "", testProfile(), nil, nil, 999_999_999_999)
+	pdf, err := buildClientPaymentReceiptPDF(testProject(), p, "", testProfile(), nil, nil, 999_999_999_999, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientPaymentReceiptPDF nominal besar: %v", err)
 	}
@@ -395,7 +400,7 @@ func TestBuildClientPaymentReceiptPDF_CityKosong(t *testing.T) {
 	profile := testProfile()
 	profile.City = ""
 
-	pdf, err := buildClientPaymentReceiptPDF(testProject(), testPayment(), "", profile, nil, nil, 5_000_000)
+	pdf, err := buildClientPaymentReceiptPDF(testProject(), testPayment(), "", profile, nil, nil, 5_000_000, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientPaymentReceiptPDF dengan City kosong: %v", err)
 	}
@@ -413,7 +418,7 @@ func TestBuildClientPaymentReceiptPDF_NominalBesarSatuHalaman(t *testing.T) {
 	p := testPayment()
 	p.Amount = 123_456_789 // "Seratus Dua Puluh Tiga Juta..." -> terbilang 2 baris
 
-	pdf, err := buildClientPaymentReceiptPDF(testProject(), p, "", testProfile(), nil, nil, 123_456_789)
+	pdf, err := buildClientPaymentReceiptPDF(testProject(), p, "", testProfile(), nil, nil, 123_456_789, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientPaymentReceiptPDF nominal besar: %v", err)
 	}
@@ -429,7 +434,7 @@ func TestBuildClientPaymentReceiptPDF_NominalBesarSatuHalaman(t *testing.T) {
 func TestBuildClientPaymentReceiptPDF_LebihBayarTidakMenampilkanNegatif(t *testing.T) {
 	project := testProject()
 	project.ContractValue = 5_000_000
-	pdf, err := buildClientPaymentReceiptPDF(project, testPayment(), "", testProfile(), nil, nil, 20_000_000)
+	pdf, err := buildClientPaymentReceiptPDF(project, testPayment(), "", testProfile(), nil, nil, 20_000_000, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientPaymentReceiptPDF totalPaid > ContractValue: %v", err)
 	}
@@ -443,7 +448,7 @@ func TestBuildClientPaymentReceiptPDF_LebihBayarTidakMenampilkanNegatif(t *testi
 // Invoice sibling above — same underlying reachable-negative-TotalReceived
 // scenario, same summaryStrip clamp.
 func TestBuildClientPaymentReceiptPDF_TotalPaidNegatifTidakError(t *testing.T) {
-	pdf, err := buildClientPaymentReceiptPDF(testProject(), testPayment(), "", testProfile(), nil, nil, -5_000_000)
+	pdf, err := buildClientPaymentReceiptPDF(testProject(), testPayment(), "", testProfile(), nil, nil, -5_000_000, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientPaymentReceiptPDF totalPaid negatif: %v", err)
 	}
@@ -467,7 +472,7 @@ func TestBuildClientPaymentReceiptPDF_NamaProyekPanjangDenganNominalBesar(t *tes
 	p := testPayment()
 	p.Amount = 999_999_999_999
 
-	pdf, err := buildClientPaymentReceiptPDF(project, p, "", testProfile(), nil, nil, 999_999_999_999)
+	pdf, err := buildClientPaymentReceiptPDF(project, p, "", testProfile(), nil, nil, 999_999_999_999, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientPaymentReceiptPDF nama proyek panjang + nominal besar: %v", err)
 	}
@@ -484,7 +489,7 @@ func TestBuildClientPaymentReceiptPDF_TanpaKotaTanpaBank(t *testing.T) {
 	profile.BankAccountNumber = ""
 	profile.BankAccountHolderName = ""
 
-	pdf, err := buildClientPaymentReceiptPDF(testProject(), testPayment(), "", profile, nil, nil, 5_000_000)
+	pdf, err := buildClientPaymentReceiptPDF(testProject(), testPayment(), "", profile, nil, nil, 5_000_000, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientPaymentReceiptPDF tanpa Kota/bank: %v", err)
 	}
@@ -552,7 +557,7 @@ func TestFormatRupiah(t *testing.T) {
 // --- Font registration ---
 
 func TestRegisterFonts_TidakMenyisakanError(t *testing.T) {
-	pdf, _ := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "", nil)
+	pdf, _ := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "", nil, testSignerName)
 	if pdf.Err() {
 		t.Fatalf("registerFonts meninggalkan pdf.Err(): %v", pdf.Error())
 	}
@@ -588,7 +593,7 @@ func testComposition() []application.QuotationCompositionRow {
 
 func TestBuildClientInvoicePDF_DenganNomorPODanKomposisi(t *testing.T) {
 	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0,
-		"026/PO/JWS/IX/2026", testComposition())
+		"026/PO/JWS/IX/2026", testComposition(), testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF dengan komposisi: %v", err)
 	}
@@ -603,7 +608,7 @@ func TestBuildClientInvoicePDF_DenganNomorPODanKomposisi(t *testing.T) {
 // Ini jalur yang paling mungkin dilupakan, karena di data dev hampir setiap
 // project punya penawaran.
 func TestBuildClientInvoicePDF_TanpaPOTetapTercetak(t *testing.T) {
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "", nil)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "", nil, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF tanpa PO: %v", err)
 	}
@@ -623,7 +628,7 @@ func TestBuildClientInvoicePDF_KomposisiLintasHalaman(t *testing.T) {
 			Bonus:    "BONUS :\n- Sesuatu",
 		})
 	}
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "026/PO/JWS/IX/2026", rows)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "026/PO/JWS/IX/2026", rows, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF komposisi panjang: %v", err)
 	}
@@ -645,7 +650,7 @@ func TestBuildClientInvoicePDF_SatuBlokLebihTinggiDariHalaman(t *testing.T) {
 		Qty:      "700 PORSI",
 		Bonus:    "BONUS :\nMakanan After Akad",
 	}}
-	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "026/PO/JWS/IX/2026", rows)
+	pdf, err := buildClientInvoicePDF(testProject(), testInvoice(), testProfile(), nil, nil, 0, "026/PO/JWS/IX/2026", rows, testSignerName)
 	if err != nil {
 		t.Fatalf("buildClientInvoicePDF blok raksasa: %v", err)
 	}

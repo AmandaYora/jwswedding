@@ -96,6 +96,16 @@ type StaffNameResolver interface {
 	// hard delete) -- never an error, so a stale pic_staff_id degrades to
 	// "no name available" rather than breaking the whole project response.
 	GetName(ctx context.Context, tenantID, staffID int64) (name string, ok bool, err error)
+	// GetSigner resolves the staff member who authorised a document, for the
+	// signature block of the Invoice and Kwitansi PDFs (PLAN
+	// tanda-tangan-pengguna). Same primitive-only typing and same
+	// ok=false-never-an-error contract as GetName, for the same reasons.
+	//
+	// signature is nil when that staff member hasn't stored one yet -- the
+	// PDF then prints their name above an empty 20mm slot for a wet
+	// signature (K4). ok=false means the ID didn't resolve at all, and the
+	// whole block is left blank (K6).
+	GetSigner(ctx context.Context, tenantID, staffID int64) (name, title string, signature []byte, ok bool, err error)
 }
 
 type MilestoneRepository interface {

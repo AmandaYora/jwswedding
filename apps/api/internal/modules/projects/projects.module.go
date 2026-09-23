@@ -56,7 +56,7 @@ func NewModule(db *sql.DB, storageClient *storage.Client, staff application.Staf
 	// keduanya saling membutuhkan pada waktu yang berbeda.
 	vendorEngagementService.SetBudgetReader(projectService)
 
-	handler := presentation.NewHandler(projectService, vendorEngagementService, paymentService, clientPaymentService, clientInvoiceService, venuePaymentService, issueService, evidenceService, activityService, dashboardService, platform)
+	handler := presentation.NewHandler(projectService, vendorEngagementService, paymentService, clientPaymentService, clientInvoiceService, venuePaymentService, issueService, evidenceService, activityService, dashboardService, platform, staff)
 
 	return &Module{
 		handler:                  handler,

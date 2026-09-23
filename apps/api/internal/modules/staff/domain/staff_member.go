@@ -18,16 +18,23 @@ const (
 )
 
 type StaffMember struct {
-	ID        int64
-	TenantID  int64
-	Name      string
-	Title     string
-	Initials  string
-	Role      StaffRole
-	Username  string
-	Email     string
-	Phone     string
-	IsActive  bool
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID       int64
+	TenantID int64
+	Name     string
+	Title    string
+	Initials string
+	Role     StaffRole
+	Username string
+	Email    string
+	Phone    string
+	// SignatureStoragePath adalah TTD milik pengguna ini — master data yang
+	// dicetak pada dokumen yang DIA terbitkan (Penawaran/PO, Invoice,
+	// Kwitansi), menggantikan TTD tingkat tenant yang dulu dipakai semua
+	// dokumen. nil = belum punya TTD, keadaan yang sah: dokumennya tercetak
+	// dengan ruang kosong untuk tanda tangan basah (PLAN
+	// tanda-tangan-pengguna K4).
+	SignatureStoragePath *string
+	IsActive             bool
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }

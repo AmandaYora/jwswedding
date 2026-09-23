@@ -1,6 +1,7 @@
 package presentation
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -15,11 +16,12 @@ import (
 )
 
 type Handler struct {
-	staff *application.StaffService
+	staff      *application.StaffService
+	signatures *application.StaffSignatureService
 }
 
-func NewHandler(staff *application.StaffService) *Handler {
-	return &Handler{staff: staff}
+func NewHandler(staff *application.StaffService, signatures *application.StaffSignatureService) *Handler {
+	return &Handler{staff: staff, signatures: signatures}
 }
 
 type staffResponse struct {
@@ -32,12 +34,18 @@ type staffResponse struct {
 	Email    string `json:"email"`
 	Phone    string `json:"phone"`
 	IsActive bool   `json:"isActive"`
+	// HasSignature hanya menyatakan ADA/TIDAK — kunci object storage-nya tidak
+	// pernah keluar lewat API. Gambarnya diambil terpisah lewat
+	// .../signature/image, supaya daftar Pengguna tidak menarik satu gambar
+	// per baris (PLAN tanda-tangan-pengguna A7).
+	HasSignature bool `json:"hasSignature"`
 }
 
 func toStaffResponse(m domain.StaffMember) staffResponse {
 	return staffResponse{
 		ID: m.ID, Name: m.Name, Title: m.Title, Initials: m.Initials,
 		Role: string(m.Role), Username: m.Username, Email: m.Email, Phone: m.Phone, IsActive: m.IsActive,
+		HasSignature: m.SignatureStoragePath != nil,
 	}
 }
 
@@ -179,13 +187,22 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, tenantID int64)
 }
 
 func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := requireOwnerTenant(w, r)
-	if !ok {
-		return
-	}
 	segments := httpx.Segments(r.URL.Path, "/api/v1/staff/")
 	if len(segments) == 0 {
 		response.Error(w, http.StatusNotFound, "Pengguna tidak ditemukan", nil)
+		return
+	}
+
+	// Jalur "me" dicabang SEBELUM gerbang Owner-only dan sebelum parsing {id}:
+	// setiap pengguna berhak mengurus TTD-nya sendiri, sementara sisa modul ini
+	// tetap Owner-only (PLAN tanda-tangan-pengguna K7).
+	if segments[0] == "me" {
+		h.mySignatureRoutes(w, r, segments)
+		return
+	}
+
+	tenantID, ok := requireOwnerTenant(w, r)
+	if !ok {
 		return
 	}
 	id, err := strconv.ParseInt(segments[0], 10, 64)
@@ -201,6 +218,12 @@ func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 		h.toggleActive(w, r, tenantID, id)
 	case len(segments) == 2 && segments[1] == "delete-impact" && r.Method == http.MethodGet:
 		h.deleteImpact(w, r, tenantID, id)
+	case len(segments) == 2 && segments[1] == "signature" && r.Method == http.MethodPut:
+		h.putSignature(w, r, tenantID, id)
+	case len(segments) == 2 && segments[1] == "signature" && r.Method == http.MethodDelete:
+		h.deleteSignature(w, r, tenantID, id)
+	case len(segments) == 3 && segments[1] == "signature" && segments[2] == "image" && r.Method == http.MethodGet:
+		h.getSignatureImage(w, r, tenantID, id)
 	case len(segments) == 1 && r.Method == http.MethodDelete:
 		if err := h.staff.Delete(r.Context(), tenantID, id); err != nil {
 			writeAppError(w, err)
@@ -210,6 +233,108 @@ func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 	default:
 		response.Error(w, http.StatusNotFound, "Endpoint tidak ditemukan", nil)
 	}
+}
+
+// mySignatureRoutes melayani /api/v1/staff/me/signature[/image] — TTD milik
+// pemanggil sendiri, terbuka untuk semua role staff.
+//
+// staffID SELALU diambil dari klaim JWT, tidak pernah dari URL: itulah yang
+// membuat jalur ini tidak bisa dipakai membaca atau menimpa TTD orang lain.
+func (h *Handler) mySignatureRoutes(w http.ResponseWriter, r *http.Request, segments []string) {
+	tenantID, ok := requireTenant(w, r)
+	if !ok {
+		return
+	}
+	claims, _ := middleware.FromContext(r.Context())
+	if claims == nil {
+		response.Error(w, http.StatusForbidden, "Hanya staff WO yang dapat mengakses endpoint ini", nil)
+		return
+	}
+	staffID, err := strconv.ParseInt(claims.PrincipalID, 10, 64)
+	if err != nil {
+		response.Error(w, http.StatusForbidden, "Akun ini tidak terikat ke pengguna manapun", nil)
+		return
+	}
+
+	switch {
+	case len(segments) == 2 && segments[1] == "signature" && r.Method == http.MethodGet:
+		h.getOwnSignatureMeta(w, r, tenantID, staffID)
+	case len(segments) == 2 && segments[1] == "signature" && r.Method == http.MethodPut:
+		h.putSignature(w, r, tenantID, staffID)
+	case len(segments) == 2 && segments[1] == "signature" && r.Method == http.MethodDelete:
+		h.deleteSignature(w, r, tenantID, staffID)
+	case len(segments) == 3 && segments[1] == "signature" && segments[2] == "image" && r.Method == http.MethodGet:
+		h.getSignatureImage(w, r, tenantID, staffID)
+	default:
+		response.Error(w, http.StatusNotFound, "Endpoint tidak ditemukan", nil)
+	}
+}
+
+type staffSignatureUploadBody struct {
+	FileName   string `json:"fileName"`
+	MimeType   string `json:"mimeType"`
+	Base64Data string `json:"base64Data"`
+}
+
+type staffSignatureMetaResponse struct {
+	HasSignature bool `json:"hasSignature"`
+}
+
+// getOwnSignatureMeta memberi halaman "Tanda Tangan Saya" cukup informasi untuk
+// memutuskan menampilkan pratinjau atau keadaan kosong, tanpa menarik gambarnya.
+func (h *Handler) getOwnSignatureMeta(w http.ResponseWriter, r *http.Request, tenantID, staffID int64) {
+	member, err := h.staff.Get(r.Context(), tenantID, staffID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	response.OK(w, "ok", staffSignatureMetaResponse{HasSignature: member.SignatureStoragePath != nil})
+}
+
+func (h *Handler) putSignature(w http.ResponseWriter, r *http.Request, tenantID, staffID int64) {
+	var body staffSignatureUploadBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
+		return
+	}
+	img, err := base64.StdEncoding.DecodeString(body.Base64Data)
+	if err != nil {
+		response.Error(w, http.StatusUnprocessableEntity, "Data gambar tidak valid", map[string][]string{
+			"base64Data": {"Gagal membaca data gambar tanda tangan"},
+		})
+		return
+	}
+	if err := h.signatures.SaveSignature(r.Context(), tenantID, staffID, img, body.MimeType); err != nil {
+		writeAppError(w, err)
+		return
+	}
+	response.OK(w, "Tanda tangan berhasil disimpan", staffSignatureMetaResponse{HasSignature: true})
+}
+
+func (h *Handler) getSignatureImage(w http.ResponseWriter, r *http.Request, tenantID, staffID int64) {
+	data, contentType, ok, err := h.signatures.SignatureImage(r.Context(), tenantID, staffID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	if !ok {
+		response.Error(w, http.StatusNotFound, "Pengguna ini belum memiliki tanda tangan", nil)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", `inline; filename="signature.png"`)
+	// Aset privat per pengguna — jangan sampai tersimpan di cache bersama.
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (h *Handler) deleteSignature(w http.ResponseWriter, r *http.Request, tenantID, staffID int64) {
+	if err := h.signatures.DeleteSignature(r.Context(), tenantID, staffID); err != nil {
+		writeAppError(w, err)
+		return
+	}
+	response.OK(w, "Tanda tangan berhasil dihapus", staffSignatureMetaResponse{HasSignature: false})
 }
 
 type staffDeleteImpactResponse struct {

@@ -46,10 +46,11 @@ func formatRupiah(amount int64) string {
 // types (jpg/png/gif) — fpdf doesn't support WEBP, one of the 3 MIME types
 // TenantService.UploadLogo's whitelist accepts, so a WEBP (or otherwise
 // undecodable) logo simply isn't embedded rather than failing the whole PDF.
-// Also used for the Kwitansi signature image, even though UploadSignature
-// only ever stores PNG — sniffing again here costs nothing and keeps this
-// function's contract ("degrade gracefully, never trust the caller's
-// claimed type") uniform across both assets.
+// Also used for the signature image, which since PLAN tanda-tangan-pengguna
+// comes from a staff member's own stored TTD and may be PNG **or** JPEG —
+// sniffing here is what keeps that working, and keeps this function's contract
+// ("degrade gracefully, never trust the caller's claimed type") uniform across
+// both assets.
 func fpdfImageType(data []byte) (tp string, ok bool) {
 	switch http.DetectContentType(data) {
 	case "image/jpeg":
@@ -226,7 +227,11 @@ func drawInvoiceTableHeader(pdf *fpdf.Fpdf, theme pdfTheme, y float64) {
 // querying `projects`' own payment repository itself, since a PDF builder
 // has no business reaching past its own arguments into another service.
 // poNumber/composition ikut konvensi yang sama: disodorkan pemanggil.
-func buildClientInvoicePDF(project domain.Project, inv domain.ClientInvoice, profile platformcontracts.TenantProfile, logo, signature []byte, totalPaid int64, poNumber string, composition []application.QuotationCompositionRow) (*fpdf.Fpdf, error) {
+//
+// signerName mengikuti konvensi itu juga: nama staff penerbit Invoice ini,
+// diselesaikan pemanggil dari inv.CreatedByStaffID (PLAN tanda-tangan-pengguna).
+// "" adalah keadaan sah — blok tanda tangannya lalu tercetak kosong (K6).
+func buildClientInvoicePDF(project domain.Project, inv domain.ClientInvoice, profile platformcontracts.TenantProfile, logo, signature []byte, totalPaid int64, poNumber string, composition []application.QuotationCompositionRow, signerName string) (*fpdf.Fpdf, error) {
 	pdf, theme := newDocument(profile, logo, "INVOICE", "Tagihan kepada Client")
 	y := pdf.GetY()
 
@@ -346,7 +351,7 @@ func buildClientInvoicePDF(project domain.Project, inv domain.ClientInvoice, pro
 		pdf.SetTextColor(colorTextPrimary[0], colorTextPrimary[1], colorTextPrimary[2])
 		bankBottom = y + 26
 	}
-	sigBottom := signatureBlock(pdf, theme, 130.0, y, 65.0, profile, signature, inv.CreatedAt, "Hormat kami,")
+	sigBottom := signatureBlock(pdf, theme, 130.0, y, 65.0, profile, signature, inv.CreatedAt, "Hormat kami,", signerName)
 	y = ensureSpace(pdf, theme, max(bankBottom, sigBottom)+8, 12)
 
 	hairline(pdf, pML, pMR, y)
@@ -362,10 +367,12 @@ func buildClientInvoicePDF(project domain.Project, inv domain.ClientInvoice, pro
 // buildClientPaymentReceiptPDF renders a Kwitansi (PLAN.md
 // redesain-pdf-invoice-kwitansi-v2 §5.4). invoiceNumber is "" when this
 // payment was recorded manually, never through a ClientInvoice. signature is
-// nil when the tenant never uploaded one — the signature block still
-// reserves its 20mm of vertical space either way, for a wet signature.
-// totalPaid mirrors buildClientInvoicePDF's own parameter (K3).
-func buildClientPaymentReceiptPDF(project domain.Project, p domain.ClientPayment, invoiceNumber string, profile platformcontracts.TenantProfile, logo, signature []byte, totalPaid int64) (*fpdf.Fpdf, error) {
+// nil when the issuing staff member never stored one — the signature block
+// still reserves its 20mm of vertical space either way, for a wet signature.
+// totalPaid mirrors buildClientInvoicePDF's own parameter (K3), and so does
+// signerName: resolved by the caller from p.CreatedByStaffID, "" when that ID
+// doesn't resolve (PLAN tanda-tangan-pengguna K6).
+func buildClientPaymentReceiptPDF(project domain.Project, p domain.ClientPayment, invoiceNumber string, profile platformcontracts.TenantProfile, logo, signature []byte, totalPaid int64, signerName string) (*fpdf.Fpdf, error) {
 	pdf, theme := newDocument(profile, logo, "KWITANSI", "Tanda Terima Pembayaran")
 	y := pdf.GetY()
 
@@ -442,7 +449,7 @@ func buildClientPaymentReceiptPDF(project domain.Project, p domain.ClientPayment
 	pdf.SetFont(theme.Family, "", 9.5)
 	pdf.MultiCell(105, 4.5, note, "", "L", false)
 
-	signatureBlock(pdf, theme, 130.0, y, 65.0, profile, signature, p.PaymentDate, "Diterima oleh,")
+	signatureBlock(pdf, theme, 130.0, y, 65.0, profile, signature, p.PaymentDate, "Diterima oleh,", signerName)
 
 	return pdf, nil
 }

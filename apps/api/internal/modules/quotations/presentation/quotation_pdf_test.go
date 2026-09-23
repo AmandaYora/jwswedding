@@ -118,7 +118,7 @@ func assertValidQuotationPDF(t *testing.T, pdf *fpdf.Fpdf) {
 }
 
 func TestBuildQuotationPDF_LengkapDenganLogoDanTTD(t *testing.T) {
-	pdf, err := buildQuotationPDF(testQuotationPrintData(domain.QuotationAccepted), testQuotationEventDate(), testQuotationProfile(), validQuotationPNGBytes(t), validQuotationPNGBytes(t))
+	pdf, err := buildQuotationPDF(testQuotationPrintData(domain.QuotationAccepted), testQuotationEventDate(), testQuotationProfile(), validQuotationPNGBytes(t), validQuotationPNGBytes(t), "Anisa Putri", "Lead Planner")
 	if err != nil {
 		t.Fatalf("buildQuotationPDF: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestBuildQuotationPDF_LengkapDenganLogoDanTTD(t *testing.T) {
 }
 
 func TestBuildQuotationPDF_TanpaLogoTanpaTTD(t *testing.T) {
-	pdf, err := buildQuotationPDF(testQuotationPrintData(domain.QuotationDraft), testQuotationEventDate(), testQuotationProfile(), nil, nil)
+	pdf, err := buildQuotationPDF(testQuotationPrintData(domain.QuotationDraft), testQuotationEventDate(), testQuotationProfile(), nil, nil, "Anisa Putri", "Lead Planner")
 	if err != nil {
 		t.Fatalf("buildQuotationPDF tanpa aset: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestBuildQuotationPDF_TanpaLogoTanpaTTD(t *testing.T) {
 
 func TestBuildQuotationPDF_AsetRusakTidakMenggagalkanDokumen(t *testing.T) {
 	broken := []byte{0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x00}
-	pdf, err := buildQuotationPDF(testQuotationPrintData(domain.QuotationAccepted), testQuotationEventDate(), testQuotationProfile(), broken, broken)
+	pdf, err := buildQuotationPDF(testQuotationPrintData(domain.QuotationAccepted), testQuotationEventDate(), testQuotationProfile(), broken, broken, "Anisa Putri", "Lead Planner")
 	if err != nil {
 		t.Fatalf("buildQuotationPDF dengan aset rusak: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestBuildQuotationPDF_SeluruhStatus(t *testing.T) {
 		domain.QuotationDraft, domain.QuotationOffered, domain.QuotationAccepted,
 		domain.QuotationRejected, domain.QuotationExpired, domain.QuotationCancelled,
 	} {
-		pdf, err := buildQuotationPDF(testQuotationPrintData(status), testQuotationEventDate(), testQuotationProfile(), nil, nil)
+		pdf, err := buildQuotationPDF(testQuotationPrintData(status), testQuotationEventDate(), testQuotationProfile(), nil, nil, "Anisa Putri", "Lead Planner")
 		if err != nil {
 			t.Fatalf("status %v: %v", status, err)
 		}
@@ -178,7 +178,7 @@ func TestBuildQuotationPDF_BlokLebihTinggiDariSatuHalaman(t *testing.T) {
 		Body: strings.Join(lines, "\n"), QtyText: "700 PORSI", BonusNote: "BONUS :\nMakanan After Akad",
 	}}
 
-	pdf, err := buildQuotationPDF(data, testQuotationEventDate(), testQuotationProfile(), nil, nil)
+	pdf, err := buildQuotationPDF(data, testQuotationEventDate(), testQuotationProfile(), nil, nil, "Anisa Putri", "Lead Planner")
 	if err != nil {
 		t.Fatalf("buildQuotationPDF blok panjang: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestBuildQuotationPDF_BanyakBlok(t *testing.T) {
 	data := testQuotationPrintData(domain.QuotationAccepted)
 	data.Blocks = blocks
 
-	pdf, err := buildQuotationPDF(data, testQuotationEventDate(), testQuotationProfile(), nil, nil)
+	pdf, err := buildQuotationPDF(data, testQuotationEventDate(), testQuotationProfile(), nil, nil, "Anisa Putri", "Lead Planner")
 	if err != nil {
 		t.Fatalf("buildQuotationPDF banyak blok: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestBuildQuotationPDF_KosongTetapValid(t *testing.T) {
 		Status: domain.QuotationDraft, IssuedAt: time.Now(),
 		Event: domain.QuotationEventSnapshot{ClientName: "Rara & Dafa"},
 	}
-	pdf, err := buildQuotationPDF(data, time.Time{}, testQuotationProfile(), nil, nil)
+	pdf, err := buildQuotationPDF(data, time.Time{}, testQuotationProfile(), nil, nil, "Anisa Putri", "Lead Planner")
 	if err != nil {
 		t.Fatalf("buildQuotationPDF kosong: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestBuildQuotationPDF_TeksSangatPanjangTidakMenggagalkan(t *testing.T) {
 	data.Adjustments = append(data.Adjustments, domain.QuotationAdjustment{
 		ID: 99, Description: strings.Repeat("Deskripsi penyesuaian amat panjang ", 20), Amount: -250_000, SortOrder: 3,
 	})
-	pdf, err := buildQuotationPDF(data, testQuotationEventDate(), testQuotationProfile(), nil, nil)
+	pdf, err := buildQuotationPDF(data, testQuotationEventDate(), testQuotationProfile(), nil, nil, "Anisa Putri", "Lead Planner")
 	if err != nil {
 		t.Fatalf("buildQuotationPDF teks panjang: %v", err)
 	}

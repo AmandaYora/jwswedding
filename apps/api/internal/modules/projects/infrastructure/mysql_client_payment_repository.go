@@ -18,8 +18,11 @@ func NewMySQLClientPaymentRepository(db *sql.DB) *MySQLClientPaymentRepository {
 	return &MySQLClientPaymentRepository{db: db}
 }
 
+// clientPaymentColumns dipakai SEMUA jalur baca (ListByProject, FindByID, dan
+// lewat FindByID juga EnsureReceiptNumber yang memasok struct ke PDF Kwitansi)
+// — menambah kolom di sini otomatis mengaliri ketiganya.
 const clientPaymentColumns = `id, project_id, type, amount, payment_date, method, reference_number, notes,
-	receipt_number, receipt_period, receipt_seq`
+	created_by_staff_id, receipt_number, receipt_period, receipt_seq`
 
 func scanClientPayment(scan func(dest ...interface{}) error) (*domain.ClientPayment, error) {
 	var p domain.ClientPayment
@@ -28,7 +31,7 @@ func scanClientPayment(scan func(dest ...interface{}) error) (*domain.ClientPaym
 	var receiptSeq sql.NullInt64
 	err := scan(
 		&p.ID, &p.ProjectID, &paymentType, &p.Amount, &p.PaymentDate, &p.Method, &p.ReferenceNumber, &notes,
-		&receiptNumber, &receiptPeriod, &receiptSeq,
+		&p.CreatedByStaffID, &receiptNumber, &receiptPeriod, &receiptSeq,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -69,9 +72,9 @@ func (r *MySQLClientPaymentRepository) FindByID(ctx context.Context, projectID, 
 
 func (r *MySQLClientPaymentRepository) Create(ctx context.Context, p *domain.ClientPayment) error {
 	result, err := r.db.ExecContext(ctx,
-		`INSERT INTO client_payments (project_id, type, amount, payment_date, method, reference_number, notes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		p.ProjectID, string(p.Type), p.Amount, p.PaymentDate, p.Method, p.ReferenceNumber, p.Notes,
+		`INSERT INTO client_payments (project_id, type, amount, payment_date, method, reference_number, notes, created_by_staff_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ProjectID, string(p.Type), p.Amount, p.PaymentDate, p.Method, p.ReferenceNumber, p.Notes, p.CreatedByStaffID,
 	)
 	if err != nil {
 		return err

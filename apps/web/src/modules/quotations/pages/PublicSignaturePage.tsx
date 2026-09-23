@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader } from "@/shared/components/ui/Card";
 import { Button } from "@/shared/components/ui/Button";
 import { Select, Field } from "@/shared/components/ui/Input";
 import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
-import { SignaturePad, type SignaturePadHandle } from "@/modules/quotations/components/SignaturePad";
+import { SignaturePad, type SignaturePadHandle } from "@/shared/components/ui/SignaturePad";
 import { usePublicSignatureStore } from "@/modules/quotations/stores/usePublicSignatureStore";
 import { formatCurrency, formatDate } from "@/shared/lib/formatters";
 

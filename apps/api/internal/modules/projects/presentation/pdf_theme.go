@@ -355,12 +355,20 @@ func summaryStrip(pdf *fpdf.Fpdf, theme pdfTheme, y float64, contract, paid int6
 }
 
 // signatureBlock draws the right-aligned "<Kota>, <tanggal>" / salutation /
-// signature image / underline / OwnerName stack shared by Invoice ("Hormat
+// signature image / underline / signer-name stack shared by Invoice ("Hormat
 // kami,") and Kwitansi ("Diterima oleh,") — §5.2.5. A fixed 20mm image slot
 // is always reserved even when sign is nil (degrade-gracefully, same
 // contract fpdfImageType's other callers already follow), so a printed copy
 // still has room for a wet signature. Returns the y just below the block.
-func signatureBlock(pdf *fpdf.Fpdf, theme pdfTheme, x, y, w float64, profile platformcontracts.TenantProfile, sign []byte, date time.Time, salutation string) float64 {
+//
+// signerName is the staff member who issued the document, not the business
+// owner (PLAN tanda-tangan-pengguna). It is empty when that staff member
+// can't be resolved at all — a pre-existing row carrying the 0 sentinel, or a
+// hard-deleted account — and the name line is then printed blank (K6).
+// Deliberately still printed as an empty cell rather than skipped: the cell
+// advances the cursor, so the block keeps exactly the same height either way
+// and callers' layout maths (sigBottom) stays valid.
+func signatureBlock(pdf *fpdf.Fpdf, theme pdfTheme, x, y, w float64, profile platformcontracts.TenantProfile, sign []byte, date time.Time, salutation, signerName string) float64 {
 	place := formatTanggalPDF(date)
 	if profile.City != "" {
 		place = profile.City + ", " + place
@@ -390,6 +398,6 @@ func signatureBlock(pdf *fpdf.Fpdf, theme pdfTheme, x, y, w float64, profile pla
 	hairline(pdf, x+6, x+w-6, lineY)
 	pdf.SetXY(x, lineY+1.5)
 	pdf.SetFont(theme.Family, "B", 10)
-	pdf.CellFormat(w, 5, profile.OwnerName, "", 2, "C", false, 0, "")
+	pdf.CellFormat(w, 5, signerName, "", 2, "C", false, 0, "")
 	return pdf.GetY()
 }

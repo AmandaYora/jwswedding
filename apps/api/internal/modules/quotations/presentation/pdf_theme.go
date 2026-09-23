@@ -1,7 +1,6 @@
 package presentation
 
 import (
-	"bytes"
 	"embed"
 	"strconv"
 	"strings"
@@ -354,42 +353,9 @@ func summaryStrip(pdf *fpdf.Fpdf, theme pdfTheme, y float64, contract, paid int6
 	return y + 16
 }
 
-// signatureBlock draws the right-aligned "<Kota>, <tanggal>" / salutation /
-// signature image / underline / OwnerName stack shared by Invoice ("Hormat
-// kami,") and Kwitansi ("Diterima oleh,") — §5.2.5. A fixed 20mm image slot
-// is always reserved even when sign is nil (degrade-gracefully, same
-// contract fpdfImageType's other callers already follow), so a printed copy
-// still has room for a wet signature. Returns the y just below the block.
-func signatureBlock(pdf *fpdf.Fpdf, theme pdfTheme, x, y, w float64, profile platformcontracts.TenantProfile, sign []byte, date time.Time, salutation string) float64 {
-	place := formatTanggalPDF(date)
-	if profile.City != "" {
-		place = profile.City + ", " + place
-	}
-	pdf.SetXY(x, y)
-	pdf.SetFont(theme.Family, "", 9.5)
-	pdf.SetTextColor(colorTextPrimary[0], colorTextPrimary[1], colorTextPrimary[2])
-	pdf.CellFormat(w, 5, place, "", 2, "C", false, 0, "")
-	pdf.SetX(x)
-	pdf.SetFont(theme.Family, "", 9)
-	pdf.SetTextColor(colorTextSecondary[0], colorTextSecondary[1], colorTextSecondary[2])
-	pdf.CellFormat(w, 5, salutation, "", 2, "C", false, 0, "")
-	pdf.SetTextColor(colorTextPrimary[0], colorTextPrimary[1], colorTextPrimary[2])
-
-	const boxTop, boxH = 11.0, 20.0
-	boxY := y + 10 + boxTop
-	if tp, ok := fpdfImageType(sign); ok {
-		info := pdf.RegisterImageOptionsReader("signature", fpdf.ImageOptions{ImageType: tp}, bytes.NewReader(sign))
-		if pdf.Err() {
-			pdf.ClearError()
-		} else if info != nil {
-			iw, ih := fitImage(info.Width(), info.Height(), w-10, boxH)
-			pdf.ImageOptions("signature", x+(w-iw)/2, boxY+(boxH-ih)/2, iw, ih, false, fpdf.ImageOptions{ImageType: tp}, 0, "")
-		}
-	}
-	lineY := boxY + boxH + 1
-	hairline(pdf, x+6, x+w-6, lineY)
-	pdf.SetXY(x, lineY+1.5)
-	pdf.SetFont(theme.Family, "B", 10)
-	pdf.CellFormat(w, 5, profile.OwnerName, "", 2, "C", false, 0, "")
-	return pdf.GetY()
-}
+// signatureBlock milik modul ini DIHAPUS (PLAN tanda-tangan-pengguna): ia
+// salinan mati dari versi `projects` yang tidak pernah dipanggil di sini —
+// PDF Penawaran memakai dualSignatureBlock — dan isinya mencetak
+// profile.OwnerName di bawah garis tanda tangan, persis perilaku yang PLAN ini
+// hapus. Dibiarkan hidup, ia jadi ranjau: siapa pun yang kelak memakainya akan
+// mengembalikan TTD "selalu Owner" tanpa sadar.

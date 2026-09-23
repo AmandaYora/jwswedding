@@ -21,6 +21,7 @@ import { useAuthStore } from "@/shared/stores/useAuthStore";
 import { useTenantBrandingStore } from "@/shared/stores/useTenantBrandingStore";
 import { APP_NAME } from "@/shared/constants/brand";
 import type { StaffMember, StaffRole } from "@/modules/users/types";
+import type { SignaturePayload } from "@/modules/users/components/SignatureField";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
 import type { AffectedProject } from "@/shared/types/delete-impact";
@@ -42,6 +43,7 @@ export default function UserListPage() {
   const toggleStaffActive = useStaffStore((s) => s.toggleStaffActive);
   const fetchStaffDeleteImpact = useStaffStore((s) => s.fetchStaffDeleteImpact);
   const deleteStaff = useStaffStore((s) => s.deleteStaff);
+  const saveStaffSignature = useStaffStore((s) => s.saveStaffSignature);
 
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query);
@@ -79,23 +81,42 @@ export default function UserListPage() {
     setEditingUser(undefined);
   }
 
-  async function handleCreate(values: UserCreateFormValues) {
+  async function handleCreate(values: UserCreateFormValues, signature: SignaturePayload | null) {
     setActionError(null);
+    let created: Awaited<ReturnType<typeof createStaff>>;
     try {
-      const result = await createStaff(values);
-      closeModal();
-      await fetchStaffPage(page, query, roleFilter === "Semua" ? "" : roleFilter);
-      setCredentialReveal({ name: result.staff.name, username: result.username, password: result.password });
+      created = await createStaff(values);
     } catch (err) {
       setActionError(getApiErrorMessage(err, "Gagal menambahkan pengguna"));
+      return;
     }
+    // TTD baru bisa dikirim setelah barisnya punya id — kunci object storage
+    // memuat staffID (A6). Kalau langkah ini gagal, akunnya SUDAH terbuat:
+    // katakan itu apa adanya, jangan sampai user mengira seluruh operasi batal
+    // lalu menambah pengguna yang sama dua kali.
+    let signatureError: string | null = null;
+    if (signature) {
+      try {
+        await saveStaffSignature(created.staff.id, signature);
+      } catch (err) {
+        signatureError = getApiErrorMessage(
+          err,
+          `Akun ${created.staff.name} berhasil dibuat, tetapi tanda tangannya gagal disimpan. Isi ulang lewat tombol Ubah.`,
+        );
+      }
+    }
+    closeModal();
+    await fetchStaffPage(page, query, roleFilter === "Semua" ? "" : roleFilter);
+    if (signatureError) setActionError(signatureError);
+    setCredentialReveal({ name: created.staff.name, username: created.username, password: created.password });
   }
 
-  async function handleEdit(values: UserFormValues) {
+  async function handleEdit(values: UserFormValues, signature: SignaturePayload | null) {
     if (!editingUser) return;
     setActionError(null);
     try {
       await updateStaff(editingUser.id, values);
+      if (signature) await saveStaffSignature(editingUser.id, signature);
       closeModal();
       await fetchStaffPage(page, query, roleFilter === "Semua" ? "" : roleFilter);
     } catch (err) {
@@ -204,6 +225,10 @@ export default function UserListPage() {
                   <div className="flex flex-col gap-1.5">
                     <CardListField label="Jabatan" value={user.title} />
                     <CardListField label="Role" value={<UserRoleBadge role={user.role} />} />
+                    <CardListField
+                      label="Tanda Tangan"
+                      value={user.hasSignature ? <Badge tone="success">Ada</Badge> : <Badge tone="neutral">Belum</Badge>}
+                    />
                     <CardListField label="Telepon" value={user.phone} />
                     <CardListField label="Email" value={user.email} />
                   </div>
@@ -233,6 +258,7 @@ export default function UserListPage() {
                 <TH>Nama</TH>
                 <TH>Jabatan</TH>
                 <TH>Role</TH>
+                <TH>Tanda Tangan</TH>
                 <TH>Kontak</TH>
                 <TH>Status</TH>
                 <TH>Aksi</TH>
@@ -252,6 +278,9 @@ export default function UserListPage() {
                   </TD>
                   <TD>{user.title}</TD>
                   <TD><UserRoleBadge role={user.role} /></TD>
+                  <TD>
+                    {user.hasSignature ? <Badge tone="success">Ada</Badge> : <Badge tone="neutral">Belum</Badge>}
+                  </TD>
                   <TD>
                     <span className="block">{user.phone}</span>
                     <span className="block text-[12.5px] text-text-secondary">{user.email}</span>
@@ -291,8 +320,9 @@ export default function UserListPage() {
         key={editingUser?.id ?? "new"}
         open={modalOpen}
         onClose={closeModal}
-        onSubmitCreate={(values) => void handleCreate(values)}
-        onSubmitEdit={(values) => void handleEdit(values)}
+        onSubmitCreate={(values, signature) => void handleCreate(values, signature)}
+        onSubmitEdit={(values, signature) => void handleEdit(values, signature)}
+        onSignatureDeleted={() => void fetchStaffPage(page, query, roleFilter === "Semua" ? "" : roleFilter)}
         initialUser={editingUser}
       />
 
@@ -333,13 +363,18 @@ export default function UserListPage() {
             : `Yakin ingin menghapus pengguna ini secara permanen?`
         }
         details={
-          impactLoading ? undefined : deleteImpact && deleteImpact.length > 0 ? (
+          impactLoading ? undefined : (
             <>
-              Pengguna ini masih ditugaskan sebagai penanggung jawab pada project berikut:{" "}
-              <strong className="text-text-primary">{deleteImpact.map((p) => p.name).join(", ")}</strong>. Penugasan tersebut akan kehilangan sumber datanya dan tidak dapat ditelusuri lagi.
+              {deleteImpact && deleteImpact.length > 0 ? (
+                <>
+                  Pengguna ini masih ditugaskan sebagai penanggung jawab pada project berikut:{" "}
+                  <strong className="text-text-primary">{deleteImpact.map((p) => p.name).join(", ")}</strong>. Penugasan tersebut akan kehilangan sumber datanya dan tidak dapat ditelusuri lagi.
+                </>
+              ) : (
+                "Data ini dihapus permanen dan tidak dapat dikembalikan."
+              )}{" "}
+              Dokumen yang pernah diterbitkan akun ini (Penawaran, Invoice, Kwitansi) akan tercetak tanpa nama dan tanda tangan bila dicetak ulang.
             </>
-          ) : (
-            "Data ini dihapus permanen dan tidak dapat dikembalikan."
           )
         }
         confirmLabel="Ya, Hapus Permanen"

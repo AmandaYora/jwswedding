@@ -33,7 +33,9 @@ type TenantProfile struct {
 // WritesAllowed backs the subscription guard (D5/D10/D13, evaluates
 // subscription_expires_at directly, never subscription_status since no code
 // path ever writes StatusExpired/StatusExpiringSoon — T3); GetTenantProfile/
-// GetTenantLogo/GetTenantSignature back `projects`' Invoice/Kwitansi PDF.
+// GetTenantLogo back `projects`' Invoice/Kwitansi PDF. Tanda tangannya TIDAK
+// di sini: sejak PLAN tanda-tangan-pengguna, TTD adalah master data per
+// pengguna dan diselesaikan lewat staff/contracts.GetSigner.
 // ProfileMissingFields backs the PDF-download gate (PLAN.md
 // redesain-pdf-invoice-kwitansi-v2 §6.2) — this is the ONLY way `projects`
 // may learn whether a tenant's business profile is complete; it must never
@@ -42,7 +44,6 @@ type Contracts interface {
 	WritesAllowed(ctx context.Context, tenantID int64) (bool, error)
 	GetTenantProfile(ctx context.Context, tenantID int64) (TenantProfile, error)
 	GetTenantLogo(ctx context.Context, tenantID int64) (data []byte, contentType string, ok bool, err error)
-	GetTenantSignature(ctx context.Context, tenantID int64) (data []byte, contentType string, ok bool, err error)
 	ProfileMissingFields(ctx context.Context, tenantID int64) ([]string, error)
 }
 
@@ -79,25 +80,6 @@ func (c *impl) GetTenantProfile(ctx context.Context, tenantID int64) (TenantProf
 // (a real storage failure) still propagate as err.
 func (c *impl) GetTenantLogo(ctx context.Context, tenantID int64) (data []byte, contentType string, ok bool, err error) {
 	reader, dlErr := c.tenants.DownloadLogo(ctx, tenantID)
-	if dlErr != nil {
-		if appErr, isApp := apperror.As(dlErr); isApp && appErr.Kind == apperror.KindNotFound {
-			return nil, "", false, nil
-		}
-		return nil, "", false, dlErr
-	}
-	defer reader.Close()
-
-	data, err = io.ReadAll(reader)
-	if err != nil {
-		return nil, "", false, err
-	}
-	return data, "", true, nil
-}
-
-// GetTenantSignature mirrors GetTenantLogo's ok=false-never-an-error shape
-// exactly, for a tenant that never uploaded a signature.
-func (c *impl) GetTenantSignature(ctx context.Context, tenantID int64) (data []byte, contentType string, ok bool, err error) {
-	reader, dlErr := c.tenants.DownloadSignature(ctx, tenantID)
 	if dlErr != nil {
 		if appErr, isApp := apperror.As(dlErr); isApp && appErr.Kind == apperror.KindNotFound {
 			return nil, "", false, nil

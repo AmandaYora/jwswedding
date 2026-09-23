@@ -1,8 +1,11 @@
 import { useEffect, useRef } from "react";
 import SignaturePadLib from "signature_pad";
 
-// Pegangan kanvas TTD untuk halaman publik (satu-satunya pemakai
-// signature_pad, D7): hapus, periksa kosong, ekspor PNG transparan.
+// Pegangan kanvas TTD: hapus, periksa kosong, ekspor PNG transparan.
+//
+// Domain-agnostic, karena itu tinggal di shared/ui — dipakai halaman TTD publik
+// milik klien maupun pengisian TTD pengguna internal (PLAN
+// tanda-tangan-pengguna T21).
 export interface SignaturePadHandle {
   clear: () => void;
   isEmpty: () => boolean;

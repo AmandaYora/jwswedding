@@ -80,6 +80,10 @@ func (s *ClientPaymentService) Create(ctx context.Context, projectID int64, acto
 	p := &domain.ClientPayment{
 		ProjectID: projectID, Type: input.Type, Amount: input.Amount,
 		PaymentDate: input.PaymentDate, Method: input.Method, ReferenceNumber: input.ReferenceNumber, Notes: input.Notes,
+		// Dipaku di sini dan hanya di sini: Update sengaja tidak menyentuhnya,
+		// karena Kwitansi mencetak pengesah dokumen, bukan pengedit terakhir
+		// (PLAN tanda-tangan-pengguna K5).
+		CreatedByStaffID: actorStaffID,
 	}
 	if err := s.repo.Create(ctx, p); err != nil {
 		return nil, err

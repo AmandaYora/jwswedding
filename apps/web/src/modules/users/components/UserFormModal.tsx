@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { Modal } from "@/shared/components/ui/Modal";
 import { Button } from "@/shared/components/ui/Button";
@@ -11,6 +11,8 @@ import {
   type UserCreateFormValues,
 } from "@/modules/users/schemas/user.schema";
 import { ROLE_LABELS, type StaffMember } from "@/modules/users/types";
+import { SignatureField, type SignaturePayload } from "@/modules/users/components/SignatureField";
+import { useStaffStore } from "@/modules/users/stores/useStaffStore";
 import { useTenantBrandingStore } from "@/shared/stores/useTenantBrandingStore";
 import { APP_NAME } from "@/shared/constants/brand";
 
@@ -40,16 +42,62 @@ interface UserFormModalProps {
   open: boolean;
   onClose: () => void;
   initialUser?: StaffMember;
-  onSubmitCreate: (values: UserCreateFormValues) => void;
-  onSubmitEdit: (values: UserFormValues) => void;
+  // signature = TTD baru yang digambar/diunggah di modal ini, null bila tidak
+  // diisi. Dikirim TERPISAH dari values karena ia aset biner, bukan field form
+  // ber-Zod — dan pada alur Tambah baru bisa dikirim setelah baris pengguna
+  // punya id (PLAN tanda-tangan-pengguna A6).
+  onSubmitCreate: (values: UserCreateFormValues, signature: SignaturePayload | null) => void;
+  onSubmitEdit: (values: UserFormValues, signature: SignaturePayload | null) => void;
+  // Menghapus TTD berlaku SEKETIKA (bukan menunggu Simpan), jadi induk perlu
+  // tahu supaya badge "Ada/Belum" di daftar tidak tertinggal basi ketika
+  // modalnya ditutup lewat Batal.
+  onSignatureDeleted?: () => void;
 }
 
-export function UserFormModal({ open, onClose, initialUser, onSubmitCreate, onSubmitEdit }: UserFormModalProps) {
+export function UserFormModal({ open, onClose, initialUser, onSubmitCreate, onSubmitEdit, onSignatureDeleted }: UserFormModalProps) {
   const businessName = useTenantBrandingStore((s) => s.businessName) ?? APP_NAME;
   const isEditing = Boolean(initialUser);
   const [values, setValues] = useState<FormState>(() => toFormState(initialUser));
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [showPassword, setShowPassword] = useState(false);
+  const [signature, setSignature] = useState<SignaturePayload | null>(null);
+  const [existingSignatureUrl, setExistingSignatureUrl] = useState<string | null>(null);
+  const fetchStaffSignatureImageUrl = useStaffStore((s) => s.fetchStaffSignatureImageUrl);
+  const deleteStaffSignature = useStaffStore((s) => s.deleteStaffSignature);
+
+  // Pratinjau TTD tersimpan hanya diambil saat memang ada (hasSignature) dan
+  // modalnya terbuka — daftar Pengguna sendiri tidak pernah menarik gambar.
+  // Object URL-nya di-revoke saat modal ditutup supaya tidak menumpuk blob.
+  useEffect(() => {
+    if (!open || !initialUser?.hasSignature) {
+      setExistingSignatureUrl(null);
+      return;
+    }
+    let revoked = false;
+    let url: string | null = null;
+    void fetchStaffSignatureImageUrl(initialUser.id).then((objectUrl) => {
+      if (revoked) {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        return;
+      }
+      url = objectUrl;
+      setExistingSignatureUrl(objectUrl);
+    });
+    return () => {
+      revoked = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [open, initialUser?.id, initialUser?.hasSignature, fetchStaffSignatureImageUrl]);
+
+  async function handleDeleteExistingSignature() {
+    if (!initialUser) return;
+    await deleteStaffSignature(initialUser.id);
+    setExistingSignatureUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    onSignatureDeleted?.();
+  }
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -66,7 +114,7 @@ export function UserFormModal({ open, onClose, initialUser, onSubmitCreate, onSu
         setErrors(fieldErrors);
         return;
       }
-      onSubmitEdit(result.data);
+      onSubmitEdit(result.data, signature);
       setErrors({});
       return;
     }
@@ -80,13 +128,14 @@ export function UserFormModal({ open, onClose, initialUser, onSubmitCreate, onSu
       setErrors(fieldErrors);
       return;
     }
-    onSubmitCreate(result.data);
+    onSubmitCreate(result.data, signature);
     setErrors({});
   }
 
   function handleClose() {
     setValues(toFormState(initialUser));
     setErrors({});
+    setSignature(null);
     onClose();
   }
 
@@ -171,6 +220,13 @@ export function UserFormModal({ open, onClose, initialUser, onSubmitCreate, onSu
             </Field>
           </>
         )}
+        <div className="sm:col-span-2">
+          <SignatureField
+            existingImageUrl={existingSignatureUrl}
+            onChange={setSignature}
+            onClear={initialUser ? () => void handleDeleteExistingSignature() : undefined}
+          />
+        </div>
       </div>
     </Modal>
   );

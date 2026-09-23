@@ -20,7 +20,6 @@ export const API = {
     tenantMe: "/api/v1/tenants/me",
     tenantMeBranding: "/api/v1/tenants/me/branding",
     tenantMeLogo: "/api/v1/tenants/me/logo",
-    tenantMeSignature: "/api/v1/tenants/me/signature",
     subscriptionsPay: "/api/v1/subscriptions/pay",
     subscriptionsPendingCharge: "/api/v1/subscriptions/pending-charge",
     subscriptionsCancelPendingCharge: "/api/v1/subscriptions/pending-charge/cancel",
@@ -49,6 +48,16 @@ export const API = {
     // member is still a live PIC assignment on, for the confirmation dialog;
     // `item(id)` above is reused with the DELETE verb for the delete itself.
     deleteImpact: (id: string) => `/api/v1/staff/${id}/delete-impact`,
+    // TTD pengguna (PLAN tanda-tangan-pengguna). Dua jalur dengan gerbang
+    // berbeda: `signature*` lewat {id} adalah Owner-only (dipakai modal
+    // Tambah/Edit Pengguna), sedangkan `mySignature*` memakai staffID dari
+    // klaim JWT dan terbuka untuk semua role — itulah yang membuat halaman
+    // "Tanda Tangan Saya" bisa dipakai Admin/Staff/Sales tanpa melonggarkan
+    // gerbang Owner-only di atas.
+    signature: (id: string) => `/api/v1/staff/${id}/signature`,
+    signatureImage: (id: string) => `/api/v1/staff/${id}/signature/image`,
+    mySignature: "/api/v1/staff/me/signature",
+    mySignatureImage: "/api/v1/staff/me/signature/image",
   },
   vendors: {
     categories: "/api/v1/vendor-categories",

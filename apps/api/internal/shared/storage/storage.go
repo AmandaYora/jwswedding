@@ -83,6 +83,15 @@ func BuildClientSignatureKey(tenantID, clientID string) string {
 	return fmt.Sprintf("jwswedding/signature/client/%s/%s/specimen.png", tenantID, clientID)
 }
 
+// BuildStaffSignatureKey adalah kunci objek TTD milik satu pengguna internal WO
+// (PLAN tanda-tangan-pengguna): master data seperti foto profil — selalu satu
+// objek per staff, ditimpa saat ada TTD baru. Ruang namanya terpisah dari
+// client/quotation dengan alasan yang sama seperti keduanya: objek master dan
+// objek salinan-dokumen tidak boleh bisa bertabrakan.
+func BuildStaffSignatureKey(tenantID, staffID string) string {
+	return fmt.Sprintf("jwswedding/signature/staff/%s/%s/specimen.png", tenantID, staffID)
+}
+
 // BuildQuotationSignatureKey adalah kunci objek SALINAN tanda tangan milik
 // satu dokumen revisi (TTD Penawaran, D6c): disalin saat meneken, tidak pernah
 // menunjuk specimen yang bisa ditimpa atau dihapus.

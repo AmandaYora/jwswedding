@@ -17,3 +17,4 @@ export * from "./EvidenceViewerModal";
 export * from "./IconActionButton";
 export * from "./DropdownMenu";
 export * from "./MonthSelect";
+export * from "./SignaturePad";

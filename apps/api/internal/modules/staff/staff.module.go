@@ -13,6 +13,7 @@ import (
 	"jwswedding/internal/modules/staff/contracts"
 	"jwswedding/internal/modules/staff/infrastructure"
 	"jwswedding/internal/modules/staff/presentation"
+	"jwswedding/internal/shared/storage"
 )
 
 type Module struct {
@@ -21,12 +22,16 @@ type Module struct {
 	service   *application.StaffService
 }
 
-func NewModule(db *sql.DB, identity identitycontracts.Contracts) *Module {
+// NewModule menerima storageClient sejak TTD menjadi master data per pengguna
+// (PLAN tanda-tangan-pengguna): gambarnya disimpan di object storage, hanya
+// kuncinya yang masuk kolom staff_members.signature_storage_path.
+func NewModule(db *sql.DB, identity identitycontracts.Contracts, storageClient *storage.Client) *Module {
 	repo := infrastructure.NewMySQLStaffRepository(db)
 	service := application.NewStaffService(repo, identity)
+	signatures := application.NewStaffSignatureService(repo, storageClient)
 	return &Module{
-		contracts: contracts.New(service),
-		handler:   presentation.NewHandler(service),
+		contracts: contracts.New(service, signatures),
+		handler:   presentation.NewHandler(service, signatures),
 		service:   service,
 	}
 }

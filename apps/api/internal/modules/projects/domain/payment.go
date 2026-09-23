@@ -99,6 +99,15 @@ type ClientPayment struct {
 	ReceiptNumber string
 	ReceiptPeriod string
 	ReceiptSeq    int
+	// CreatedByStaffID adalah staff yang MENERBITKAN pembayaran ini — dipaku
+	// saat dibuat dan tidak pernah diubah oleh Update, karena yang dicetak di
+	// Kwitansi adalah pengesahnya, bukan pengedit terakhirnya (PLAN
+	// tanda-tangan-pengguna K2/K5).
+	//
+	// Sentinel 0 untuk semua baris yang dibuat sebelum kolomnya ada: blok nama
+	// dan tanda tangan dikosongkan total saat dicetak (K6). Sengaja bukan
+	// foreign key — staff ada di modul lain.
+	CreatedByStaffID int64
 }
 
 // VenuePayment tracks money going OUT to the project's venue -- same

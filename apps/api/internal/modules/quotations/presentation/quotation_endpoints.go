@@ -24,10 +24,13 @@ type Handler struct {
 	platform   platformcontracts.Contracts
 	projects   projectscontracts.Contracts
 	links      *application.SignatureLinkService
+	// staff memasok nama + jabatan + TTD penerbit dokumen untuk kolom WO pada
+	// blok tanda tangan PDF (PLAN tanda-tangan-pengguna).
+	staff application.StaffSignerResolver
 }
 
-func NewHandler(quotations *application.QuotationService, platform platformcontracts.Contracts, projects projectscontracts.Contracts, links *application.SignatureLinkService) *Handler {
-	return &Handler{quotations: quotations, platform: platform, projects: projects, links: links}
+func NewHandler(quotations *application.QuotationService, platform platformcontracts.Contracts, projects projectscontracts.Contracts, links *application.SignatureLinkService, staff application.StaffSignerResolver) *Handler {
+	return &Handler{quotations: quotations, platform: platform, projects: projects, links: links, staff: staff}
 }
 
 type quotationBlockBody struct {
@@ -768,13 +771,16 @@ func (h *Handler) serveQuotationPDF(w http.ResponseWriter, r *http.Request, tena
 	if !hasLogo {
 		logo = nil
 	}
-	signature, _, hasSignature, err := h.platform.GetTenantSignature(r.Context(), tenantID)
+	// Kolom WO pada blok tanda tangan = staff yang MENERBITKAN penawaran ini
+	// (PLAN tanda-tangan-pengguna). Revisi/duplikasi memakai penerbitnya
+	// sendiri, karena Duplicate mengisi CreatedByStaffID dengan actor baru.
+	woSignerName, woSignerTitle, signature, signerOK, err := h.staff.GetSigner(r.Context(), tenantID, view.Quotation.CreatedByStaffID)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	if !hasSignature {
-		signature = nil
+	if !signerOK {
+		woSignerName, woSignerTitle, signature = "", "", nil
 	}
 	clientName := strings.TrimSpace(view.ClientBride + " & " + view.ClientGroom)
 	payments, totalPaid, err := h.quotationLedger(w, r, tenantID, view.ProjectID)
@@ -795,7 +801,7 @@ func (h *Handler) serveQuotationPDF(w http.ResponseWriter, r *http.Request, tena
 		data.ClientSignature = h.quotations.DocumentSignatureImage(r.Context(), tenantID, id)
 	}
 
-	pdf, err := buildQuotationPDF(data, eventDate, profile, logo, signature)
+	pdf, err := buildQuotationPDF(data, eventDate, profile, logo, signature, woSignerName, woSignerTitle)
 	if err != nil {
 		writeAppError(w, err)
 		return

@@ -43,3 +43,21 @@ type ClientDirectory interface {
 type VenueResolver interface {
 	GetVenueSummary(ctx context.Context, tenantID, venueID int64) (vendorscontracts.VenueSummary, error)
 }
+
+// StaffSignerResolver adalah bentuk sempit yang dibutuhkan quotations dari
+// `staff` untuk blok tanda tangan kolom WO pada PDF Penawaran/PO (PLAN
+// tanda-tangan-pengguna): nama + jabatan + gambar TTD milik staff yang
+// MENERBITKAN dokumen, menggantikan nama pemilik usaha + TTD tenant yang dulu
+// dipakai semua dokumen.
+//
+// Bentuknya identik dengan StaffNameResolver.GetSigner milik projects dan
+// dijembatani adapter yang sama di main.go — primitif, tanpa mengimpor
+// staff/contracts, mengikuti idiom yang sama seperti VenueResolver di atas.
+//
+// ok=false berarti staffID tidak ter-resolve (sentinel 0, baris staff sudah
+// dihapus permanen, atau milik tenant lain) — kolom WO dicetak kosong, bukan
+// jatuh ke orang lain (K6). signature nil berarti staff-nya ada tetapi belum
+// mengisi TTD — namanya tetap tercetak (K4).
+type StaffSignerResolver interface {
+	GetSigner(ctx context.Context, tenantID, staffID int64) (name, title string, signature []byte, ok bool, err error)
+}

@@ -22,7 +22,7 @@ func TestDumpQuotationPDF(t *testing.T) {
 		name   string
 		status domain.QuotationStatus
 	}{{"penawaran-diterima", domain.QuotationAccepted}, {"penawaran-draft", domain.QuotationDraft}, {"penawaran-ditawarkan", domain.QuotationOffered}} {
-		pdf, err := buildQuotationPDF(testQuotationPrintData(c.status), testQuotationEventDate(), testQuotationProfile(), validQuotationPNGBytes(t), validQuotationPNGBytes(t))
+		pdf, err := buildQuotationPDF(testQuotationPrintData(c.status), testQuotationEventDate(), testQuotationProfile(), validQuotationPNGBytes(t), validQuotationPNGBytes(t), "Anisa Putri", "Lead Planner")
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -228,13 +228,17 @@ func (h *Handler) downloadClientPaymentReceiptPDF(w http.ResponseWriter, r *http
 	if !hasLogo {
 		logo = nil
 	}
-	signature, _, hasSignature, err := h.platform.GetTenantSignature(r.Context(), claims.tenantID)
+	// Pengesah Kwitansi = staff yang mencatat pembayarannya (p sudah berasal
+	// dari EnsureReceiptNumber di atas, jadi CreatedByStaffID-nya ikut terisi).
+	// Baris lama yang lahir sebelum kolomnya ada membawa sentinel 0 dan
+	// mencetak blok kosong (PLAN tanda-tangan-pengguna K6).
+	signerName, _, signature, signerOK, err := h.staff.GetSigner(r.Context(), claims.tenantID, p.CreatedByStaffID)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	if !hasSignature {
-		signature = nil
+	if !signerOK {
+		signerName, signature = "", nil
 	}
 	totalPaid, err := h.clientPayments.TotalReceived(r.Context(), projectID)
 	if err != nil {
@@ -242,7 +246,7 @@ func (h *Handler) downloadClientPaymentReceiptPDF(w http.ResponseWriter, r *http
 		return
 	}
 
-	pdf, err := buildClientPaymentReceiptPDF(*project, *p, invoiceNumber, profile, logo, signature, totalPaid)
+	pdf, err := buildClientPaymentReceiptPDF(*project, *p, invoiceNumber, profile, logo, signature, totalPaid, signerName)
 	if err != nil {
 		writeAppError(w, err)
 		return

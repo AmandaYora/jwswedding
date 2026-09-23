@@ -50,7 +50,12 @@ type Handler struct {
 	// no dependency back on `projects`, so there's no construction cycle to
 	// break here (unlike ClientAccessResolver/VenueResolver above). See
 	// PLAN.md invoice-kwitansi-client §4.6.
-	platform     platformcontracts.Contracts
+	platform platformcontracts.Contracts
+	// staff resolves the signature block of the Invoice/Kwitansi PDFs from the
+	// staff member who issued the document (PLAN tanda-tangan-pengguna).
+	// Reuses the same narrow port ProjectService already takes — see
+	// application.StaffNameResolver for why this can't be staff/contracts.
+	staff        application.StaffNameResolver
 	clientAccess ClientAccessResolver
 }
 
@@ -66,11 +71,13 @@ func NewHandler(
 	activity *application.ActivityService,
 	dashboard *application.DashboardService,
 	platform platformcontracts.Contracts,
+	staff application.StaffNameResolver,
 ) *Handler {
 	return &Handler{
 		projects: projects, vendors: vendors, payments: payments, clientPayments: clientPayments,
 		clientInvoices: clientInvoices, venuePayments: venuePayments,
-		issues: issues, evidence: evidence, activity: activity, dashboard: dashboard, platform: platform,
+		issues: issues, evidence: evidence, activity: activity, dashboard: dashboard,
+		platform: platform, staff: staff,
 	}
 }
 

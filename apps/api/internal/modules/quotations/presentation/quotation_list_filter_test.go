@@ -13,7 +13,7 @@ import (
 // gayanya dengan clientId (PLAN wording-role-dan-filter-sales-wp T43).
 // Parse gagal SEBELUM service disentuh, jadi service boleh ber-repo nil.
 func TestList_ParamStaffTidakValid_400(t *testing.T) {
-	h := NewHandler(application.NewQuotationService(nil, nil, nil, nil), nil, nil, nil)
+	h := NewHandler(application.NewQuotationService(nil, nil, nil, nil), nil, nil, nil, nil)
 	claims := staffClaims{tenantID: 1, staffID: 1, role: "Owner"}
 
 	for _, tc := range []struct {

@@ -112,8 +112,9 @@ func indexExists(t *testing.T, url, table, index string) bool {
 // Penawaran migrations (000066 client_signatures, 000067
 // quotation_signature_links), 000068 (tiga index filter Sales/WP, ADR-0033),
 // 000069 (venue_categories label table, PLAN revisi-vendor-venue-portal),
-// and 000070 (restrict cities to Jabodetabek+Bali, down = intentional no-op)
-// back one step at a time and then forward again.
+// 000070 (restrict cities to Jabodetabek+Bali, down = intentional no-op), and
+// 000073/000074 (TTD pindah tenant->staff + pengesah Kwitansi, PLAN
+// tanda-tangan-pengguna) back one step at a time and then forward again.
 //
 // Jumlah langkah rollback dihitung sendiri dari migrasi terakhir yang
 // di-embed (latestMigrationVersion), jadi menambah migrasi baru TIDAK lagi
@@ -185,6 +186,10 @@ func TestMigrations_UpDownUp(t *testing.T) {
 		{"projects", "client_id"},
 		{"projects", "quotation_id"},
 		{"client_contacts", "client_id"},
+		// 000073/000074 (PLAN tanda-tangan-pengguna): TTD pindah ke pengguna,
+		// dan Kwitansi ikut menyimpan siapa yang menerbitkannya.
+		{"staff_members", "signature_storage_path"},
+		{"client_payments", "created_by_staff_id"},
 	} {
 		if !columnExists(t, url, col[0], col[1]) {
 			t.Fatalf("setelah up, kolom %s.%s tidak ada", col[0], col[1])
@@ -192,6 +197,10 @@ func TestMigrations_UpDownUp(t *testing.T) {
 	}
 	if columnExists(t, url, "client_contacts", "project_id") {
 		t.Fatal("setelah up, kolom client_contacts.project_id masih ada")
+	}
+	// 000073 memindahkan TTD keluar dari tenants — kolomnya harus sudah hilang.
+	if columnExists(t, url, "tenants", "signature_storage_path") {
+		t.Fatal("setelah up, kolom tenants.signature_storage_path masih ada")
 	}
 
 	// Roll back to just below 000052 — the assertions further down check what
@@ -234,6 +243,18 @@ func TestMigrations_UpDownUp(t *testing.T) {
 	}
 	if columnExists(t, url, "quotations", "package_name") {
 		t.Error("setelah down, kolom quotations.package_name masih ada")
+	}
+	// 000073/000074 turun: TTD kembali ke tenants (kolom 000049 hidup lagi,
+	// karena rollback berhenti di floorVersion 51 — jauh di atas 000049), dan
+	// kedua kolom baru harus hilang.
+	if columnExists(t, url, "staff_members", "signature_storage_path") {
+		t.Error("setelah down, kolom staff_members.signature_storage_path masih ada")
+	}
+	if columnExists(t, url, "client_payments", "created_by_staff_id") {
+		t.Error("setelah down, kolom client_payments.created_by_staff_id masih ada")
+	}
+	if !columnExists(t, url, "tenants", "signature_storage_path") {
+		t.Error("setelah down, kolom tenants.signature_storage_path tidak kembali")
 	}
 	for _, table := range []string{
 		"package_templates", "package_template_blocks", "package_template_terms",
