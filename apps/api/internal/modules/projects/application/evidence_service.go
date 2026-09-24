@@ -219,11 +219,17 @@ func (s *EvidenceService) Upload(ctx context.Context, tenantID, projectID int64,
 // Penghapusan yang lama dijalankan best-effort dan sebelum penyimpanan yang
 // baru: kalau gagal, yang tertinggal paling buruk satu objek yatim di storage,
 // bukan kehilangan dokumen yang baru.
+//
+// Versi baru MEWARISI visibilitas klien milik versi lama (PLAN rundown-ux-ideal
+// §6.2). Tanpa ini, rundown yang sudah dibagikan ke klien diam-diam hilang dari
+// Client Portal begitu WO merevisi dan generate ulang. Dokumen lama yang sudah
+// dihapus manual tidak ditemukan, sehingga versi baru tetap privat.
 func (s *EvidenceService) SaveGeneratedDocument(ctx context.Context, tenantID, projectID, actorStaffID int64,
 	input UploadEvidenceInput, data []byte, replaceEvidenceID int64) (*domain.Evidence, error) {
 
 	if replaceEvidenceID != 0 {
 		if old, err := s.repo.FindByID(ctx, projectID, replaceEvidenceID); err == nil && old != nil {
+			input.IsClientVisible = old.IsClientVisible
 			if err := s.repo.DeleteByID(ctx, projectID, old.ID); err != nil {
 				logger.Error("gagal menghapus dokumen hasil generate lama %d: %v", old.ID, err)
 			} else {

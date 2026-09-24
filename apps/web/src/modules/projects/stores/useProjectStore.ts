@@ -659,6 +659,11 @@ interface ProjectState {
   reorderMilestones: (projectId: string, orderedIds: string[]) => Promise<void>;
 
   fetchVendorSection: (projectId: string) => Promise<void>;
+  // Sama dengan fetchVendorSection tetapi MENGEMBALIKAN hasilnya tanpa
+  // menyentuh state global `vendorEngagements` — untuk pemakai di luar halaman
+  // project (prefill Rundown) yang tidak boleh tertukar dengan project yang
+  // sedang/terakhir dibuka di halaman project.
+  fetchVendorEngagementsFor: (projectId: string) => Promise<ProjectVendor[]>;
   createVendorEngagement: (projectId: string, values: ProjectVendorFormValues) => Promise<void>;
   updateVendorEngagement: (projectId: string, pvId: string, values: ProjectVendorFormValues) => Promise<void>;
   cancelVendorEngagement: (projectId: string, pvId: string) => Promise<void>;
@@ -940,6 +945,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const engagements = raw.map(toProjectVendor);
     const allMilestones = raw.flatMap((pv) => (pv.milestones ?? []).map((m) => toVendorMilestone(m, String(pv.id))));
     set({ vendorEngagements: engagements, vendorMilestones: allMilestones });
+  },
+
+  fetchVendorEngagementsFor: async (projectId) => {
+    const res = await httpClient.get(API.projects.vendors(projectId));
+    return (res.data.data as RawProjectVendor[]).map(toProjectVendor);
   },
 
   createVendorEngagement: async (projectId, values) => {

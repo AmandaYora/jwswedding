@@ -159,7 +159,7 @@ func newService() (*RundownService, *fakeRepo, *fakeStorage, *fakeProjects) {
 		GroomName: "Bagas Arya", Venue: "Grand Mercure",
 		EventDate: time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC),
 	}}
-	return NewRundownService(repo, pr, st), repo, st, pr
+	return NewRundownService(repo, pr, st, nil), repo, st, pr
 }
 
 // ------------------------------------------------------------------- tes

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Plus, MoreHorizontal, FileText, FileType, Trash2 } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Plus, MoreHorizontal, FileText, FileType, Trash2, LayoutTemplate } from "lucide-react";
 import { Button } from "@/shared/components/ui/Button";
 import { SearchInput } from "@/shared/components/ui/SearchInput";
 import { Card, CardContent } from "@/shared/components/ui/Card";
@@ -15,6 +15,21 @@ import { CreateRundownDialog } from "@/modules/rundowns/components/CreateRundown
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { useDebouncedValue } from "@/shared/hooks/useDebouncedValue";
 import { getApiErrorMessageFromBlob } from "@/shared/lib/api-error";
+import { generateMessage } from "@/modules/rundowns/lib/generate-message";
+
+interface Notice {
+  tone: "success" | "danger";
+  text: string;
+  /** Project yang berkasnya baru tersimpan di tab Dokumen. */
+  projectId?: string;
+}
+
+/** Waktu lokal perubahan terakhir, mis. "24 Sep 2026, 10.42". */
+function formatUpdatedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
 
 export default function RundownListPage() {
   const navigate = useNavigate();
@@ -32,7 +47,7 @@ export default function RundownListPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [deleting, setDeleting] = useState<{ id: string; name: string } | null>(null);
   const [busyId, setBusyId] = useState("");
-  const [error, setError] = useState("");
+  const [notice, setNotice] = useState<Notice | null>(null);
 
   useEffect(() => {
     void fetchList(page, debounced);
@@ -42,16 +57,18 @@ export default function RundownListPage() {
     setPage(1);
   }, [debounced]);
 
-  const onGenerate = async (id: string, format: "docx" | "pdf") => {
+  const onGenerate = async (id: string, projectId: string, format: "docx" | "pdf") => {
     setBusyId(id);
-    setError("");
+    setNotice(null);
     try {
-      await generate(id, format);
+      const { archive } = await generate(id, format);
+      const msg = generateMessage(format, archive);
+      setNotice({ tone: msg.tone, text: msg.text, projectId: msg.documentsLink ? projectId : undefined });
     } catch (e) {
       // Respons galat datang sebagai Blob karena permintaannya
       // responseType: "blob" -- dibaca dengan helper khusus itu, kalau tidak
       // pesannya keluar sebagai "[object Blob]".
-      setError(await getApiErrorMessageFromBlob(e, "Gagal membuat berkas rundown"));
+      setNotice({ tone: "danger", text: await getApiErrorMessageFromBlob(e, "Gagal membuat berkas rundown") });
     } finally {
       setBusyId("");
     }
@@ -66,9 +83,18 @@ export default function RundownListPage() {
             Buku acara hari-H. Satu project satu rundown.
           </p>
         </div>
-        <Button icon={<Plus className="h-4 w-4" />} onClick={() => setCreateOpen(true)}>
-          Buat Rundown
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="secondary"
+            icon={<LayoutTemplate className="h-4 w-4" />}
+            onClick={() => navigate(ROUTE_PATHS.rundownTemplate())}
+          >
+            Template Rundown
+          </Button>
+          <Button icon={<Plus className="h-4 w-4" />} onClick={() => setCreateOpen(true)}>
+            Buat Rundown
+          </Button>
+        </div>
       </div>
 
       <SearchInput
@@ -77,9 +103,24 @@ export default function RundownListPage() {
         placeholder="Cari project atau nama pengantin..."
       />
 
-      {error && (
-        <div className="rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-[13px] text-danger">
-          {error}
+      {notice && (
+        <div
+          role="status"
+          className={
+            notice.tone === "success"
+              ? "rounded-md border border-success/30 bg-success/5 px-3 py-2 text-[13px] text-success"
+              : "rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-[13px] text-danger"
+          }
+        >
+          {notice.text}{" "}
+          {notice.projectId && (
+            <Link
+              to={ROUTE_PATHS.projectDetail(notice.projectId, "dokumen")}
+              className="font-medium underline underline-offset-2"
+            >
+              Lihat di Dokumen project
+            </Link>
+          )}
         </div>
       )}
 
@@ -98,6 +139,7 @@ export default function RundownListPage() {
                   <TH>Pengantin</TH>
                   <TH>Tanggal</TH>
                   <TH>Venue</TH>
+                  <TH>Diubah</TH>
                   <TH className="w-16 text-right">Aksi</TH>
                 </TR>
               </THead>
@@ -116,6 +158,7 @@ export default function RundownListPage() {
                     <TD>{[r.brideName, r.groomName].filter(Boolean).join(" & ") || "-"}</TD>
                     <TD>{r.eventDateLabel || "-"}</TD>
                     <TD>{r.venueLabel || "-"}</TD>
+                    <TD className="whitespace-nowrap text-text-secondary">{formatUpdatedAt(r.updatedAt)}</TD>
                     <TD className="text-right">
                       <DropdownMenu
                         label={`Aksi rundown ${r.projectName}`}
@@ -126,16 +169,16 @@ export default function RundownListPage() {
                         }
                         items={[
                           {
-                            label: busyId === r.id ? "Menyiapkan..." : "Generate PDF",
+                            label: busyId === r.id ? "Menyiapkan..." : "Unduh PDF",
                             icon: <FileText className="h-4 w-4" />,
                             disabled: busyId === r.id,
-                            onSelect: () => void onGenerate(r.id, "pdf"),
+                            onSelect: () => void onGenerate(r.id, r.projectId, "pdf"),
                           },
                           {
-                            label: busyId === r.id ? "Menyiapkan..." : "Generate DOCX",
+                            label: busyId === r.id ? "Menyiapkan..." : "Unduh DOCX",
                             icon: <FileType className="h-4 w-4" />,
                             disabled: busyId === r.id,
-                            onSelect: () => void onGenerate(r.id, "docx"),
+                            onSelect: () => void onGenerate(r.id, r.projectId, "docx"),
                           },
                           ...(canDelete
                             ? [

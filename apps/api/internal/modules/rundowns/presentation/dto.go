@@ -17,6 +17,8 @@ type createRundownRequest struct {
 	WOPICPhone     string       `json:"woPicPhone"`
 	EventTimeLabel string       `json:"eventTimeLabel"`
 	Vendors        []vendorItem `json:"vendors"`
+	// UseTemplate menyalin isi Template Rundown ke rundown baru.
+	UseTemplate bool `json:"useTemplate"`
 }
 
 func (r createRundownRequest) toInput() application.CreateInput {
@@ -32,6 +34,7 @@ func (r createRundownRequest) toInput() application.CreateInput {
 		WOPICName:      r.WOPICName,
 		WOPICPhone:     r.WOPICPhone,
 		EventTimeLabel: r.EventTimeLabel,
+		UseTemplate:    r.UseTemplate,
 	}
 }
 
@@ -290,37 +293,21 @@ func toViewDTO(v *domain.View) viewDTO {
 	for _, x := range v.Vendors {
 		out.Vendors = append(out.Vendors, vendorItem{CategoryLabel: x.CategoryLabel, VendorName: x.VendorName})
 	}
-	for _, x := range v.Roles {
-		out.Roles = append(out.Roles, roleItem{RoleLabel: x.RoleLabel, PersonName: x.PersonName, Note: x.Note})
-	}
-	for _, x := range v.Committees {
-		out.Committees = append(out.Committees, committeeItem{
-			RoleLabel: x.RoleLabel, PersonText: x.PersonText, JobDesc: x.JobDesc})
-	}
+	out.Roles = toRoleItems(v.Roles)
+	out.Committees = toCommitteeItems(v.Committees)
 	for _, x := range v.MenuItems {
 		out.MenuItems = append(out.MenuItems, menuItem{
 			GroupKey: string(x.GroupKey), Style: string(x.Style), Content: x.Content})
 	}
-	for _, room := range v.MakeupRooms {
-		item := makeupRoomItem{RoomLabel: room.RoomLabel, Lines: []makeupLineItem{}}
-		for _, l := range room.Lines {
-			item.Lines = append(item.Lines, makeupLineItem{Style: string(l.Style), Content: l.Content})
-		}
-		out.MakeupRooms = append(out.MakeupRooms, item)
-	}
+	out.MakeupRooms = toMakeupRoomItems(v.MakeupRooms)
 	for _, x := range v.Items {
-		row := acaraItem{NoLabel: x.NoLabel, TimeLabel: x.TimeLabel,
-			Item: x.Item, PIC: x.PIC, Note: x.Note}
 		if x.Section == domain.SectionResepsi {
-			out.ItemsResepsi = append(out.ItemsResepsi, row)
+			out.ItemsResepsi = append(out.ItemsResepsi, toAcaraItem(x))
 			continue
 		}
-		out.ItemsAkad = append(out.ItemsAkad, row)
+		out.ItemsAkad = append(out.ItemsAkad, toAcaraItem(x))
 	}
-	for _, x := range v.LayoutNotes {
-		out.LayoutNotes = append(out.LayoutNotes, layoutNoteItem{
-			Kind: string(x.Kind), NumberLabel: x.NumberLabel, Content: x.Content})
-	}
+	out.LayoutNotes = toLayoutNoteItems(v.LayoutNotes)
 	for _, x := range v.PhotoGroups {
 		out.PhotoGroups = append(out.PhotoGroups, photoGroupItem{GroupName: x.GroupName})
 	}
@@ -331,4 +318,109 @@ func toViewDTO(v *domain.View) viewDTO {
 		out.Playlist = append(out.Playlist, playlistItem{Title: x.Title, Artist: x.Artist})
 	}
 	return out
+}
+
+// noNumberMarker adalah penanda "baris tanpa nomor" di kolom No SUSUNAN ACARA
+// (NO_NUMBER_MARKER di frontend).
+const noNumberMarker = "-"
+
+// toAcaraItem mengembalikan penanda tanpa-nomor ke frontend. renumberItems
+// menyimpan baris tanpa nomor sebagai "" (supaya dokumen mencetak sel kosong),
+// dan setiap baris bernomor pasti berangka setelah penomoran ulang — jadi ""
+// di sini selalu berarti "tanpa nomor". Tanpa pemetaan ini, frontend menerima
+// "" dan penyimpanan berikutnya diam-diam memberi baris itu nomor.
+func toAcaraItem(x domain.Item) acaraItem {
+	no := x.NoLabel
+	if no == "" {
+		no = noNumberMarker
+	}
+	return acaraItem{NoLabel: no, TimeLabel: x.TimeLabel, Item: x.Item, PIC: x.PIC, Note: x.Note}
+}
+
+func toRoleItems(rows []domain.Role) []roleItem {
+	out := []roleItem{}
+	for _, x := range rows {
+		out = append(out, roleItem{RoleLabel: x.RoleLabel, PersonName: x.PersonName, Note: x.Note})
+	}
+	return out
+}
+
+func toCommitteeItems(rows []domain.Committee) []committeeItem {
+	out := []committeeItem{}
+	for _, x := range rows {
+		out = append(out, committeeItem{RoleLabel: x.RoleLabel, PersonText: x.PersonText, JobDesc: x.JobDesc})
+	}
+	return out
+}
+
+func toMakeupRoomItems(rooms []domain.MakeupRoom) []makeupRoomItem {
+	out := []makeupRoomItem{}
+	for _, room := range rooms {
+		item := makeupRoomItem{RoomLabel: room.RoomLabel, Lines: []makeupLineItem{}}
+		for _, l := range room.Lines {
+			item.Lines = append(item.Lines, makeupLineItem{Style: string(l.Style), Content: l.Content})
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func toAcaraItems(rows []domain.Item) []acaraItem {
+	out := []acaraItem{}
+	for _, x := range rows {
+		out = append(out, toAcaraItem(x))
+	}
+	return out
+}
+
+func toLayoutNoteItems(rows []domain.LayoutNote) []layoutNoteItem {
+	out := []layoutNoteItem{}
+	for _, x := range rows {
+		out = append(out, layoutNoteItem{Kind: string(x.Kind), NumberLabel: x.NumberLabel, Content: x.Content})
+	}
+	return out
+}
+
+// templateDTO adalah bentuk Template Rundown di API. Nama field-nya sama
+// dengan viewDTO supaya frontend bisa memakai editor seksi yang sama.
+type templateDTO struct {
+	Roles        []roleItem       `json:"roles"`
+	Committees   []committeeItem  `json:"committees"`
+	MakeupRooms  []makeupRoomItem `json:"makeupRooms"`
+	ItemsAkad    []acaraItem      `json:"itemsAkad"`
+	ItemsResepsi []acaraItem      `json:"itemsResepsi"`
+	LayoutNotes  []layoutNoteItem `json:"layoutNotes"`
+	// UpdatedAt nil = template belum pernah disimpan.
+	UpdatedAt *time.Time `json:"updatedAt"`
+}
+
+func toTemplateDTO(t *domain.Template) templateDTO {
+	out := templateDTO{
+		Roles: toRoleItems(t.Roles), Committees: toCommitteeItems(t.Committees),
+		MakeupRooms: toMakeupRoomItems(t.MakeupRooms),
+		ItemsAkad:   toAcaraItems(t.ItemsAkad), ItemsResepsi: toAcaraItems(t.ItemsResepsi),
+		LayoutNotes: toLayoutNoteItems(t.LayoutNotes),
+	}
+	if !t.UpdatedAt.IsZero() {
+		updated := t.UpdatedAt
+		out.UpdatedAt = &updated
+	}
+	return out
+}
+
+// coverPrefillDTO adalah usulan isian sampul dari data project terkini.
+type coverPrefillDTO struct {
+	GroomName      string `json:"groomName"`
+	BrideName      string `json:"brideName"`
+	EventDateLabel string `json:"eventDateLabel"`
+	VenueLabel     string `json:"venueLabel"`
+	EventTimeLabel string `json:"eventTimeLabel"`
+	CoupleTitle    string `json:"coupleTitle"`
+}
+
+func toCoverPrefillDTO(c application.CoverPrefill) map[string]coverPrefillDTO {
+	return map[string]coverPrefillDTO{"cover": {
+		GroomName: c.GroomName, BrideName: c.BrideName, EventDateLabel: c.EventDateLabel,
+		VenueLabel: c.VenueLabel, EventTimeLabel: c.EventTimeLabel, CoupleTitle: c.CoupleTitle,
+	}}
 }

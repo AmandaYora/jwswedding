@@ -68,6 +68,26 @@ func recompressPNG(data []byte) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// ToPNG decodes a JPEG, downscales it like Image does, and re-encodes it as
+// PNG. Unlike Image — which always answers in the input's own format — this
+// is for consumers that can only embed PNG (the rundown .docx template's
+// layout image slot). A decode failure is returned, not swallowed: the caller
+// asked for a specific output format and cannot fall back to the input bytes.
+func ToPNG(data []byte) ([]byte, error) {
+	img, err := jpeg.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	img = downscale(img)
+
+	encoder := png.Encoder{CompressionLevel: png.BestCompression}
+	var out bytes.Buffer
+	if err := encoder.Encode(&out, img); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
 // downscale resizes img so its longest side is at most MaxDimension,
 // preserving aspect ratio exactly — never crops, never stretches. Images
 // already within bounds are returned unchanged.

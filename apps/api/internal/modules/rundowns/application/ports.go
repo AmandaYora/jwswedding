@@ -83,6 +83,18 @@ type RundownRepository interface {
 	Delete(ctx context.Context, tenantID, id int64) error
 }
 
+// TemplateRepository menyimpan Template Rundown per tenant. Get mengembalikan
+// nil tanpa galat bila tenant belum pernah menyimpan template.
+type TemplateRepository interface {
+	Get(ctx context.Context, tenantID int64) (*domain.Template, error)
+	// ReplaceSection mengganti SATU seksi dalam satu transaksi yang mengunci
+	// baris template, supaya dua orang yang menyunting seksi berbeda tidak
+	// saling menimpa.
+	ReplaceSection(ctx context.Context, tenantID int64, section domain.SectionKey, payload SectionPayload) error
+	// ReplaceAll mengganti seluruh isi template sekaligus ("Jadikan Template").
+	ReplaceAll(ctx context.Context, t *domain.Template) error
+}
+
 // ObjectStorage adalah irisan sempit internal/shared/storage.Client yang
 // dipakai modul ini — hanya untuk PNG denah akad.
 type ObjectStorage interface {

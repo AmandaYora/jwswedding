@@ -254,6 +254,6 @@ func (f *fakeProjectsForSync) ProjectIDsForPICStaff(ctx context.Context, tenantI
 	return nil, nil
 }
 
-func (f *fakeProjectsForSync) SaveGeneratedDocument(ctx context.Context, tenantID, projectID, actorStaffID int64, in projectscontracts.GeneratedDocInput) (int64, error) {
-	return 0, nil
+func (f *fakeProjectsForSync) SaveGeneratedDocument(ctx context.Context, tenantID, projectID, actorStaffID int64, in projectscontracts.GeneratedDocInput) (projectscontracts.GeneratedDocResult, error) {
+	return projectscontracts.GeneratedDocResult{}, nil
 }

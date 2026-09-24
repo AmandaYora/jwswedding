@@ -107,6 +107,12 @@ export const API = {
     layoutImage: (id: string) => `/api/v1/rundowns/${id}/layout-image`,
     generate: (id: string, format: "docx" | "pdf") =>
       `/api/v1/rundowns/${id}/generate?format=${format}`,
+    projectPrefill: (id: string) => `/api/v1/rundowns/${id}/project-prefill`,
+    saveAsTemplate: (id: string) => `/api/v1/rundowns/${id}/save-as-template`,
+    // Template Rundown berlaku se-tenant; segmen "template" dikenali backend
+    // sebelum segmen {id}.
+    template: "/api/v1/rundowns/template",
+    templateSection: (section: string) => `/api/v1/rundowns/template/sections/${section}`,
   },
   projects: {
     base: "/api/v1/projects",

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image"
+	_ "image/jpeg" // mendaftarkan dekoder JPEG untuk image.DecodeConfig
 	"image/png"
 	"io"
 	"strconv"
@@ -15,6 +17,7 @@ import (
 	projectscontracts "jwswedding/internal/modules/projects/contracts"
 	"jwswedding/internal/modules/rundowns/domain"
 	"jwswedding/internal/shared/apperror"
+	"jwswedding/internal/shared/compress"
 	"jwswedding/internal/shared/logger"
 	"jwswedding/internal/shared/pagination"
 )
@@ -24,13 +27,15 @@ import (
 const maxLayoutImageSize = 5 * 1024 * 1024
 
 type RundownService struct {
-	repo     RundownRepository
-	projects projectscontracts.Contracts
-	storage  ObjectStorage
+	repo      RundownRepository
+	projects  projectscontracts.Contracts
+	storage   ObjectStorage
+	templates TemplateRepository
 }
 
-func NewRundownService(repo RundownRepository, projects projectscontracts.Contracts, storage ObjectStorage) *RundownService {
-	return &RundownService{repo: repo, projects: projects, storage: storage}
+func NewRundownService(repo RundownRepository, projects projectscontracts.Contracts, storage ObjectStorage,
+	templates TemplateRepository) *RundownService {
+	return &RundownService{repo: repo, projects: projects, storage: storage, templates: templates}
 }
 
 func (s *RundownService) List(ctx context.Context, tenantID int64, filter ListFilter,
@@ -88,11 +93,66 @@ type CreateInput struct {
 	WOPICName      string
 	WOPICPhone     string
 	EventTimeLabel string
+	// UseTemplate menyalin enam seksi Template Rundown tenant ke rundown baru.
+	UseTemplate bool
+}
+
+// CoverPrefill adalah bagian sampul yang bisa diturunkan dari project. Dipakai
+// saat membuat rundown DAN saat WO menarik ulang data project, supaya kedua
+// jalur itu pasti menghasilkan nilai yang sama.
+type CoverPrefill struct {
+	GroomName      string
+	BrideName      string
+	EventDateLabel string
+	VenueLabel     string
+	EventTimeLabel string
+	CoupleTitle    string
+}
+
+// coverFromProject menurunkan isian sampul dari konteks project.
+func coverFromProject(pc projectscontracts.RundownProjectContext) CoverPrefill {
+	timeLabel := ""
+	if pc.EventStartTime != "" {
+		timeLabel = pc.EventStartTime
+		if pc.EventEndTime != "" {
+			timeLabel += " - " + pc.EventEndTime
+		}
+		timeLabel += " wib"
+	}
+	return CoverPrefill{
+		GroomName:      strings.ToUpper(pc.GroomName),
+		BrideName:      strings.ToUpper(pc.BrideName),
+		EventDateLabel: formatEventDate(pc.EventDate),
+		VenueLabel:     pc.Venue,
+		EventTimeLabel: timeLabel,
+		CoupleTitle:    coupleTitle(pc.BrideName, pc.GroomName),
+	}
+}
+
+// ProjectPrefill memberi usulan isian sampul dari data project TERKINI, untuk
+// tombol "Tarik ulang dari project". Tidak menulis apa pun: WO yang memilih
+// field mana yang diterapkan.
+func (s *RundownService) ProjectPrefill(ctx context.Context, tenantID, id int64) (CoverPrefill, error) {
+	r, err := s.repo.FindByID(ctx, tenantID, id)
+	if err != nil {
+		return CoverPrefill{}, err
+	}
+	if r == nil {
+		return CoverPrefill{}, apperror.NotFound("Rundown tidak ditemukan")
+	}
+	pc, err := s.projects.RundownProjectContext(ctx, tenantID, r.ProjectID)
+	if err != nil {
+		if appErr, ok := apperror.As(err); ok && appErr.Kind == apperror.KindNotFound {
+			return CoverPrefill{}, apperror.NotFound("Project rundown ini sudah tidak ada")
+		}
+		return CoverPrefill{}, err
+	}
+	return coverFromProject(pc), nil
 }
 
 // CreateFromProject melahirkan buku acara dari sebuah project. Field yang
 // sudah ada di project langsung terpakai; sisanya dibiarkan kosong untuk
-// dilengkapi WO.
+// dilengkapi WO — atau diisi dari Template Rundown bila diminta.
 func (s *RundownService) CreateFromProject(ctx context.Context, tenantID int64, in CreateInput) (*domain.View, error) {
 	// Gerbang keberadaan project sekaligus sumber prefill — NotFound bila
 	// project tidak ada atau milik tenant lain.
@@ -109,25 +169,21 @@ func (s *RundownService) CreateFromProject(ctx context.Context, tenantID int64, 
 		return nil, apperror.Conflict("Project ini sudah punya rundown")
 	}
 
-	timeLabel := strings.TrimSpace(in.EventTimeLabel)
-	if timeLabel == "" && pc.EventStartTime != "" {
-		timeLabel = pc.EventStartTime
-		if pc.EventEndTime != "" {
-			timeLabel += " - " + pc.EventEndTime
-		}
-		timeLabel += " wib"
+	cover := coverFromProject(pc)
+	if t := strings.TrimSpace(in.EventTimeLabel); t != "" {
+		cover.EventTimeLabel = t
 	}
 
 	r := &domain.Rundown{
 		TenantID:       tenantID,
 		ProjectID:      pc.ProjectID,
 		ProjectName:    pc.ProjectName,
-		GroomName:      strings.ToUpper(pc.GroomName),
-		BrideName:      strings.ToUpper(pc.BrideName),
-		EventDateLabel: formatEventDate(pc.EventDate),
-		VenueLabel:     pc.Venue,
-		EventTimeLabel: timeLabel,
-		CoupleTitle:    coupleTitle(pc.BrideName, pc.GroomName),
+		GroomName:      cover.GroomName,
+		BrideName:      cover.BrideName,
+		EventDateLabel: cover.EventDateLabel,
+		VenueLabel:     cover.VenueLabel,
+		EventTimeLabel: cover.EventTimeLabel,
+		CoupleTitle:    cover.CoupleTitle,
 		WOPICName:      in.WOPICName,
 		WOPICPhone:     in.WOPICPhone,
 	}
@@ -144,7 +200,54 @@ func (s *RundownService) CreateFromProject(ctx context.Context, tenantID int64, 
 			logger.Error("gagal menulis prefill vendor rundown %d: %v", r.ID, err)
 		}
 	}
+	if in.UseTemplate {
+		s.applyTemplate(ctx, tenantID, r.ID)
+	}
 	return s.Get(ctx, tenantID, r.ID)
+}
+
+// applyTemplate menyalin seksi Template Rundown yang berisi ke rundown baru.
+// Best-effort, sama seperti prefill vendor: buku acaranya sudah lahir, dan
+// seksi yang gagal tersalin masih bisa diisi dari editor.
+func (s *RundownService) applyTemplate(ctx context.Context, tenantID, rundownID int64) {
+	if s.templates == nil {
+		return
+	}
+	t, err := s.templates.Get(ctx, tenantID)
+	if err != nil {
+		logger.Error("gagal membaca template untuk rundown %d: %v", rundownID, err)
+		return
+	}
+	if t == nil {
+		return
+	}
+	for _, sec := range templateSections(t) {
+		if sec.empty {
+			continue
+		}
+		if err := s.repo.ReplaceSection(ctx, tenantID, rundownID, sec.key, sec.payload); err != nil {
+			logger.Error("gagal menyalin seksi template %s ke rundown %d: %v", sec.key, rundownID, err)
+		}
+	}
+}
+
+// templateSection adalah satu seksi Template Rundown dalam bentuk payload
+// PUT seksi — bentuk yang sama yang ditulis ReplaceSection repository.
+type templateSection struct {
+	key     domain.SectionKey
+	payload SectionPayload
+	empty   bool
+}
+
+func templateSections(t *domain.Template) []templateSection {
+	return []templateSection{
+		{domain.SectionKeyRoles, SectionPayload{Roles: t.Roles}, len(t.Roles) == 0},
+		{domain.SectionKeyCommittees, SectionPayload{Committees: t.Committees}, len(t.Committees) == 0},
+		{domain.SectionKeyMakeup, SectionPayload{MakeupRooms: t.MakeupRooms}, len(t.MakeupRooms) == 0},
+		{domain.SectionKeyAcaraAkad, SectionPayload{Items: t.ItemsAkad}, len(t.ItemsAkad) == 0},
+		{domain.SectionKeyAcaraResepsi, SectionPayload{Items: t.ItemsResepsi}, len(t.ItemsResepsi) == 0},
+		{domain.SectionKeyLayout, SectionPayload{LayoutNotes: t.LayoutNotes}, len(t.LayoutNotes) == 0},
+	}
 }
 
 // ReplaceSection menulis ulang satu seksi. Untuk dua seksi SUSUNAN ACARA,
@@ -176,10 +279,10 @@ func (s *RundownService) ReplaceSection(ctx context.Context, tenantID, id int64,
 	return s.Get(ctx, tenantID, id)
 }
 
-// SaveLayoutImage menyimpan PNG denah akad. Hanya PNG: entry gambar di dalam
-// template adalah PNG, jadi menerima format lain berarti menukar byte-nya
-// dengan tipe yang tidak cocok dengan content-type yang sudah tercatat di
-// berkas .docx.
+// SaveLayoutImage menyimpan denah akad. Entry gambar di dalam template adalah
+// PNG, jadi yang DISIMPAN selalu PNG — menukar byte format lain akan tidak
+// cocok dengan content-type yang sudah tercatat di berkas .docx. JPEG (format
+// denah yang lazim dikirim venue) diterima dan dikonversi ke PNG di sini.
 func (s *RundownService) SaveLayoutImage(ctx context.Context, tenantID, id int64, data []byte) error {
 	r, err := s.repo.FindByID(ctx, tenantID, id)
 	if err != nil {
@@ -196,9 +299,27 @@ func (s *RundownService) SaveLayoutImage(ctx context.Context, tenantID, id int64
 		return apperror.Validation("Ukuran file terlalu besar",
 			map[string][]string{"base64Data": {"Maksimal 5 MB"}})
 	}
-	if _, err := png.Decode(bytes.NewReader(data)); err != nil {
-		return apperror.Validation("Format gambar harus PNG",
-			map[string][]string{"base64Data": {"Denah akad harus berupa berkas PNG"}})
+	// Batas 5 MB di atas berlaku pada berkas masukan; hasil konversi JPEG
+	// sudah dikecilkan ke sisi terpanjang 2000 px oleh compress.ToPNG.
+	_, format, err := image.DecodeConfig(bytes.NewReader(data))
+	invalid := apperror.Validation("Format gambar harus PNG atau JPG",
+		map[string][]string{"base64Data": {"Denah akad harus berupa berkas PNG atau JPG"}})
+	if err != nil {
+		return invalid
+	}
+	switch format {
+	case "png":
+		if _, err := png.Decode(bytes.NewReader(data)); err != nil {
+			return invalid
+		}
+	case "jpeg":
+		converted, err := compress.ToPNG(data)
+		if err != nil {
+			return invalid
+		}
+		data = converted
+	default:
+		return invalid
 	}
 
 	key := fmt.Sprintf("rundowns/%s/%s/layout-%s.png",

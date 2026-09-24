@@ -18,6 +18,10 @@ func CORS(devMode bool) func(http.Handler) http.Handler {
 				}
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				// Lintas origin, browser hanya membuka header "safelisted" ke
+				// JavaScript. Nama berkas unduhan dan status arsip rundown
+				// dibaca frontend, jadi keduanya harus dibuka eksplisit.
+				w.Header().Set("Access-Control-Expose-Headers", "Content-Disposition, X-Rundown-Archive")
 			}
 
 			if r.Method == http.MethodOptions {

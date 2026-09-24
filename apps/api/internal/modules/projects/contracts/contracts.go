@@ -125,6 +125,14 @@ type GeneratedDocInput struct {
 	ReplaceEvidenceID int64
 }
 
+// GeneratedDocResult adalah hasil pengarsipan berkas generate. ClientVisible
+// diwarisi dari versi sebelumnya, supaya pemanggil bisa memberi tahu WO apakah
+// klien masih melihat dokumen itu.
+type GeneratedDocResult struct {
+	EvidenceID    int64
+	ClientVisible bool
+}
+
 // ProjectDeleteImpact is one project's share of a delete confirmation (T3.5).
 type ProjectDeleteImpact struct {
 	ProjectID        int64
@@ -222,8 +230,8 @@ type Contracts interface {
 	ProjectIDsForPICStaff(ctx context.Context, tenantID, picStaffID int64) ([]int64, error)
 	// SaveGeneratedDocument menaruh berkas hasil generate ke tab Dokumen
 	// project (evidence kind `general`), menggantikan hasil sebelumnya untuk
-	// format yang sama.
-	SaveGeneratedDocument(ctx context.Context, tenantID, projectID, actorStaffID int64, in GeneratedDocInput) (int64, error)
+	// format yang sama, dengan mewarisi visibilitas kliennya.
+	SaveGeneratedDocument(ctx context.Context, tenantID, projectID, actorStaffID int64, in GeneratedDocInput) (GeneratedDocResult, error)
 }
 
 type impl struct {
@@ -470,7 +478,11 @@ func (c *impl) ProjectIDsForPICStaff(ctx context.Context, tenantID, picStaffID i
 	return c.projects.ProjectIDsForPICStaff(ctx, tenantID, picStaffID)
 }
 
-func (c *impl) SaveGeneratedDocument(ctx context.Context, tenantID, projectID, actorStaffID int64, in GeneratedDocInput) (int64, error) {
-	return c.projects.SaveGeneratedRundownDocument(ctx, tenantID, projectID, actorStaffID,
+func (c *impl) SaveGeneratedDocument(ctx context.Context, tenantID, projectID, actorStaffID int64, in GeneratedDocInput) (GeneratedDocResult, error) {
+	id, visible, err := c.projects.SaveGeneratedRundownDocument(ctx, tenantID, projectID, actorStaffID,
 		in.Name, in.FileName, in.MimeType, in.Data, in.ReplaceEvidenceID)
+	if err != nil {
+		return GeneratedDocResult{}, err
+	}
+	return GeneratedDocResult{EvidenceID: id, ClientVisible: visible}, nil
 }

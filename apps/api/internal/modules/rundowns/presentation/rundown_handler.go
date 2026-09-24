@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	projectscontracts "jwswedding/internal/modules/projects/contracts"
 	"jwswedding/internal/modules/rundowns/application"
@@ -26,9 +28,29 @@ const (
 	// pertama di-ParseInt sebagai {id}; kalau tidak, endpoint ini jatuh ke
 	// jalur item dan gagal parse.
 	usedProjectIDsSegment = "used-project-ids"
+	// templateSegment juga literal: /rundowns/template adalah Template
+	// Rundown tenant, bukan rundown ber-{id}.
+	templateSegment = "template"
 
 	docxMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 	pdfMime  = "application/pdf"
+
+	// generateBudget membatasi seluruh permintaan generate — antre semaphore
+	// PDF, konversi (pdfTimeout 60 dtk), dan pengarsipan. nginx di depan app
+	// harus diberi proxy_read_timeout di atas angka ini (infra/nginx).
+	generateBudget = 110 * time.Second
+
+	// archiveHeader memberi tahu frontend nasib salinan di tab Dokumen.
+	archiveHeader = "X-Rundown-Archive"
+)
+
+// archiveStatus adalah nilai header archiveHeader.
+type archiveStatus string
+
+const (
+	archiveShared  archiveStatus = "shared"  // tersimpan dan terlihat klien
+	archivePrivate archiveStatus = "private" // tersimpan, belum dibagikan
+	archiveFailed  archiveStatus = "failed"  // unduhan jalan, arsip gagal
 )
 
 // PDFConverter adalah antarmuka konsumen yang dideklarasikan di sisi pemakai —
@@ -40,13 +62,14 @@ type PDFConverter interface {
 
 type Handler struct {
 	rundowns  *application.RundownService
+	templates *application.RundownTemplateService
 	projects  projectscontracts.Contracts
 	converter PDFConverter
 }
 
-func NewHandler(rundowns *application.RundownService, projects projectscontracts.Contracts,
-	converter PDFConverter) *Handler {
-	return &Handler{rundowns: rundowns, projects: projects, converter: converter}
+func NewHandler(rundowns *application.RundownService, templates *application.RundownTemplateService,
+	projects projectscontracts.Contracts, converter PDFConverter) *Handler {
+	return &Handler{rundowns: rundowns, templates: templates, projects: projects, converter: converter}
 }
 
 // Collection melayani /api/v1/rundowns.
@@ -85,6 +108,10 @@ func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 		h.usedProjectIDs(w, r, claims)
 		return
 	}
+	if segs[0] == templateSegment {
+		h.template(w, r, claims, segs[1:])
+		return
+	}
 
 	id, err := strconv.ParseInt(segs[0], 10, 64)
 	if err != nil {
@@ -104,6 +131,10 @@ func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
 		h.uploadLayoutImage(w, r, claims, id)
 	case len(rest) == 1 && rest[0] == "generate" && r.Method == http.MethodGet:
 		h.generate(w, r, claims, id)
+	case len(rest) == 1 && rest[0] == "project-prefill" && r.Method == http.MethodGet:
+		h.projectPrefill(w, r, claims, id)
+	case len(rest) == 1 && rest[0] == "save-as-template" && r.Method == http.MethodPost:
+		h.saveAsTemplate(w, r, claims, id)
 	default:
 		response.Error(w, http.StatusNotFound, "Endpoint tidak ditemukan", nil)
 	}
@@ -292,6 +323,66 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, claims staffCla
 	response.OK(w, "Rundown dihapus", nil)
 }
 
+// template melayani /rundowns/template (GET) dan
+// /rundowns/template/sections/{key} (PUT). Template berlaku se-tenant dan
+// terbuka untuk setiap role yang boleh membuka Rundown (keputusan D4) — gerbang
+// requireRundownAccess sudah dijalankan Item.
+func (h *Handler) template(w http.ResponseWriter, r *http.Request, claims staffClaims, rest []string) {
+	switch {
+	case len(rest) == 0 && r.Method == http.MethodGet:
+		t, err := h.templates.Get(r.Context(), claims.tenantID)
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		response.OK(w, "Template rundown", toTemplateDTO(t))
+	case len(rest) == 2 && rest[0] == "sections" && r.Method == http.MethodPut:
+		var req sectionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			response.Error(w, http.StatusBadRequest, "Body permintaan tidak valid", nil)
+			return
+		}
+		t, err := h.templates.ReplaceSection(r.Context(), claims.tenantID,
+			domain.SectionKey(rest[1]), req.toPayload())
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		response.OK(w, "Seksi template disimpan", toTemplateDTO(t))
+	default:
+		response.Error(w, http.StatusNotFound, "Endpoint tidak ditemukan", nil)
+	}
+}
+
+// projectPrefill memberi usulan isian sampul dari data project terkini untuk
+// tombol "Tarik ulang dari project". Tidak menulis apa pun.
+func (h *Handler) projectPrefill(w http.ResponseWriter, r *http.Request, claims staffClaims, id int64) {
+	if err := h.authorize(r.Context(), claims, id); err != nil {
+		writeAppError(w, err)
+		return
+	}
+	cover, err := h.rundowns.ProjectPrefill(r.Context(), claims.tenantID, id)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	response.OK(w, "Data project terkini", toCoverPrefillDTO(cover))
+}
+
+// saveAsTemplate menjadikan isi rundown ini sebagai Template Rundown tenant.
+func (h *Handler) saveAsTemplate(w http.ResponseWriter, r *http.Request, claims staffClaims, id int64) {
+	if err := h.authorize(r.Context(), claims, id); err != nil {
+		writeAppError(w, err)
+		return
+	}
+	t, err := h.templates.SaveFromRundown(r.Context(), claims.tenantID, id)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	response.OK(w, "Template rundown diperbarui", toTemplateDTO(t))
+}
+
 // generate menyusun dokumen, mengunduhkannya, dan menyimpan salinannya ke tab
 // Dokumen project. Urutannya disengaja: unduhan tidak boleh gagal hanya karena
 // penyimpanan salinan gagal.
@@ -315,7 +406,17 @@ func (h *Handler) generate(w http.ResponseWriter, r *http.Request, claims staffC
 		return
 	}
 
-	view, err := h.rundowns.Get(r.Context(), claims.tenantID, id)
+	// Anggaran waktu sendiri untuk endpoint ini: WriteTimeout global server
+	// (30 dtk, cmd/server/main.go) lebih pendek dari satu konversi PDF yang
+	// sah (pdfTimeout) ditambah antrean semaphore-nya. Tanpa perpanjangan ini
+	// respons terpotong di tengah jalan sementara server masih bekerja.
+	ctx, cancel := context.WithTimeout(r.Context(), generateBudget)
+	defer cancel()
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(generateBudget + 10*time.Second)); err != nil {
+		logger.Error("gagal memperpanjang batas tulis generate rundown %d: %v", id, err)
+	}
+
+	view, err := h.rundowns.Get(ctx, claims.tenantID, id)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -323,7 +424,7 @@ func (h *Handler) generate(w http.ResponseWriter, r *http.Request, claims staffC
 
 	// Gagal membaca denah tidak menggagalkan generate: template memakai
 	// gambar placeholder bawaannya dan sisa dokumen tetap benar.
-	layoutPNG, err := h.rundowns.LayoutImage(r.Context(), claims.tenantID, id)
+	layoutPNG, err := h.rundowns.LayoutImage(ctx, claims.tenantID, id)
 	if err != nil {
 		logger.Error("gagal membaca denah rundown %d: %v", id, err)
 		layoutPNG = nil
@@ -338,9 +439,17 @@ func (h *Handler) generate(w http.ResponseWriter, r *http.Request, claims staffC
 
 	payload, mime, ext := docx, docxMime, "docx"
 	if format == "pdf" {
-		pdf, err := h.converter.ConvertToPDF(r.Context(), docx)
+		pdf, err := h.converter.ConvertToPDF(ctx, docx)
 		if err != nil {
 			logger.Error("gagal mengonversi rundown %d ke PDF: %v", id, err)
+			// Hanya penantian semaphore yang mengembalikan ctx.Err() mentah;
+			// timeout konversi sendiri dibungkus tanpa %w dan jatuh ke 500 di
+			// bawah. Jadi 503 di sini memang berarti "antre terlalu lama".
+			if errors.Is(err, context.DeadlineExceeded) {
+				response.Error(w, http.StatusServiceUnavailable,
+					"Server sedang membuat PDF lain. Coba lagi sebentar lagi, atau unduh DOCX.", nil)
+				return
+			}
 			response.Error(w, http.StatusInternalServerError,
 				"Gagal membuat PDF. Unduh DOCX sebagai gantinya.", nil)
 			return
@@ -348,11 +457,12 @@ func (h *Handler) generate(w http.ResponseWriter, r *http.Request, claims staffC
 		payload, mime, ext = pdf, pdfMime, "pdf"
 	}
 
-	h.archiveGenerated(r.Context(), claims, view, payload, mime, ext)
+	archive := h.archiveGenerated(ctx, claims, view, payload, mime, ext)
 
 	filename := documentFilename(view, ext)
 	w.Header().Set("Content-Type", mime)
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set(archiveHeader, string(archive))
 	if _, err := w.Write(payload); err != nil {
 		logger.Error("gagal mengirim berkas rundown %d: %v", id, err)
 	}
@@ -361,15 +471,16 @@ func (h *Handler) generate(w http.ResponseWriter, r *http.Request, claims staffC
 // archiveGenerated menyimpan salinan ke tab Dokumen project. Seluruhnya
 // best-effort: kegagalan di sini hanya dicatat, unduhan tetap diteruskan —
 // WO yang sedang butuh berkasnya di lapangan tidak boleh dihalangi oleh
-// kegagalan pengarsipan.
+// kegagalan pengarsipan. Hasilnya dilaporkan lewat header X-Rundown-Archive
+// supaya WO tahu berkasnya tersimpan di mana dan apakah klien melihatnya.
 func (h *Handler) archiveGenerated(ctx context.Context, claims staffClaims,
-	view *domain.View, payload []byte, mime, ext string) {
+	view *domain.View, payload []byte, mime, ext string) archiveStatus {
 
 	replaceID := view.Rundown.LastDocxEvidenceID
 	if ext == "pdf" {
 		replaceID = view.Rundown.LastPdfEvidenceID
 	}
-	evidenceID, err := h.projects.SaveGeneratedDocument(ctx, claims.tenantID,
+	saved, err := h.projects.SaveGeneratedDocument(ctx, claims.tenantID,
 		view.Rundown.ProjectID, claims.staffID, projectscontracts.GeneratedDocInput{
 			Name:              "Rundown " + view.Rundown.ProjectName,
 			FileName:          documentFilename(view, ext),
@@ -379,12 +490,18 @@ func (h *Handler) archiveGenerated(ctx context.Context, claims staffClaims,
 		})
 	if err != nil {
 		logger.Error("gagal mengarsipkan rundown %d ke dokumen project: %v", view.Rundown.ID, err)
-		return
+		return archiveFailed
 	}
 	if err := h.rundowns.RecordGeneratedEvidence(ctx, claims.tenantID,
-		view.Rundown.ID, ext, evidenceID); err != nil {
+		view.Rundown.ID, ext, saved.EvidenceID); err != nil {
+		// Berkasnya sudah tersimpan; yang gagal hanya catatan untuk
+		// menggantikannya di generate berikutnya.
 		logger.Error("gagal mencatat dokumen hasil generate rundown %d: %v", view.Rundown.ID, err)
 	}
+	if saved.ClientVisible {
+		return archiveShared
+	}
+	return archivePrivate
 }
 
 func documentFilename(view *domain.View, ext string) string {

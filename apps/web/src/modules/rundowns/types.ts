@@ -79,7 +79,10 @@ export interface RundownMakeupRoom {
  *
  * `noLabel` TIDAK diketik WO: server menomori ulang tiap kali seksi disimpan.
  * Nilai "-" berarti "baris tanpa nomor" (mis. baris pembuka
- * "04.00 - 14.00 Checking Dekor"), dan server mengosongkannya.
+ * "04.00 - 14.00 Checking Dekor"). Server menyimpannya kosong supaya dokumen
+ * mencetak sel kosong, dan mengembalikannya lagi sebagai "-" — jadi penanda
+ * ini bertahan melewati simpan-muat ulang. Di editor dipegang checkbox
+ * "Tanpa nomor".
  */
 export interface RundownAcaraItem {
   noLabel: string;
@@ -132,3 +135,33 @@ export interface RundownDetail {
 }
 
 export const NO_NUMBER_MARKER = "-";
+
+/**
+ * Template Rundown per tenant — enam seksi yang disalin ke rundown baru.
+ * Cerminan templateDTO. `updatedAt` null = belum pernah disimpan.
+ */
+export interface RundownTemplate {
+  roles: RundownRole[];
+  committees: RundownCommittee[];
+  makeupRooms: RundownMakeupRoom[];
+  itemsAkad: RundownAcaraItem[];
+  itemsResepsi: RundownAcaraItem[];
+  layoutNotes: RundownLayoutNote[];
+  updatedAt: string | null;
+}
+
+/** Usulan isian sampul dari data project terkini (tombol "Tarik ulang"). */
+export interface RundownCoverPrefill {
+  groomName: string;
+  brideName: string;
+  eventDateLabel: string;
+  venueLabel: string;
+  eventTimeLabel: string;
+  coupleTitle: string;
+}
+
+/**
+ * Nasib salinan berkas di tab Dokumen project setelah generate, dari header
+ * X-Rundown-Archive. "unknown" bila header tidak terbaca (server lama).
+ */
+export type RundownArchiveStatus = "shared" | "private" | "failed" | "unknown";

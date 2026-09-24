@@ -32,10 +32,12 @@ type Module struct {
 
 func NewModule(db *sql.DB, projects projectscontracts.Contracts, storageClient *storage.Client) *Module {
 	repo := infrastructure.NewMySQLRundownRepository(db)
-	service := application.NewRundownService(repo, projects, storageClient)
+	templateRepo := infrastructure.NewMySQLRundownTemplateRepository(db)
+	service := application.NewRundownService(repo, projects, storageClient, templateRepo)
+	templates := application.NewRundownTemplateService(templateRepo, repo)
 	converter := infrastructure.NewLibreOfficeConverter("", pdfTimeout)
 	return &Module{
-		handler:   presentation.NewHandler(service, projects, converter),
+		handler:   presentation.NewHandler(service, templates, projects, converter),
 		contracts: contracts.New(service),
 	}
 }

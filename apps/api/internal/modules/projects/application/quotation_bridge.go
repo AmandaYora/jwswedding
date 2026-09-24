@@ -198,12 +198,13 @@ func (s *ProjectService) RundownProjectSnapshotFor(ctx context.Context, tenantID
 
 // SaveGeneratedRundownDocument menaruh berkas hasil generate modul `rundowns`
 // ke tab Dokumen project ini (evidence kind `general`, ADR-0020), menggantikan
-// hasil sebelumnya untuk format yang sama.
+// hasil sebelumnya untuk format yang sama. Mengembalikan ID evidence baru dan
+// apakah dokumen itu terlihat oleh klien (diwarisi dari versi sebelumnya).
 func (s *ProjectService) SaveGeneratedRundownDocument(ctx context.Context, tenantID, projectID, actorStaffID int64,
-	name, fileName, mimeType string, data []byte, replaceEvidenceID int64) (int64, error) {
+	name, fileName, mimeType string, data []byte, replaceEvidenceID int64) (int64, bool, error) {
 
 	if _, err := s.Get(ctx, tenantID, projectID); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	e, err := s.evidence.SaveGeneratedDocument(ctx, tenantID, projectID, actorStaffID,
 		UploadEvidenceInput{
@@ -215,12 +216,14 @@ func (s *ProjectService) SaveGeneratedRundownDocument(ctx context.Context, tenan
 			RelatedID:   0,
 			// Dokumen operasional WO: tidak otomatis terbuka untuk klien.
 			// WO yang memutuskan lewat toggle di tab Dokumen (ADR-0020).
+			// Generate ULANG mewarisi pilihan itu — lihat
+			// EvidenceService.SaveGeneratedDocument.
 			IsClientVisible: false,
 		}, data, replaceEvidenceID)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	return e.ID, nil
+	return e.ID, e.IsClientVisible, nil
 }
 
 // SetClientInvoiceService memasok ledger tagihan yang dibutuhkan

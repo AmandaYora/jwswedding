@@ -68,7 +68,7 @@ func staff(role, staffID string) middleware.Claims {
 func newTestHandler(projects *stubProjects) *Handler {
 	// RundownService tidak dipakai jalur yang diuji di berkas ini: seluruh
 	// permintaan berhenti di gerbang role/format sebelum menyentuhnya.
-	return NewHandler(nil, projects, stubConverter{available: true})
+	return NewHandler(nil, nil, projects, stubConverter{available: true})
 }
 
 func TestCollection_SalesForbidden(t *testing.T) {
@@ -115,8 +115,8 @@ func (s *stubRepo) List(context.Context, int64, application.ListFilter, paginati
 // Segmen literal harus dikenali sebelum ParseInt, kalau tidak endpoint ini
 // jatuh ke jalur item dan membalas 404.
 func TestItem_UsedProjectIDsIsNotParsedAsID(t *testing.T) {
-	svc := application.NewRundownService(&stubRepo{used: []int64{42, 43}}, &stubProjects{}, nil)
-	h := NewHandler(svc, &stubProjects{}, stubConverter{available: true})
+	svc := application.NewRundownService(&stubRepo{used: []int64{42, 43}}, &stubProjects{}, nil, nil)
+	h := NewHandler(svc, nil, &stubProjects{}, stubConverter{available: true})
 
 	w := serve(t, h.Item, http.MethodGet, "/api/v1/rundowns/used-project-ids", staff("Owner", "1"))
 	if w.Code != http.StatusOK {
@@ -151,7 +151,7 @@ func TestItem_UnknownGenerateFormatIsRejected(t *testing.T) {
 // Tanpa LibreOffice, permintaan PDF dijawab jelas -- bukan 500 dari exec yang
 // membingungkan. Dev di Windows umumnya tidak memasangnya.
 func TestItem_PDFUnavailableIsExplicit(t *testing.T) {
-	h := NewHandler(nil, &stubProjects{}, stubConverter{available: false})
+	h := NewHandler(nil, nil, &stubProjects{}, stubConverter{available: false})
 	w := serve(t, h.Item, http.MethodGet, "/api/v1/rundowns/5/generate?format=pdf", staff("Owner", "1"))
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, mau 503 saat konversi PDF tidak tersedia", w.Code)

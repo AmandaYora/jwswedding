@@ -24,6 +24,7 @@ const QuotationListPage = lazy(() => import("@/modules/quotations/pages/Quotatio
 const QuotationDetailPage = lazy(() => import("@/modules/quotations/pages/QuotationDetailPage"));
 const RundownListPage = lazy(() => import("@/modules/rundowns/pages/RundownListPage"));
 const RundownDetailPage = lazy(() => import("@/modules/rundowns/pages/RundownDetailPage"));
+const RundownTemplatePage = lazy(() => import("@/modules/rundowns/pages/RundownTemplatePage"));
 const VendorCategoryListPage = lazy(() => import("@/modules/vendor-categories/pages/VendorCategoryListPage"));
 const MilestoneTemplateListPage = lazy(() => import("@/modules/milestone-templates/pages/MilestoneTemplateListPage"));
 const PackageTemplateListPage = lazy(() => import("@/modules/package-templates/pages/PackageTemplateListPage"));
@@ -118,6 +119,9 @@ export const protectedRoutes: RouteObject = {
             // dibuka Wedding Planner di hari-H. Cakupannya tetap dibatasi
             // server-side ke project yang dia pegang.
             { path: ROUTE_PATHS.rundowns, element: <RundownListPage /> },
+            // Template dibuka role yang sama (PLAN rundown-ux-ideal D4).
+            { path: "/rundowns/template", element: <RundownTemplatePage /> },
+            { path: "/rundowns/template/:tab", element: <RundownTemplatePage /> },
             { path: "/rundowns/:id", element: <RundownDetailPage /> },
             { path: "/rundowns/:id/:tab", element: <RundownDetailPage /> },
           ],

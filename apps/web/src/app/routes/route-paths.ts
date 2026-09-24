@@ -45,6 +45,9 @@ export const ROUTE_PATHS = {
   quotationDetail: (id: string) => `/quotations/${id}`,
   rundowns: "/rundowns",
   rundownDetail: (id: string, tab: RundownTab = "cover") => `/rundowns/${id}/${tab}`,
+  // Template Rundown: enam seksi yang sama dengan editor rundown. Segmen
+  // statis "template" mengalahkan ":id" di pencocokan react-router.
+  rundownTemplate: (tab: RundownTab = "roles") => `/rundowns/template/${tab}`,
   vendorCategories: "/vendor-categories",
   vendors: "/vendors",
   venues: "/venues",
