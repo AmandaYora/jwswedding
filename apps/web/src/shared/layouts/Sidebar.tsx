@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
-import { LayoutDashboard, FolderKanban, Users, Tags, Store, Building2, UserCog, Sparkles, Settings, CalendarClock, CalendarCheck, Landmark, Package, ChevronDown, LogOut, X, FileText, BookOpen, Signature } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Users, Tags, Store, Building2, UserCog, Sparkles, Settings, CalendarClock, CalendarCheck, Landmark, Package, ChevronDown, LogOut, X, FileText, BookOpen } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { Avatar } from "@/shared/components/ui/Avatar";
@@ -31,7 +31,8 @@ type NavEntry = NavLinkItem | NavGroupItem;
 
 // "Pengaturan" groups the 3 lower-frequency admin pages behind one collapsible
 // entry instead of each sitting flat in the list. Role matrix (confirmed):
-// Owner sees everything; Admin sees everything except Pengaturan entirely;
+// Owner sees everything; Admin sees everything except Pengaturan's Owner-only
+// pages (every role, Owner or not, sees Pengaturan → Pengguna — see UsersPage);
 // Wedding Planner ("Staff") sees only Project and Monitoring Timeline
 // (PLAN.md mom-25082026-item-belum item 17 — WP has no Dashboard access at
 // all, so this is a standalone entry, not folded into Dashboard's own).
@@ -55,17 +56,14 @@ const NAV_ITEMS: NavEntry[] = [
   // 7 — baca saja, tombol tulis disembunyikan di halamannya); Wedding Planner
   // tetap tidak membuka menu ini.
   { kind: "link", to: ROUTE_PATHS.venues, label: "Venue", icon: Building2, allowedRoles: ["Owner", "Admin", "Sales"] },
-  // Tanpa allowedRoles: setiap staff berhak mengurus TTD-nya sendiri. Sengaja
-  // di luar grup "Pengaturan" di bawah, yang seluruhnya Owner-only — kalau
-  // ditaruh di sana, justru Admin/Staff/Sales yang tidak akan pernah melihatnya
-  // (PLAN tanda-tangan-pengguna K7).
-  { kind: "link", to: ROUTE_PATHS.mySignature, label: "Tanda Tangan Saya", icon: Signature },
   {
     kind: "group",
     label: "Pengaturan",
     icon: Settings,
     children: [
-      { kind: "link", to: ROUTE_PATHS.users, label: "Pengguna", icon: UserCog, allowedRoles: ["Owner"] },
+      // Semua role: Owner mengelola pengguna, role lain hanya TTD miliknya
+      // sendiri di halaman yang sama (UsersPage).
+      { kind: "link", to: ROUTE_PATHS.users, label: "Pengguna", icon: UserCog },
       { kind: "link", to: ROUTE_PATHS.companyProfile, label: "Profil Usaha", icon: Landmark, allowedRoles: ["Owner"] },
       { kind: "link", to: ROUTE_PATHS.subscription, label: "Langganan", icon: Sparkles, allowedRoles: ["Owner"] },
       { kind: "link", to: ROUTE_PATHS.vendorCategories, label: "Kategori Vendor", icon: Tags, allowedRoles: ["Owner"] },
@@ -91,8 +89,8 @@ export function Sidebar({ open, onClose }: SidebarProps) {
 
   // Flat items filtered by their own allowedRoles; a group is filtered by
   // its children's allowedRoles and dropped entirely if nothing remains
-  // visible (e.g. Pengaturan vanishes for Admin/Wedding Planner, since every
-  // one of its children is Owner-only).
+  // visible (Pengaturan never fully vanishes today, since Pengguna is open to
+  // every role — but a future all-Owner-only group would).
   const visibleEntries: NavEntry[] = NAV_ITEMS.flatMap((entry): NavEntry[] => {
     if (entry.kind === "link") {
       return canSee(entry.allowedRoles) ? [entry] : [];

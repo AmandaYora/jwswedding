@@ -5,14 +5,14 @@ import { SignatureField, type SignaturePayload } from "@/modules/users/component
 import { useStaffStore } from "@/modules/users/stores/useStaffStore";
 import { getApiErrorMessage } from "@/shared/lib/api-error";
 
-// "Tanda Tangan Saya" — satu-satunya permukaan TTD yang terbuka untuk SEMUA
-// role staff (PLAN tanda-tangan-pengguna K7).
-//
-// Halaman Pengguna sendiri Owner-only, jadi tanpa halaman ini Admin/Staff/Sales
-// tidak punya cara apa pun mengurus tanda tangannya sendiri — dan TTD mereka
-// akan selalu digambarkan Owner, yang melemahkan nilai keasliannya. Semua
-// panggilan di sini memakai jalur `me`, yang mengambil staffID dari klaim JWT.
-export default function MySignaturePage() {
+// Panel "Tanda Tangan Saya" — editor TTD milik pemanggil sendiri. Dirender oleh
+// UsersPage di rute /pengguna untuk Admin/Staff/Sales: mereka tidak punya akses
+// ke manajemen pengguna (Owner-only di backend), tetapi tetap berhak mengurus
+// TTD-nya sendiri, dan tempatnya di menu Pengguna — bukan halaman terpisah.
+// Owner mengurus TTD-nya lewat modal edit baris dirinya di daftar pengguna.
+// Semua panggilan di sini memakai jalur `me`, yang mengambil staffID dari
+// klaim JWT, jadi panel ini tidak bisa menyentuh TTD orang lain.
+export function MySignaturePanel() {
   const fetchMySignatureImageUrl = useStaffStore((s) => s.fetchMySignatureImageUrl);
   const saveMySignature = useStaffStore((s) => s.saveMySignature);
   const deleteMySignature = useStaffStore((s) => s.deleteMySignature);
@@ -77,7 +77,7 @@ export default function MySignaturePage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-2xl space-y-4">
+    <div className="w-full max-w-2xl">
       <Card>
         <CardHeader
           title="Tanda Tangan Saya"

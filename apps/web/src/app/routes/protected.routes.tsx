@@ -29,8 +29,7 @@ const MilestoneTemplateListPage = lazy(() => import("@/modules/milestone-templat
 const PackageTemplateListPage = lazy(() => import("@/modules/package-templates/pages/PackageTemplateListPage"));
 const VendorListPage = lazy(() => import("@/modules/vendors/pages/VendorListPage"));
 const VenueListPage = lazy(() => import("@/modules/venues/pages/VenueListPage"));
-const UserListPage = lazy(() => import("@/modules/users/pages/UserListPage"));
-const MySignaturePage = lazy(() => import("@/modules/users/pages/MySignaturePage"));
+const UsersPage = lazy(() => import("@/modules/users/pages/UsersPage"));
 const SubscriptionPage = lazy(() => import("@/modules/subscription/pages/SubscriptionPage"));
 const CompanyProfilePage = lazy(() => import("@/modules/company-profile/pages/CompanyProfilePage"));
 const TimelineMonitorPage = lazy(() => import("@/modules/timeline-monitor/pages/TimelineMonitorPage"));
@@ -73,10 +72,11 @@ export const protectedRoutes: RouteObject = {
             { path: "paket", element: <Navigate to="../vendor" replace /> },
           ],
         },
-        // Tanpa RequireRole: setiap staff berhak mengurus tanda tangannya
-        // sendiri, apa pun role-nya (PLAN tanda-tangan-pengguna K7). Endpoint
-        // di baliknya memakai jalur `me` yang mengambil staffID dari klaim JWT.
-        { path: ROUTE_PATHS.mySignature, element: <MySignaturePage /> },
+        // Tanpa RequireRole: setiap staff membuka menu Pengguna. UsersPage
+        // sendiri yang mencabang — Owner mendapat manajemen pengguna penuh,
+        // role lain hanya TTD miliknya sendiri (jalur `me`, staffID dari klaim
+        // JWT). Manajemen pengguna tetap Owner-only di backend.
+        { path: ROUTE_PATHS.users, element: <UsersPage /> },
         {
           element: <RequireRole allow={["Owner", "Admin"]} />,
           children: [
@@ -128,7 +128,6 @@ export const protectedRoutes: RouteObject = {
             { path: ROUTE_PATHS.vendorCategories, element: <VendorCategoryListPage /> },
             { path: ROUTE_PATHS.milestoneTemplates, element: <MilestoneTemplateListPage /> },
             { path: ROUTE_PATHS.packageTemplates, element: <PackageTemplateListPage /> },
-            { path: ROUTE_PATHS.users, element: <UserListPage /> },
             { path: ROUTE_PATHS.companyProfile, element: <CompanyProfilePage /> },
             { path: ROUTE_PATHS.subscription, element: <SubscriptionPage /> },
           ],

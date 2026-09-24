@@ -54,9 +54,6 @@ export const ROUTE_PATHS = {
   packageTemplates: "/template-paket",
   clientTimelines: "/monitoring-timeline",
   companyProfile: "/profil-usaha",
-  // Terbuka untuk SEMUA role staff — sengaja di luar grup "Pengaturan" yang
-  // Owner-only (PLAN tanda-tangan-pengguna T28).
-  mySignature: "/tanda-tangan-saya",
   portal: (tab: ClientPortalTab = "vendor") => `/portal/${tab}`,
   // Magic link tanda tangan (jalur C, tanpa login).
   publicSignature: (token: string) => `/tanda-tangan/${token}`,
